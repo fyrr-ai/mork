@@ -1,0 +1,13 @@
+{
+  "name": "@mork/timeline",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./dynamo": "./src/dynamo.ts"
+  },
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "3.908.0",
+    "@aws-sdk/lib-dynamodb": "3.908.0"
+  }
+}

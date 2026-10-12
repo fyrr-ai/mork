@@ -1,0 +1,19 @@
+{
+  "name": "@mork/steps",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/handler.ts"
+  },
+  "dependencies": {
+    "@aws-sdk/client-ecs": "3.908.0",
+    "@aws-sdk/client-secrets-manager": "3.908.0",
+    "@aws-sdk/client-sfn": "3.908.0",
+    "@mork/contracts": "workspace:*",
+    "@mork/decision": "workspace:*",
+    "@mork/sources": "workspace:*",
+    "@mork/store": "workspace:*",
+    "@mork/timeline": "workspace:*",
+    "zod": "4.1.12"
+  }
+}

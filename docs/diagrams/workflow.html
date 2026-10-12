@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Three containers in one execution</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&family=Noto+Serif:ital@0;1&family=Noto+Sans+KR:wght@400;500;600&family=Noto+Serif+KR:wght@400&family=Noto+Sans+TC:wght@400;500;600&family=Noto+Serif+TC:wght@400&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --color-paper:   #f5f5f5;   /* white-smoke */
+      --color-ink:     #2d3142;   /* jet-black */
+      --color-muted:   #4f5d75;   /* blue-slate */
+      --color-accent:  #bf4520;   /* burnt-tangerine */
+      --font-sans:     'Geist', system-ui, sans-serif;
+      --font-serif:    'Instrument Serif', 'Noto Serif', 'Noto Serif KR', serif;
+      --font-mono:     'Geist Mono', ui-monospace, monospace;
+    }
+
+    body {
+      font-family: var(--font-sans);
+      background: var(--color-paper);
+      color: var(--color-ink);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 3rem 2rem;
+    }
+
+    .frame { max-width: 1280px; width: 100%; min-width: 0; }
+    /* The SVG holds its readable width (min-width == the viewBox width, so the
+       type ramp is never silently scaled down). This wrapper lets a narrow
+       screen scroll the diagram instead of the whole page. */
+    .diagram-container { width: 100%; overflow-x: auto; }
+
+    .eyebrow {
+      font-family: var(--font-mono);
+      font-size: 0.66rem;
+      font-weight: 500;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--color-muted);
+      margin-bottom: 0.5rem;
+    }
+
+    h1 {
+      font-family: var(--font-serif);
+      font-size: clamp(1.5rem, 2.4vw + 0.75rem, 2rem);
+      font-weight: 400;
+      letter-spacing: -0.02em;
+      line-height: 1.15;
+      color: var(--color-ink);
+      margin-bottom: 1.5rem;
+    }
+
+    svg { width: 100%; min-width: 1280px; display: block; }
+    /* Paper has no scrollbar, so the local scroller would clip instead of
+       scroll. Let the diagram scale down to the sheet: smaller but whole
+       beats sharp but cut off. Must come after the svg rule above - a media
+       query adds no specificity, so a later plain rule would win. */
+    @media print {
+      .diagram-container { overflow-x: visible; }
+      svg { min-width: 0; }
+    }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <p class="eyebrow">Step Functions · mork</p>
+    <h1>Three containers in one execution</h1>
+
+    <div class="diagram-container">
+      <svg viewBox="0 0 1280 736" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="workflow-title workflow-desc">
+        <title id="workflow-title">Three containers in one execution</title>
+        <desc id="workflow-desc">The mork workflow in Step Functions, left to right: the Start Lambda takes a task from GitHub (the factory label) or from Slack (@mork; it finds or creates the Jira issue), sets labels, runs triage, stores issue.json in S3 and checks the config; the Route Choice state sends the run on to Plan or, when the issue is clearly unclear (p ≤ 0.2), straight to Done once Start has posted clarifying questions from the LLM to the issue and added the needs-info label, so no container starts; the Plan container runs the analyst (Pi + LLM, at most two attempts) and the gate before, without an LLM, as the sandbox user, where the hidden tests must fail on main; the Build container runs the implementer, the only phase without access to the hidden tests, at most three times, and the implementer pushes its own factory/* branch with a scoped token, the guard allows it only git push origin to its own branch without force, and the runner verifies that its last commit is on GitHub; the Check container runs the gate after on the pushed commit with the repo tests, the hidden tests and the diff policy, and the reviewer only once the gate passes; the Decide Lambda opens a draft PR only if the branch still points at the commit that passed the gate, or on a gate failure returns the work to Build; the decision model (Jev) decides live with thresholds that are not calibrated yet: triage in Start, supervision every 45 s of the analyst, the implementer and the reviewer, and in Decide the untested criteria and the review level, and every decision goes to the mork-timeline DynamoDB table; the containers have no turn or time limits, the brakes are supervision and the 2 h phase timeout; an error in any state is caught by Catch into the Handover Lambda (comment, needs-human, stopping the containers) and both paths end in Done. All three containers are one image, mork-runner; Step Functions starts them via runTask with a task token and waits for the callback; the execution carries only a small brief and the outputs live in S3.</desc>
+        <defs>
+          <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/></marker>
+          <marker id="arrow-start" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto-start-reverse"><polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/></marker>
+          <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#bf4520"/></marker>
+          <marker id="arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2e5aa8"/></marker>
+        </defs>
+
+        <rect width="100%" height="100%" fill="#f5f5f5"/>
+
+        <!-- ============ Catch scope (zone): every state catches into Handover ============ -->
+        <rect x="28" y="168" width="1120" height="224" rx="8" fill="rgba(45,49,66,0.02)" stroke="rgba(45,49,66,0.30)" stroke-width="1" stroke-dasharray="4,3"/>
+        <rect x="40" y="172" width="120" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="44" y="181" fill="#5a6580" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">EVERY STATE · CATCH</text>
+
+        <!-- ============ Arrows (drawn first, behind nodes) ============ -->
+        <!-- main path, left to right at y=264 -->
+        <line x1="160" y1="264" x2="196" y2="264" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+        <line x1="432" y1="264" x2="468" y2="264" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+        <line x1="704" y1="264" x2="740" y2="264" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+        <line x1="976" y1="264" x2="1012" y2="264" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+        <line x1="1132" y1="264" x2="1168" y2="264" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+        <!-- Start → Route → Done: unclear issue, clarifying questions, no container (Route not drawn, see note) -->
+        <path d="M 160,232 H 172 Q 180,232 180,224 V 152 Q 180,144 188,144 H 1196 Q 1204,144 1204,152 V 240" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+        <!-- Decide → Build: GATE FAIL (under the row; Build has at most 3 attempts) -->
+        <path d="M 1072,312 V 360 Q 1072,368 1064,368 H 594 Q 586,368 586,360 V 336" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+        <!-- Catch scope → Handover: one dashed edge for the shared Catch -->
+        <line x1="664" y1="392" x2="664" y2="432" stroke="#4f5d75" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrow)"/>
+        <!-- Handover → Done -->
+        <path d="M 768,472 H 1196 Q 1204,472 1204,464 V 288" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+        <!-- ============ Arrow labels (opaque masks, 8px gap) ============ -->
+        <rect x="800" y="348" width="56" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="828" y="357" fill="#5a6580" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">GATE FAIL</text>
+        <!-- UNCLEAR ISSUE / CLARIFY: above the top exit segment y=144 -->
+        <rect x="256" y="124" width="88" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="300" y="133" fill="#5a6580" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">UNCLEAR ISSUE</text>
+        <rect x="1096" y="124" width="48" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="1120" y="133" fill="#5a6580" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">CLARIFY</text>
+        <!-- CATCH: beside the vertical x=664, right side -->
+        <rect x="672" y="406" width="36" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="690" y="415" fill="#5a6580" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">CATCH</text>
+
+        <!-- ============ Nodes ============ -->
+        <!-- Lambda: Start -->
+        <rect x="40" y="216" width="120" height="96" rx="6" fill="#f5f5f5"/>
+        <rect x="40" y="216" width="120" height="96" rx="6" fill="rgba(79,93,117,0.10)" stroke="#5a6580" stroke-width="1"/>
+        <rect x="48" y="222" width="40" height="12" rx="2" fill="none" stroke="rgba(90,101,128,0.50)" stroke-width="0.8"/>
+        <text x="68" y="231" fill="#5a6580" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">LAMBDA</text>
+        <rect x="124" y="222" width="28" height="12" rx="2" fill="none" stroke="rgba(90,101,128,0.50)" stroke-width="0.8" stroke-dasharray="2,2"/>
+        <text x="138" y="231" fill="#5a6580" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">JEV</text>
+        <text x="100" y="256" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', system-ui, sans-serif" text-anchor="middle">Start</text>
+        <text x="100" y="272" fill="#4f5d75" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">labels · triage</text>
+        <text x="100" y="284" fill="#4f5d75" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">issue.json → S3</text>
+        <text x="100" y="296" fill="#4f5d75" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">config check</text>
+        <!-- Fargate container: Plan (image mork-runner; Jev supervises the analyst) -->
+        <rect x="196" y="192" width="236" height="144" rx="6" fill="#f5f5f5"/>
+        <rect x="196" y="192" width="236" height="144" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+        <rect x="204" y="198" width="28" height="12" rx="2" fill="none" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+        <text x="218" y="207" fill="rgba(45,49,66,0.8)" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">ECS</text>
+        <rect x="396" y="198" width="28" height="12" rx="2" fill="none" stroke="rgba(90,101,128,0.50)" stroke-width="0.8" stroke-dasharray="2,2"/>
+        <text x="410" y="207" fill="#5a6580" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">JEV</text>
+        <text x="314" y="224" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', system-ui, sans-serif" text-anchor="middle">Plan</text>
+        <text x="314" y="238" fill="#4f5d75" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">task def plan</text>
+        <rect x="204" y="248" width="220" height="36" rx="4" fill="rgba(45,49,66,0.03)" stroke="rgba(45,49,66,0.30)" stroke-width="0.8"/>
+        <text x="212" y="262" fill="#2d3142" font-size="9" font-weight="600" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="start">analyst · Pi + LLM</text>
+        <text x="212" y="275" fill="#4f5d75" font-size="8.5" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="start">plan + hidden tests · ≤2×</text>
+        <rect x="204" y="292" width="220" height="36" rx="4" fill="rgba(191,69,32,0.05)" stroke="rgba(191,69,32,0.50)" stroke-width="0.8" stroke-dasharray="3,2"/>
+        <text x="212" y="306" fill="#2d3142" font-size="9" font-weight="600" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="start">gate before · no LLM</text>
+        <text x="212" y="319" fill="#4f5d75" font-size="8.5" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="start">sandbox: must fail on main</text>
+        <!-- Fargate container: Build (image mork-runner; implementer pushes its own branch) -->
+        <rect x="468" y="192" width="236" height="144" rx="6" fill="#f5f5f5"/>
+        <rect x="468" y="192" width="236" height="144" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+        <rect x="476" y="198" width="28" height="12" rx="2" fill="none" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+        <text x="490" y="207" fill="rgba(45,49,66,0.8)" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">ECS</text>
+        <rect x="668" y="198" width="28" height="12" rx="2" fill="none" stroke="rgba(90,101,128,0.50)" stroke-width="0.8" stroke-dasharray="2,2"/>
+        <text x="682" y="207" fill="#5a6580" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">JEV</text>
+        <text x="586" y="224" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', system-ui, sans-serif" text-anchor="middle">Build</text>
+        <text x="586" y="238" fill="#4f5d75" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">task def build · ≤3×</text>
+        <rect x="476" y="248" width="220" height="36" rx="4" fill="rgba(45,49,66,0.03)" stroke="rgba(45,49,66,0.30)" stroke-width="0.8"/>
+        <text x="484" y="262" fill="#2d3142" font-size="9" font-weight="600" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="start">implementer · Pi + LLM</text>
+        <text x="484" y="275" fill="#4f5d75" font-size="8.5" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="start">code → git push origin factory/*</text>
+        <rect x="476" y="292" width="220" height="36" rx="4" fill="none" stroke="rgba(45,49,66,0.30)" stroke-width="0.8" stroke-dasharray="3,2"/>
+        <text x="484" y="306" fill="#2d3142" font-size="9" font-weight="600" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="start">scoped push token · no hidden/</text>
+        <text x="484" y="319" fill="#4f5d75" font-size="8.5" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="start">guard: own branch only, no force</text>
+        <!-- Fargate container: Check (image mork-runner; Jev supervises the reviewer) -->
+        <rect x="740" y="192" width="236" height="144" rx="6" fill="#f5f5f5"/>
+        <rect x="740" y="192" width="236" height="144" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+        <rect x="748" y="198" width="28" height="12" rx="2" fill="none" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+        <text x="762" y="207" fill="rgba(45,49,66,0.8)" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">ECS</text>
+        <rect x="940" y="198" width="28" height="12" rx="2" fill="none" stroke="rgba(90,101,128,0.50)" stroke-width="0.8" stroke-dasharray="2,2"/>
+        <text x="954" y="207" fill="#5a6580" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">JEV</text>
+        <text x="858" y="224" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', system-ui, sans-serif" text-anchor="middle">Check</text>
+        <text x="858" y="238" fill="#4f5d75" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">task def check</text>
+        <rect x="748" y="248" width="220" height="36" rx="4" fill="rgba(191,69,32,0.05)" stroke="rgba(191,69,32,0.50)" stroke-width="0.8" stroke-dasharray="3,2"/>
+        <text x="756" y="262" fill="#2d3142" font-size="9" font-weight="600" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="start">gate after · no LLM</text>
+        <text x="756" y="275" fill="#4f5d75" font-size="8.5" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="start">pushed commit: repo + hidden + diff</text>
+        <rect x="748" y="292" width="220" height="36" rx="4" fill="rgba(45,49,66,0.03)" stroke="rgba(45,49,66,0.30)" stroke-width="0.8"/>
+        <text x="756" y="306" fill="#2d3142" font-size="9" font-weight="600" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="start">reviewer · Pi + LLM</text>
+        <text x="756" y="319" fill="#4f5d75" font-size="8.5" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="start">only if the gate passes</text>
+        <!-- Lambda: Decide -->
+        <rect x="1012" y="216" width="120" height="96" rx="6" fill="#f5f5f5"/>
+        <rect x="1012" y="216" width="120" height="96" rx="6" fill="rgba(79,93,117,0.10)" stroke="#5a6580" stroke-width="1"/>
+        <rect x="1020" y="222" width="40" height="12" rx="2" fill="none" stroke="rgba(90,101,128,0.50)" stroke-width="0.8"/>
+        <text x="1040" y="231" fill="#5a6580" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">LAMBDA</text>
+        <rect x="1096" y="222" width="28" height="12" rx="2" fill="none" stroke="rgba(90,101,128,0.50)" stroke-width="0.8" stroke-dasharray="2,2"/>
+        <text x="1110" y="231" fill="#5a6580" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">JEV</text>
+        <text x="1072" y="256" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', system-ui, sans-serif" text-anchor="middle">Decide</text>
+        <text x="1072" y="272" fill="#4f5d75" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">Jev + draft PR</text>
+        <text x="1072" y="284" fill="#4f5d75" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">or back to Build</text>
+        <text x="1072" y="296" fill="#4f5d75" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">PR only for head_sha</text>
+        <!-- Done (terminal) -->
+        <rect x="1168" y="240" width="72" height="48" rx="20" fill="#f5f5f5"/>
+        <rect x="1168" y="240" width="72" height="48" rx="20" fill="rgba(45,49,66,0.06)" stroke="#2d3142" stroke-width="1.2"/>
+        <text x="1204" y="268" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', system-ui, sans-serif" text-anchor="middle">Done</text>
+        <!-- Lambda: Handover -->
+        <rect x="560" y="432" width="208" height="80" rx="6" fill="#f5f5f5"/>
+        <rect x="560" y="432" width="208" height="80" rx="6" fill="rgba(79,93,117,0.10)" stroke="#5a6580" stroke-width="1"/>
+        <rect x="568" y="438" width="40" height="12" rx="2" fill="none" stroke="rgba(90,101,128,0.50)" stroke-width="0.8"/>
+        <text x="588" y="447" fill="#5a6580" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">LAMBDA</text>
+        <text x="664" y="468" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', system-ui, sans-serif" text-anchor="middle">Handover</text>
+        <text x="664" y="484" fill="#4f5d75" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">comment · needs-human</text>
+        <text x="664" y="496" fill="#4f5d75" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">stops containers</text>
+
+        <!-- ============ Callouts (italic serif, dashed leaders) ============ -->
+        <!-- Callout 1: one image, runTask + callback → lands on the Build container -->
+        <text x="640" y="92" fill="#2d3142" font-size="14" font-style="italic" font-family="'Instrument Serif', 'Noto Serif', serif">Plan, Build and Check are one image, mork-runner;</text>
+        <text x="640" y="110" fill="#2d3142" font-size="14" font-style="italic" font-family="'Instrument Serif', 'Noto Serif', serif">Step Functions starts them via runTask and waits for the callback.</text>
+        <path d="M 632 100 Q 601.3 105.1 594.6 138 M 590.8 150 Q 587 164.8 586 184" fill="none" stroke="rgba(45,49,66,0.40)" stroke-width="1" stroke-dasharray="4,3"/>
+        <circle cx="586" cy="188" r="2" fill="#2d3142"/>
+        <!-- Callout 2: small brief, outputs in S3 → lands on Start -->
+        <text x="40" y="452" fill="#2d3142" font-size="14" font-style="italic" font-family="'Instrument Serif', 'Noto Serif', serif">The execution carries only a small brief;</text>
+        <text x="40" y="470" fill="#2d3142" font-size="14" font-style="italic" font-family="'Instrument Serif', 'Noto Serif', serif">outputs live in S3 under</text>
+        <text x="40" y="488" fill="#2d3142" font-size="14" font-style="italic" font-family="'Instrument Serif', 'Noto Serif', serif">tasks/&lt;repo&gt;/&lt;issue&gt;/&lt;run&gt;/.</text>
+        <path d="M 100 436 Q 104 376 100 320" fill="none" stroke="rgba(45,49,66,0.40)" stroke-width="1" stroke-dasharray="4,3"/>
+        <circle cx="100" cy="316" r="2" fill="#2d3142"/>
+
+        <!-- ============ Note: Route exit, agent-side push, live Jev ============ -->
+        <text x="40" y="560" fill="#4f5d75" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.18em">NOTE</text>
+        <text x="40" y="578" fill="#4f5d75" font-size="10" font-family="'Geist', system-ui, sans-serif">Start → Route → Plan. When the issue is clearly unclear (p ≤ 0.2), Start posts clarifying questions from the LLM to the issue and adds the needs-info label; the Route Choice state ends the run in Done with no container.</text>
+        <text x="40" y="594" fill="#4f5d75" font-size="10" font-family="'Geist', system-ui, sans-serif">The implementer pushes its own branch with a scoped token; the runner verifies that its last commit is on GitHub, Check verifies that the gate tested exactly that commit, and Decide opens the PR only if the branch still points at it.</text>
+        <text x="40" y="610" fill="#4f5d75" font-size="10" font-family="'Geist', system-ui, sans-serif">The decision model (Jev) decides live: triage in Start, supervision of every LLM station in Plan, Build and Check (every 45 s: worker_stuck → steer → stop), and in Decide the untested criteria and the review level.</text>
+        <text x="40" y="626" fill="#4f5d75" font-size="10" font-family="'Geist', system-ui, sans-serif">Thresholds are not calibrated yet; every decision goes to the mork-timeline DynamoDB table. Containers have no turn or time limits; the brakes are supervision and the 2 h phase timeout with a heartbeat.</text>
+
+        <!-- ============ Legend (bottom strip) ============ -->
+        <line x1="40" y1="656" x2="1240" y2="656" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+        <text x="40" y="676" fill="#4f5d75" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.18em">LEGEND</text>
+        <rect x="40" y="688" width="24" height="12" rx="2" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+        <text x="72" y="698" fill="#4f5d75" font-size="8.5" font-family="'Geist', system-ui, sans-serif">Fargate container</text>
+        <rect x="168" y="688" width="24" height="12" rx="2" fill="rgba(45,49,66,0.03)" stroke="rgba(45,49,66,0.30)" stroke-width="0.8"/>
+        <text x="200" y="698" fill="#4f5d75" font-size="8.5" font-family="'Geist', system-ui, sans-serif">LLM role (Pi + LLM)</text>
+        <rect x="316" y="688" width="24" height="12" rx="2" fill="rgba(191,69,32,0.05)" stroke="rgba(191,69,32,0.50)" stroke-width="0.8" stroke-dasharray="3,2"/>
+        <text x="348" y="698" fill="#4f5d75" font-size="8.5" font-family="'Geist', system-ui, sans-serif">no-LLM role</text>
+        <rect x="424" y="688" width="24" height="12" rx="2" fill="rgba(79,93,117,0.10)" stroke="#5a6580" stroke-width="1"/>
+        <text x="456" y="698" fill="#4f5d75" font-size="8.5" font-family="'Geist', system-ui, sans-serif">Lambda step</text>
+        <rect x="528" y="688" width="24" height="12" rx="6" fill="rgba(45,49,66,0.06)" stroke="#2d3142" stroke-width="1.2"/>
+        <text x="560" y="698" fill="#4f5d75" font-size="8.5" font-family="'Geist', system-ui, sans-serif">terminal</text>
+        <rect x="616" y="688" width="24" height="12" rx="2" fill="rgba(45,49,66,0.02)" stroke="rgba(45,49,66,0.30)" stroke-width="1" stroke-dasharray="3,2"/>
+        <text x="648" y="698" fill="#4f5d75" font-size="8.5" font-family="'Geist', system-ui, sans-serif">Catch scope</text>
+        <line x1="724" y1="694" x2="752" y2="694" stroke="#4f5d75" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrow)"/>
+        <text x="760" y="698" fill="#4f5d75" font-size="8.5" font-family="'Geist', system-ui, sans-serif">Catch → Handover</text>
+        <rect x="872" y="688" width="24" height="12" rx="2" fill="none" stroke="rgba(90,101,128,0.50)" stroke-width="0.8" stroke-dasharray="2,2"/>
+        <text x="884" y="696.5" fill="#5a6580" font-size="6" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">JEV</text>
+        <text x="904" y="698" fill="#4f5d75" font-size="8.5" font-family="'Geist', system-ui, sans-serif">decision model (Jev), live</text>
+      </svg>
+    </div>
+  </div>
+</body>
+</html>

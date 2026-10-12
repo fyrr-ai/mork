@@ -1,0 +1,17 @@
+{
+  "name": "@mork/runner",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/main.ts",
+    "./git": "./src/git.ts"
+  },
+  "dependencies": {
+    "@aws-sdk/client-sfn": "3.908.0",
+    "@mork/contracts": "workspace:*",
+    "@mork/decision": "workspace:*",
+    "@mork/sources": "workspace:*",
+    "@mork/store": "workspace:*",
+    "zod": "4.1.12"
+  }
+}

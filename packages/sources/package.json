@@ -1,0 +1,15 @@
+{
+  "name": "@mork/sources",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./intake": "./src/intake.ts"
+  },
+  "dependencies": {
+    "@aws-sdk/client-secrets-manager": "3.908.0",
+    "@aws-sdk/client-sfn": "3.908.0",
+    "@mork/store": "workspace:*",
+    "zod": "4.1.12"
+  }
+}

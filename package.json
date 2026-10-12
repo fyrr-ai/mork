@@ -1,0 +1,17 @@
+{
+  "name": "mork",
+  "private": true,
+  "type": "module",
+  "workspaces": ["packages/*"],
+  "scripts": {
+    "typecheck": "tsc -b",
+    "test": "bun test packages",
+    "check": "biome check .",
+    "fix": "biome check --write ."
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.3.8",
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.3"
+  }
+}

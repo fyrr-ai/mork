@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tests decide whether the code works. The decision model (Jev) recommends how much human attention it needs.</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&family=Noto+Serif:ital@0;1&family=Noto+Sans+KR:wght@400;500;600&family=Noto+Serif+KR:wght@400&family=Noto+Sans+TC:wght@400;500;600&family=Noto+Serif+TC:wght@400&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --color-paper:   #f5f5f5;   /* white-smoke */
+      --color-ink:     #2d3142;   /* jet-black */
+      --color-muted:   #4f5d75;   /* blue-slate */
+      --color-accent:  #bf4520;   /* burnt-tangerine */
+      --font-sans:     'Geist', system-ui, sans-serif;
+      --font-serif:    'Instrument Serif', 'Noto Serif', 'Noto Serif KR', serif;
+      --font-mono:     'Geist Mono', ui-monospace, monospace;
+    }
+
+    body {
+      font-family: var(--font-sans);
+      background: var(--color-paper);
+      color: var(--color-ink);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 3rem 2rem;
+    }
+
+    .frame { max-width: 1280px; width: 100%; min-width: 0; }
+    /* The SVG holds its readable width (min-width == the viewBox width, so the
+       type ramp is never silently scaled down). This wrapper lets a narrow
+       screen scroll the diagram instead of the whole page. */
+    .diagram-container { width: 100%; overflow-x: auto; }
+
+    .eyebrow {
+      font-family: var(--font-mono);
+      font-size: 0.66rem;
+      font-weight: 500;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--color-muted);
+      margin-bottom: 0.5rem;
+    }
+
+    h1 {
+      font-family: var(--font-serif);
+      font-size: clamp(1.5rem, 2.4vw + 0.75rem, 2rem);
+      font-weight: 400;
+      letter-spacing: -0.02em;
+      line-height: 1.15;
+      color: var(--color-ink);
+      margin-bottom: 1.5rem;
+    }
+
+    svg { width: 100%; min-width: 1280px; display: block; }
+    /* Paper has no scrollbar, so the local scroller would clip instead of
+       scroll. Let the diagram scale down to the sheet: smaller but whole
+       beats sharp but cut off. Must come after the svg rule above - a media
+       query adds no specificity, so a later plain rule would win. */
+    @media print {
+      .diagram-container { overflow-x: visible; }
+      svg { min-width: 0; }
+    }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <p class="eyebrow">design · verifying the work</p>
+    <h1>Tests decide whether the code works. The decision model (Jev) recommends how much human attention it needs.</h1>
+
+    <div class="diagram-container">
+      <svg viewBox="0 0 1280 740" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="verification-title verification-desc">
+        <title id="verification-title">Tests decide whether the code works. The decision model (Jev) recommends how much human attention it needs.</title>
+        <desc id="verification-desc">Verifying the work, container by container: in the Plan container the analyst (Pi + LLM, at most two attempts) writes the plan and the hidden tests, which live in the S3 bucket under hidden/, and the gate before, without an LLM, runs them on main as the sandbox user, where they must fail, otherwise the work goes back to the analyst; in the Build container the implementer writes the code without access to the hidden tests and pushes its own factory/* branch with a scoped token; in the Check container the gate after, without an LLM, runs the repo tests, the hidden tests and the diff policy on the pushed commit, on failure returns the work to Build (at most three attempts), and only once it passes does the reviewer assess the diff and the untestable criteria; the decision model (Jev) then assesses the untestable criteria live and, based on the evidence, recommends one of three levels of human attention: a quick look (draft PR with review:quick), a careful review (draft PR with review:careful), which is also the safe default when its confidence is below 0.8, or a human takeover (needs-human), and hard rules can only raise the level.</desc>
+        <defs>
+          <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/></marker>
+          <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#bf4520"/></marker>
+          <marker id="arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2e5aa8"/></marker>
+        </defs>
+
+        <rect width="100%" height="100%" fill="#f5f5f5"/>
+
+        <!-- ============ Zones: one Fargate container per phase (bg → zones → arrows → nodes) ============ -->
+        <!-- Plan: label sits between the STORES (x=136) and store → Gate before (x=360) verticals -->
+        <rect x="40" y="200" width="416" height="180" rx="8" fill="rgba(45,49,66,0.02)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+        <rect x="148" y="204" width="96" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="152" y="213" fill="#5a6580" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">PLAN CONTAINER</text>
+        <!-- Build: the only phase without hidden tests -->
+        <rect x="488" y="200" width="240" height="180" rx="8" fill="rgba(45,49,66,0.02)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+        <rect x="500" y="204" width="128" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="504" y="213" fill="#5a6580" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">BUILD CONTAINER · ≤3×</text>
+        <!-- Check: label ends before the hidden-tests drop at x=944 -->
+        <rect x="760" y="200" width="480" height="180" rx="8" fill="rgba(45,49,66,0.02)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+        <rect x="772" y="204" width="100" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="776" y="213" fill="#5a6580" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">CHECK CONTAINER</text>
+
+        <!-- ============ Arrows (drawn first, behind nodes) ============ -->
+        <!-- analyst → Hidden tests: STORES (analyst top edge → store left edge) -->
+        <path d="M 136,240 V 136 Q 136,128 144,128 H 272" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+        <!-- Hidden tests → Gate before (store bottom → gate top) -->
+        <line x1="360" y1="160" x2="360" y2="240" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+        <!-- Hidden tests → Gate after: Check reads hidden/, passes over Build, which cannot (dashed) -->
+        <path d="M 448,128 H 936 Q 944,128 944,136 V 240" fill="none" stroke="#4f5d75" stroke-width="1" stroke-dasharray="5,4" marker-end="url(#arrow)"/>
+        <!-- Gate before → implementer: FAIL = OK -->
+        <line x1="440" y1="280" x2="520" y2="280" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+        <!-- Gate before → analyst: PASS = BAD (loop under the row) -->
+        <path d="M 360,320 V 336 Q 360,344 352,344 H 144 Q 136,344 136,336 V 320" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+        <!-- implementer → Gate after: PUSH (agent pushes its own branch; gate tests that commit) -->
+        <line x1="696" y1="280" x2="776" y2="280" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+        <!-- Gate after → implementer: GATE FAIL (back to Build, loop under the row) -->
+        <path d="M 876,320 V 336 Q 876,344 868,344 H 616 Q 608,344 608,336 V 320" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+        <!-- Gate after → reviewer: PASS -->
+        <line x1="976" y1="280" x2="1048" y2="280" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+        <!-- reviewer → Jev: EVIDENCE (leaves the Check container) -->
+        <line x1="1136" y1="320" x2="1136" y2="424" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+        <!-- Jev → Recommendation for the human: LEVEL -->
+        <line x1="1056" y1="456" x2="1000" y2="456" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+        <!-- ============ Arrow labels (opaque masks, 8px gap) ============ -->
+        <rect x="186" y="108" width="36" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="204" y="117" fill="#5a6580" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">STORES</text>
+        <rect x="448" y="260" width="64" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="480" y="269" fill="#5a6580" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">FAIL = OK</text>
+        <rect x="208" y="352" width="80" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="248" y="361" fill="#5a6580" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">PASS = BAD</text>
+        <rect x="722" y="260" width="28" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="736" y="269" fill="#5a6580" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">PUSH</text>
+        <rect x="792" y="352" width="56" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="820" y="361" fill="#5a6580" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">GATE FAIL</text>
+        <rect x="996" y="260" width="32" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="1012" y="269" fill="#5a6580" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">PASS</text>
+        <rect x="1144" y="392" width="44" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="1166" y="401" fill="#5a6580" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">EVIDENCE</text>
+        <rect x="1008" y="436" width="40" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="1028" y="445" fill="#5a6580" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">LEVEL</text>
+
+        <!-- ============ Nodes ============ -->
+        <!-- Hidden tests (store, focal #1, outside the containers): Plan writes, Check reads -->
+        <rect x="272" y="96" width="176" height="64" rx="6" fill="#f5f5f5"/>
+        <rect x="272" y="96" width="176" height="64" rx="6" fill="rgba(191,69,32,0.08)" stroke="#bf4520" stroke-width="1"/>
+        <rect x="280" y="102" width="28" height="12" rx="2" fill="none" stroke="rgba(191,69,32,0.50)" stroke-width="0.8"/>
+        <text x="294" y="111" fill="#bf4520" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">S3</text>
+        <text x="360" y="127" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', system-ui, sans-serif" text-anchor="middle">Hidden tests</text>
+        <text x="360" y="142" fill="#4f5d75" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">in the bucket under hidden/</text>
+        <text x="360" y="154" fill="#4f5d75" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">implementer can't see them</text>
+        <!-- analyst (Plan, LLM) -->
+        <rect x="56" y="240" width="160" height="80" rx="6" fill="#f5f5f5"/>
+        <rect x="56" y="240" width="160" height="80" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+        <rect x="64" y="246" width="28" height="12" rx="2" fill="none" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+        <text x="78" y="255" fill="rgba(45,49,66,0.8)" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">LLM</text>
+        <text x="136" y="276" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', system-ui, sans-serif" text-anchor="middle">analyst</text>
+        <text x="136" y="291" fill="#4f5d75" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">Pi + LLM · ≤2 attempts</text>
+        <text x="136" y="303" fill="#4f5d75" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">plan + hidden tests</text>
+        <!-- Gate before (Plan, no LLM) -->
+        <rect x="280" y="240" width="160" height="80" rx="6" fill="#f5f5f5"/>
+        <rect x="280" y="240" width="160" height="80" rx="6" fill="rgba(191,69,32,0.05)" stroke="rgba(191,69,32,0.50)" stroke-width="1" stroke-dasharray="4,4"/>
+        <rect x="288" y="246" width="44" height="12" rx="2" fill="none" stroke="rgba(191,69,32,0.40)" stroke-width="0.8"/>
+        <text x="310" y="255" fill="#bf4520" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">NO LLM</text>
+        <text x="360" y="276" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', system-ui, sans-serif" text-anchor="middle">Gate before</text>
+        <text x="360" y="291" fill="#4f5d75" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">sandbox user</text>
+        <text x="360" y="303" fill="#4f5d75" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">hidden tests on main</text>
+        <!-- implementer (Build, LLM, no hidden tests) -->
+        <rect x="520" y="240" width="176" height="80" rx="6" fill="#f5f5f5"/>
+        <rect x="520" y="240" width="176" height="80" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+        <rect x="528" y="246" width="28" height="12" rx="2" fill="none" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+        <text x="542" y="255" fill="rgba(45,49,66,0.8)" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">LLM</text>
+        <text x="608" y="276" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', system-ui, sans-serif" text-anchor="middle">implementer</text>
+        <text x="608" y="291" fill="#4f5d75" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">Pi + LLM · push factory/*</text>
+        <text x="608" y="303" fill="#4f5d75" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">no hidden tests</text>
+        <!-- Gate after (Check, no LLM, focal #2) -->
+        <rect x="776" y="240" width="200" height="80" rx="6" fill="#f5f5f5"/>
+        <rect x="776" y="240" width="200" height="80" rx="6" fill="rgba(191,69,32,0.08)" stroke="#bf4520" stroke-width="1.2" stroke-dasharray="4,4"/>
+        <rect x="784" y="246" width="44" height="12" rx="2" fill="none" stroke="rgba(191,69,32,0.50)" stroke-width="0.8"/>
+        <text x="806" y="255" fill="#bf4520" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">NO LLM</text>
+        <text x="876" y="276" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', system-ui, sans-serif" text-anchor="middle">Gate after</text>
+        <text x="876" y="291" fill="#4f5d75" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">repo tests + hidden tests</text>
+        <text x="876" y="303" fill="#4f5d75" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">+ diff policy · pushed commit</text>
+        <!-- reviewer (Check, LLM, runs only after the gate passes) -->
+        <rect x="1048" y="240" width="176" height="80" rx="6" fill="#f5f5f5"/>
+        <rect x="1048" y="240" width="176" height="80" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+        <rect x="1056" y="246" width="28" height="12" rx="2" fill="none" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+        <text x="1070" y="255" fill="rgba(45,49,66,0.8)" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">LLM</text>
+        <text x="1136" y="276" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', system-ui, sans-serif" text-anchor="middle">reviewer</text>
+        <text x="1136" y="291" fill="#4f5d75" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">reads diff · untestable AC</text>
+        <text x="1136" y="303" fill="#4f5d75" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">only if the gate passes</text>
+        <!-- Jev (external decision, outside the containers) -->
+        <rect x="1056" y="424" width="160" height="64" rx="6" fill="#f5f5f5"/>
+        <rect x="1056" y="424" width="160" height="64" rx="6" fill="rgba(45,49,66,0.03)" stroke="rgba(45,49,66,0.30)" stroke-width="1"/>
+        <rect x="1064" y="430" width="28" height="12" rx="2" fill="none" stroke="rgba(45,49,66,0.22)" stroke-width="0.8"/>
+        <text x="1078" y="439" fill="#5a6580" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">EXT</text>
+        <text x="1136" y="460" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', system-ui, sans-serif" text-anchor="middle">Decision model (Jev)</text>
+        <text x="1136" y="476" fill="#4f5d75" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">criteria + level</text>
+        <!-- Recommendation for the human (human: ink-strong border); three levels as stacked rows -->
+        <rect x="760" y="424" width="240" height="200" rx="6" fill="#f5f5f5"/>
+        <rect x="760" y="424" width="240" height="200" rx="6" fill="#ffffff" stroke="#111111" stroke-width="2"/>
+        <text x="880" y="460" fill="#111111" font-size="12" font-weight="600" font-family="'Geist', system-ui, sans-serif" text-anchor="middle">Recommendation for the human</text>
+        <!-- Row 1: Quick look -->
+        <rect x="772" y="484" width="216" height="40" rx="4" fill="rgba(45,49,66,0.03)" stroke="rgba(45,49,66,0.18)" stroke-width="0.8"/>
+        <text x="784" y="501" fill="#2d3142" font-size="11" font-weight="600" font-family="'Geist', system-ui, sans-serif">Quick look</text>
+        <text x="784" y="515" fill="#4f5d75" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">draft PR · review:quick</text>
+        <!-- Row 2: Careful review (safe default when Jev is unsure) -->
+        <rect x="772" y="528" width="216" height="40" rx="4" fill="rgba(45,49,66,0.03)" stroke="rgba(45,49,66,0.18)" stroke-width="0.8"/>
+        <text x="784" y="545" fill="#2d3142" font-size="11" font-weight="600" font-family="'Geist', system-ui, sans-serif">Careful review</text>
+        <text x="784" y="559" fill="#4f5d75" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">draft PR · review:careful</text>
+        <rect x="928" y="534" width="52" height="12" rx="2" fill="none" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+        <text x="954" y="543" fill="rgba(45,49,66,0.8)" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">DEFAULT</text>
+        <!-- Row 3: Take over -->
+        <rect x="772" y="572" width="216" height="40" rx="4" fill="rgba(45,49,66,0.03)" stroke="rgba(45,49,66,0.18)" stroke-width="0.8"/>
+        <text x="784" y="589" fill="#111111" font-size="11" font-weight="600" font-family="'Geist', system-ui, sans-serif">Take over</text>
+        <text x="784" y="603" fill="#4f5d75" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">needs-human · issue to a human</text>
+
+        <!-- ============ Callouts (italic serif, dashed leaders) ============ -->
+        <!-- Callout 1: tests that already pass on main prove nothing → lands on PASS = BAD loop -->
+        <text x="40" y="424" fill="#2d3142" font-size="14" font-style="italic" font-family="'Instrument Serif', 'Noto Serif', serif">Tests that already pass on main verify nothing.</text>
+        <text x="40" y="442" fill="#2d3142" font-size="14" font-style="italic" font-family="'Instrument Serif', 'Noto Serif', serif">So the gate runs them on main first.</text>
+        <path d="M 252 406 Q 318 398 320 348" fill="none" stroke="rgba(45,49,66,0.40)" stroke-width="1" stroke-dasharray="4,3"/>
+        <circle cx="320" cy="344" r="2" fill="#2d3142"/>
+        <!-- Callout 2: hard rules only raise the level → lands on the Take over row -->
+        <text x="440" y="548" fill="#2d3142" font-size="14" font-style="italic" font-family="'Instrument Serif', 'Noto Serif', serif">Hard rules only raise the level:</text>
+        <text x="440" y="566" fill="#2d3142" font-size="14" font-style="italic" font-family="'Instrument Serif', 'Noto Serif', serif">security, protected paths and exhausted revisions</text>
+        <text x="440" y="584" fill="#2d3142" font-size="14" font-style="italic" font-family="'Instrument Serif', 'Noto Serif', serif">always go to Take over.</text>
+        <path d="M 564 590 Q 664 606 756 592" fill="none" stroke="rgba(45,49,66,0.40)" stroke-width="1" stroke-dasharray="4,3"/>
+        <circle cx="760" cy="592" r="2" fill="#2d3142"/>
+
+        <!-- ============ Legend (bottom strip) ============ -->
+        <line x1="40" y1="664" x2="1240" y2="664" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+        <text x="40" y="684" fill="#4f5d75" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.18em">LEGEND</text>
+        <rect x="40" y="696" width="24" height="12" rx="2" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+        <text x="72" y="706" fill="#4f5d75" font-size="8.5" font-family="'Geist', system-ui, sans-serif">LLM role (Pi + LLM)</text>
+        <rect x="200" y="696" width="24" height="12" rx="2" fill="rgba(191,69,32,0.05)" stroke="rgba(191,69,32,0.50)" stroke-width="1" stroke-dasharray="3,2"/>
+        <text x="232" y="706" fill="#4f5d75" font-size="8.5" font-family="'Geist', system-ui, sans-serif">no-LLM role</text>
+        <rect x="320" y="696" width="24" height="12" rx="2" fill="rgba(45,49,66,0.02)" stroke="rgba(45,49,66,0.30)" stroke-width="0.8"/>
+        <text x="352" y="706" fill="#4f5d75" font-size="8.5" font-family="'Geist', system-ui, sans-serif">Fargate container (phase)</text>
+        <rect x="480" y="696" width="24" height="12" rx="2" fill="rgba(191,69,32,0.08)" stroke="#bf4520" stroke-width="1"/>
+        <text x="512" y="706" fill="#4f5d75" font-size="8.5" font-family="'Geist', system-ui, sans-serif">store (S3)</text>
+        <rect x="584" y="696" width="24" height="12" rx="2" fill="rgba(45,49,66,0.03)" stroke="rgba(45,49,66,0.30)" stroke-width="1"/>
+        <text x="616" y="706" fill="#4f5d75" font-size="8.5" font-family="'Geist', system-ui, sans-serif">external decision</text>
+        <rect x="712" y="696" width="24" height="12" rx="2" fill="#ffffff" stroke="#111111" stroke-width="2"/>
+        <text x="744" y="706" fill="#4f5d75" font-size="8.5" font-family="'Geist', system-ui, sans-serif">human</text>
+        <line x1="800" y1="702" x2="828" y2="702" stroke="#4f5d75" stroke-width="1" stroke-dasharray="5,4" marker-end="url(#arrow)"/>
+        <text x="836" y="706" fill="#4f5d75" font-size="8.5" font-family="'Geist', system-ui, sans-serif">hidden tests for Check only</text>
+      </svg>
+    </div>
+  </div>
+</body>
+</html>

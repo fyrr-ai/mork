@@ -1,0 +1,57 @@
+[tools]
+node = "24.21.0"
+bun = "1.4.2"
+opentofu = "1.12.6"
+terragrunt = "1.1.4"
+jq = "1.8.1"
+
+[env]
+_.path = ["{{config_root}}/node_modules/.bin"]
+# Deployment-specific values (AWS_PROFILE, AWS_REGION, MORK_ACCOUNT, MORK_NAME…) belong in
+# mise.local.toml, which is not committed. See docs/deployment.md.
+# Avoid IMDS probes when the AWS CLI runs outside EC2.
+AWS_EC2_METADATA_DISABLED = "true"
+
+[tasks.install]
+description = "Install workspace dependencies"
+run = "bun install --frozen-lockfile"
+
+[tasks.test]
+description = "Unit tests"
+run = "bun test packages"
+
+[tasks.typecheck]
+description = "Type-check every package"
+run = "for p in packages/*; do tsc -p \"$p\" --noEmit || exit 1; done"
+
+[tasks.lint]
+description = "Biome lint and format check"
+run = "biome check packages"
+
+[tasks.check]
+description = "Everything CI should run"
+depends = ["test", "typecheck", "lint"]
+
+[tasks."images:build"]
+description = "Build the runner, egress and lambda images locally"
+run = "for t in runner egress lambda; do docker build --platform linux/amd64 --target $t -t mork-$t:dev . || exit 1; done"
+
+[tasks.deploy]
+description = "Build the images, push them to ECR and point the Lambdas at the new image"
+run = "scripts/deploy.sh"
+
+[tasks."secrets:put"]
+description = "Create or update the Mork secrets in Secrets Manager"
+run = "scripts/aws-secrets.sh"
+
+[tasks."e2e:watch"]
+description = "Follow the newest (or given) Step Functions execution"
+run = "scripts/watch-execution.sh"
+
+[tasks."timeline:export"]
+description = "Export one decision point from the timeline as jevcal JSONL (usage: mise run timeline:export -- recommendation > data.jsonl)"
+run = "bun packages/timeline/src/cli.ts"
+
+[tasks."rulesets:apply"]
+description = "Apply the default-branch and agent-branch rulesets to a repository (usage: mise run rulesets:apply -- owner/repo)"
+run = "scripts/rulesets.sh"

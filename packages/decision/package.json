@@ -1,0 +1,6 @@
+{
+  "name": "@mork/decision",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" }
+}

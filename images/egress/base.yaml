@@ -1,0 +1,45 @@
+# iron-proxy config for a mork phase task. Credentials are injected here, at
+# the boundary: the agent's processes send requests without real keys.
+dns:
+  enabled: false
+proxy:
+  http_listen: "127.0.0.1:18080"
+  https_listen: "127.0.0.1:18443"
+  tunnel_listen: "127.0.0.1:3128"
+  # An LLM can take minutes before the first byte of a long completion.
+  upstream_response_header_timeout: "15m"
+  max_request_body_bytes: 104857600
+tls:
+  mode: "mitm"
+  ca_cert: "/run/mork-egress/ca.crt"
+  ca_key: "/run/mork-egress/ca.key"
+log:
+  level: "info"
+transforms:
+  # Logs (warn: true) or blocks requests outside the list. The station could
+  # bypass the proxy (Fargate has no iptables), so this is visibility first.
+  - name: allowlist
+    config:
+      warn: @ALLOW_WARN@
+      domains:
+        - "@LLM_HOST@"
+        - "github.com"
+        - "*.github.com"
+        - "*.githubusercontent.com"
+        - "registry.npmjs.org"
+        - "registry.yarnpkg.com"
+        - "pypi.org"
+        - "files.pythonhosted.org"
+        - "hub.getdbt.com"
+        # @EXTRA_DOMAINS@ (MORK_EGRESS_ALLOW)
+  - name: secrets
+    config:
+      secrets:
+        - source:
+            type: env
+            var: LLM_API_KEY
+          inject:
+            header: "Authorization"
+            formatter: "Bearer {{ .Value }}"
+          rules:
+            - host: "@LLM_HOST@"

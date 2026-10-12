@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mork on AWS: Step Functions and three phases on Fargate</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&family=Noto+Serif:ital@0;1&family=Noto+Sans+KR:wght@400;500;600&family=Noto+Serif+KR:wght@400&family=Noto+Sans+TC:wght@400;500;600&family=Noto+Serif+TC:wght@400&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --color-paper:   #f5f5f5;   /* white-smoke */
+      --color-ink:     #2d3142;   /* jet-black */
+      --color-muted:   #4f5d75;   /* blue-slate */
+      --color-accent:  #bf4520;   /* burnt-tangerine */
+      --font-sans:     'Geist', system-ui, sans-serif;
+      --font-serif:    'Instrument Serif', 'Noto Serif', 'Noto Serif KR', serif;
+      --font-mono:     'Geist Mono', ui-monospace, monospace;
+    }
+
+    body {
+      font-family: var(--font-sans);
+      background: var(--color-paper);
+      color: var(--color-ink);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 3rem 2rem;
+    }
+
+    .frame { max-width: 1280px; width: 100%; min-width: 0; }
+    .diagram-container { width: 100%; overflow-x: auto; }
+
+    .eyebrow {
+      font-family: var(--font-mono);
+      font-size: 0.66rem;
+      font-weight: 500;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--color-muted);
+      margin-bottom: 0.5rem;
+    }
+
+    h1 {
+      font-family: var(--font-serif);
+      font-size: clamp(1.5rem, 2.4vw + 0.75rem, 2rem);
+      font-weight: 400;
+      letter-spacing: -0.02em;
+      line-height: 1.15;
+      color: var(--color-ink);
+      margin-bottom: 1.5rem;
+    }
+
+    svg { width: 100%; min-width: 1280px; display: block; }
+    @media print {
+      .diagram-container { overflow-x: visible; }
+      svg { min-width: 0; }
+    }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <p class="eyebrow">v1 · AWS · Terraform module infra/aws</p>
+    <h1>Mork on AWS: Step Functions and three phases on Fargate</h1>
+
+    <div class="diagram-container">
+      <svg viewBox="0 0 1280 720" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="aws-architecture-title aws-architecture-desc">
+        <title id="aws-architecture-title">Mork on AWS: Step Functions and three phases on Fargate</title>
+        <desc id="aws-architecture-desc">The deployed Mork v1 architecture in an AWS account managed by the Terraform module infra/aws: tasks arrive from two sources, a GitHub webhook (the factory label) is received by the intake Lambda through a Function URL with HMAC and trust verification, and an @mork mention in Slack is received by the slack Lambda through its own Function URL with a verified signature, and both start the mork state machine in Step Functions, which owns ordering, retries and timeouts and itself starts the Plan, Build and Check phases (one image, mork-runner, three task definitions on Fargate in the private subnets of the VPC) through ecs:runTask with a task token and waits for their callback; the phases clone the repository, Build pushes its own factory/* branch with a scoped token, they call the LLM with a key from Secrets Manager, the runner supervises every LLM station through the decision model (Jev), and phase outputs are read and written in one Mork S3 bucket, so the execution carries only a small brief; the steps Lambda handles the Start (triage; for Slack it finds or creates the Jira issue), Decide and Handover steps, reads the outputs from the bucket, has Jev assess the criteria and the review level live, opens a draft PR only for the commit that passed the gate, or hands the work to a human, and reports progress to GitHub or to the Slack thread and to Jira.</desc>
+        <defs>
+          <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/></marker>
+          <marker id="arrow-start" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto-start-reverse"><polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/></marker>
+          <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#bf4520"/></marker>
+          <marker id="arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2e5aa8"/></marker>
+        </defs>
+
+        <rect width="100%" height="100%" fill="#f5f5f5"/>
+
+        <!-- ============ ZONES (bg → zones → arrows → nodes) ============ -->
+        <!-- Zone: AWS account (Terraform module infra/aws) -->
+        <rect x="232" y="116" width="840" height="492" rx="8" fill="rgba(45,49,66,0.02)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+        <rect x="248" y="120" width="180" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="252" y="129" fill="#5a6580" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">AWS ACCOUNT</text>
+
+        <!-- Zone: VPC · private subnets, only the phase containers (label sits between the x=648 and x=1000 connectors) -->
+        <rect x="424" y="444" width="624" height="144" rx="8" fill="rgba(45,49,66,0.02)" stroke="rgba(45,49,66,0.40)" stroke-width="1" stroke-dasharray="4,3"/>
+        <rect x="700" y="448" width="212" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="704" y="457" fill="#5a6580" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">VPC · PRIVATE SUBNETS</text>
+
+        <!-- ============ ARROWS (12) ============ -->
+        <!-- 1. GitHub → Intake Lambda: WEBHOOK -->
+        <line x1="200" y1="316" x2="264" y2="316" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#arrow-link)"/>
+        <!-- 2. Intake Lambda → Step Functions: START -->
+        <line x1="440" y1="316" x2="504" y2="316" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+        <!-- 3. Step Functions → Steps Lambda: INVOKE (Start, Decide, Handover) -->
+        <line x1="696" y1="316" x2="776" y2="316" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+        <!-- 4. Steps Lambda → GitHub: PR/LABELS (top port, over the top into GitHub top) -->
+        <path d="M 816,276 V 248 Q 816,240 808,240 H 128 Q 120,240 120,248 V 276" fill="none" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#arrow-link)"/>
+        <!-- 5. Steps Lambda ↔ Mork bucket: READ / WRITE -->
+        <line x1="904" y1="212" x2="904" y2="276" stroke="#4f5d75" stroke-width="1.2" marker-start="url(#arrow-start)" marker-end="url(#arrow)"/>
+        <!-- 6. Phases ↔ Mork bucket: OUTPUTS -->
+        <line x1="1000" y1="212" x2="1000" y2="472" stroke="#4f5d75" stroke-width="1.2" marker-start="url(#arrow-start)" marker-end="url(#arrow)"/>
+        <!-- 7. Steps Lambda → Jev: DECIDE (dashed, hops over OUTPUTS at x=1000) -->
+        <path d="M 960,316 H 992 a 8,8 0 0,1 16,0 H 1104" fill="none" stroke="#2e5aa8" stroke-width="1" stroke-dasharray="5,4" marker-end="url(#arrow-link)"/>
+        <!-- 8. Step Functions → Phases: RUNTASK+TOKEN (ecs:runTask.waitForTaskToken) -->
+        <line x1="568" y1="356" x2="568" y2="472" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+        <!-- 9. Phases → Step Functions: CALLBACK (dashed return) -->
+        <line x1="648" y1="472" x2="648" y2="356" stroke="#4f5d75" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrow)"/>
+        <!-- 10. Phases → LLM provider: INFERENCE -->
+        <line x1="1016" y1="520" x2="1104" y2="520" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#arrow-link)"/>
+        <!-- 11. Phases → GitHub: CLONE · PUSH (Build pushes its own factory/* branch) -->
+        <path d="M 472,520 H 128 Q 120,520 120,512 V 356" fill="none" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#arrow-link)"/>
+        <!-- 12. Slack Lambda → Step Functions: START (hops over arrow 4 at y=240) -->
+        <path d="M 440,180 H 592 Q 600,180 600,188 V 232 a 8,8 0 0,1 0,16 V 276" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+        <!-- ============ ARROW LABELS (masked, 8px gap) ============ -->
+        <rect x="209" y="296" width="46" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="232" y="305" fill="#2e5aa8" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">WEBHOOK</text>
+        <rect x="455" y="296" width="34" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="472" y="305" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">START</text>
+        <rect x="716" y="296" width="40" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="736" y="305" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">INVOKE</text>
+        <rect x="446" y="220" width="52" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="472" y="229" fill="#2e5aa8" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">PR/LABELS</text>
+        <rect x="499" y="160" width="34" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="516" y="169" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">START</text>
+        <rect x="912" y="238" width="64" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="944" y="247" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">READ / WRITE</text>
+        <rect x="1008" y="380" width="48" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="1032" y="389" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">OUTPUTS</text>
+        <rect x="1035" y="296" width="42" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="1056" y="305" fill="#2e5aa8" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">DECIDE</text>
+        <rect x="484" y="384" width="76" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="522" y="393" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">RUNTASK+TOKEN</text>
+        <rect x="656" y="384" width="52" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="682" y="393" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">CALLBACK</text>
+        <rect x="1032" y="500" width="56" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="1060" y="509" fill="#2e5aa8" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">INFERENCE</text>
+        <rect x="276" y="500" width="72" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="312" y="509" fill="#2e5aa8" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">CLONE · PUSH</text>
+
+        <!-- ============ NODES ============ -->
+        <!-- Node: GitHub (external) -->
+        <rect x="40" y="276" width="160" height="80" rx="6" fill="#f5f5f5"/>
+        <rect x="40" y="276" width="160" height="80" rx="6" fill="rgba(45,49,66,0.03)" stroke="rgba(45,49,66,0.30)" stroke-width="1"/>
+        <rect x="48" y="282" width="28" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.22)" stroke-width="0.8"/>
+        <text x="62" y="291" fill="#5a6580" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">EXT</text>
+        <text x="120" y="318" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">GitHub</text>
+        <text x="120" y="334" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">webhooks · repositories</text>
+
+        <!-- Node: Intake Lambda (account, outside the VPC) -->
+        <rect x="264" y="284" width="176" height="64" rx="6" fill="#f5f5f5"/>
+        <rect x="264" y="284" width="176" height="64" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+        <rect x="272" y="290" width="36" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+        <text x="290" y="299" fill="#2d3142" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">LAMBDA</text>
+        <text x="352" y="318" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Intake Lambda</text>
+        <text x="352" y="334" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">Function URL · HMAC · trust</text>
+
+        <!-- Node: Slack Lambda (second task source: @mork mentions, Jira as tracker) -->
+        <rect x="264" y="148" width="176" height="64" rx="6" fill="#f5f5f5"/>
+        <rect x="264" y="148" width="176" height="64" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+        <rect x="272" y="154" width="36" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+        <text x="290" y="163" fill="#2d3142" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">LAMBDA</text>
+        <text x="352" y="182" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Slack Lambda</text>
+        <text x="352" y="198" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">@mork · Function URL</text>
+
+        <!-- Node: Step Functions (focal #1) -->
+        <rect x="504" y="276" width="192" height="80" rx="6" fill="#f5f5f5"/>
+        <rect x="504" y="276" width="192" height="80" rx="6" fill="rgba(191,69,32,0.08)" stroke="#bf4520" stroke-width="1"/>
+        <rect x="512" y="282" width="28" height="12" rx="2" fill="transparent" stroke="rgba(191,69,32,0.50)" stroke-width="0.8"/>
+        <text x="526" y="291" fill="#bf4520" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">SFN</text>
+        <text x="600" y="310" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Step Functions</text>
+        <text x="600" y="326" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">mork</text>
+        <text x="600" y="339" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">order, retries, timeouts</text>
+
+        <!-- Node: Steps Lambda (Start, Decide, Handover; PR, labels and Slack/Jira progress) -->
+        <rect x="776" y="276" width="184" height="80" rx="6" fill="#f5f5f5"/>
+        <rect x="776" y="276" width="184" height="80" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+        <rect x="784" y="282" width="36" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+        <text x="802" y="291" fill="#2d3142" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">LAMBDA</text>
+        <text x="868" y="310" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Steps Lambda</text>
+        <text x="868" y="326" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">Start · Decide · Handover</text>
+        <text x="868" y="339" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">PR · Slack/Jira updates</text>
+
+        <!-- Node: Mork bucket (store; in the account, outside the VPC) -->
+        <rect x="856" y="148" width="184" height="64" rx="6" fill="#f5f5f5"/>
+        <rect x="856" y="148" width="184" height="64" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+        <rect x="864" y="154" width="28" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+        <text x="878" y="163" fill="#2d3142" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">S3</text>
+        <text x="948" y="182" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Mork bucket</text>
+        <text x="948" y="198" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">S3 · phase outputs only</text>
+
+        <!-- Node: Phases Plan · Build · Check (one image, three Fargate task definitions) -->
+        <rect x="472" y="472" width="544" height="96" rx="6" fill="#f5f5f5"/>
+        <rect x="472" y="472" width="544" height="96" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+        <rect x="480" y="478" width="28" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+        <text x="494" y="487" fill="#2d3142" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">ECS</text>
+        <text x="744" y="494" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Phases Plan · Build · Check</text>
+        <text x="744" y="508" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">image mork-runner · supervised by Jev · keys from Secrets Manager</text>
+        <rect x="484" y="520" width="168" height="36" rx="4" fill="rgba(45,49,66,0.03)" stroke="rgba(45,49,66,0.30)" stroke-width="0.8"/>
+        <text x="568" y="534" fill="#2d3142" font-size="9" font-weight="600" font-family="'Geist Mono', monospace" text-anchor="middle">Plan</text>
+        <text x="568" y="547" fill="#4f5d75" font-size="8.5" font-family="'Geist Mono', monospace" text-anchor="middle">analyst → gate before</text>
+        <rect x="660" y="520" width="168" height="36" rx="4" fill="rgba(45,49,66,0.03)" stroke="rgba(45,49,66,0.30)" stroke-width="0.8"/>
+        <text x="744" y="534" fill="#2d3142" font-size="9" font-weight="600" font-family="'Geist Mono', monospace" text-anchor="middle">Build</text>
+        <text x="744" y="547" fill="#4f5d75" font-size="8.5" font-family="'Geist Mono', monospace" text-anchor="middle">push factory/* · no hidden/</text>
+        <rect x="836" y="520" width="168" height="36" rx="4" fill="rgba(45,49,66,0.03)" stroke="rgba(45,49,66,0.30)" stroke-width="0.8"/>
+        <text x="920" y="534" fill="#2d3142" font-size="9" font-weight="600" font-family="'Geist Mono', monospace" text-anchor="middle">Check</text>
+        <text x="920" y="547" fill="#4f5d75" font-size="8.5" font-family="'Geist Mono', monospace" text-anchor="middle">gate after → reviewer</text>
+
+        <!-- Node: LLM provider (external, public API) -->
+        <rect x="1104" y="488" width="136" height="64" rx="6" fill="#f5f5f5"/>
+        <rect x="1104" y="488" width="136" height="64" rx="6" fill="rgba(45,49,66,0.03)" stroke="rgba(45,49,66,0.30)" stroke-width="1"/>
+        <rect x="1112" y="494" width="28" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.22)" stroke-width="0.8"/>
+        <text x="1126" y="503" fill="#5a6580" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">LLM</text>
+        <text x="1172" y="522" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">LLM provider</text>
+        <text x="1172" y="538" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">public API</text>
+
+        <!-- Node: Jev (external decision API, focal #2) -->
+        <rect x="1104" y="284" width="136" height="64" rx="6" fill="#f5f5f5"/>
+        <rect x="1104" y="284" width="136" height="64" rx="6" fill="rgba(45,49,66,0.03)" stroke="#bf4520" stroke-width="1.2" stroke-dasharray="5,4"/>
+        <rect x="1112" y="290" width="28" height="12" rx="2" fill="transparent" stroke="rgba(191,69,32,0.50)" stroke-width="0.8"/>
+        <text x="1126" y="299" fill="#bf4520" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">EXT</text>
+        <text x="1172" y="318" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Jev</text>
+        <text x="1172" y="334" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">decision model · live</text>
+
+        <!-- ============ CALLOUTS (italic serif) ============ -->
+        <!-- Callout 1: only a brief between phases, outputs in one bucket → lands on the Mork bucket -->
+        <text x="568" y="56" fill="#2d3142" font-size="14" font-style="italic" font-family="'Instrument Serif', 'Noto Serif', serif">Only a small brief flows between phases;</text>
+        <text x="568" y="74" fill="#2d3142" font-size="14" font-style="italic" font-family="'Instrument Serif', 'Noto Serif', serif">outputs live in one S3 bucket.</text>
+        <path d="M 742 70 Q 830 76 852 172" fill="none" stroke="rgba(45,49,66,0.40)" stroke-width="1" stroke-dasharray="4,3"/>
+        <circle cx="856" cy="176" r="2" fill="#2d3142"/>
+
+        <!-- Callout 2: Step Functions starts each phase and waits for its callback → lands on the RUNTASK+TOKEN edge -->
+        <text x="248" y="388" fill="#2d3142" font-size="14" font-style="italic" font-family="'Instrument Serif', 'Noto Serif', serif">Step Functions starts each phase</text>
+        <text x="248" y="406" fill="#2d3142" font-size="14" font-style="italic" font-family="'Instrument Serif', 'Noto Serif', serif">on Fargate and waits</text>
+        <text x="248" y="424" fill="#2d3142" font-size="14" font-style="italic" font-family="'Instrument Serif', 'Noto Serif', serif">for its callback.</text>
+        <path d="M 360 424 Q 488 446 564 428" fill="none" stroke="rgba(45,49,66,0.40)" stroke-width="1" stroke-dasharray="4,3"/>
+        <circle cx="568" cy="428" r="2" fill="#2d3142"/>
+
+        <!-- ============ LEGEND STRIP ============ -->
+        <line x1="40" y1="652" x2="1240" y2="652" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+        <text x="40" y="672" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">LEGEND</text>
+        <rect x="40" y="684" width="14" height="10" rx="2" fill="rgba(191,69,32,0.08)" stroke="#bf4520" stroke-width="1"/>
+        <text x="60" y="692" fill="#4f5d75" font-size="8.5" font-family="'Geist', sans-serif">Step Functions (focal)</text>
+        <rect x="180" y="684" width="14" height="10" rx="2" fill="rgba(45,49,66,0.03)" stroke="#bf4520" stroke-width="1" stroke-dasharray="3,2"/>
+        <text x="200" y="692" fill="#4f5d75" font-size="8.5" font-family="'Geist', sans-serif">Jev (external, focal)</text>
+        <rect x="312" y="684" width="14" height="10" rx="2" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+        <text x="332" y="692" fill="#4f5d75" font-size="8.5" font-family="'Geist', sans-serif">Component</text>
+        <rect x="396" y="684" width="14" height="10" rx="2" fill="rgba(45,49,66,0.03)" stroke="rgba(45,49,66,0.30)" stroke-width="1"/>
+        <text x="416" y="692" fill="#4f5d75" font-size="8.5" font-family="'Geist', sans-serif">External service</text>
+        <rect x="500" y="684" width="14" height="10" rx="2" fill="rgba(45,49,66,0.02)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+        <text x="520" y="692" fill="#4f5d75" font-size="8.5" font-family="'Geist', sans-serif">AWS account</text>
+        <rect x="576" y="684" width="14" height="10" rx="2" fill="rgba(45,49,66,0.02)" stroke="rgba(45,49,66,0.40)" stroke-width="1" stroke-dasharray="3,2"/>
+        <text x="596" y="692" fill="#4f5d75" font-size="8.5" font-family="'Geist', sans-serif">VPC, private subnets</text>
+        <line x1="712" y1="689" x2="740" y2="689" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+        <text x="748" y="692" fill="#4f5d75" font-size="8.5" font-family="'Geist', sans-serif">Internal call</text>
+        <line x1="832" y1="689" x2="860" y2="689" stroke="#4f5d75" stroke-width="1.2" marker-start="url(#arrow-start)" marker-end="url(#arrow)"/>
+        <text x="868" y="692" fill="#4f5d75" font-size="8.5" font-family="'Geist', sans-serif">Both ways</text>
+        <line x1="932" y1="689" x2="960" y2="689" stroke="#4f5d75" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrow)"/>
+        <text x="968" y="692" fill="#4f5d75" font-size="8.5" font-family="'Geist', sans-serif">Callback</text>
+        <line x1="1024" y1="689" x2="1052" y2="689" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#arrow-link)"/>
+        <text x="1060" y="692" fill="#4f5d75" font-size="8.5" font-family="'Geist', sans-serif">HTTP / API</text>
+        <line x1="1124" y1="689" x2="1152" y2="689" stroke="#2e5aa8" stroke-width="1" stroke-dasharray="5,4" marker-end="url(#arrow-link)"/>
+        <text x="1160" y="692" fill="#4f5d75" font-size="8.5" font-family="'Geist', sans-serif">Decision API</text>
+      </svg>
+    </div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,10 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.env
+.env.*
+.mork-local/
+mise.local.toml
+*.tfstate*
+.terraform/
+.terraform.lock.hcl

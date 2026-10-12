@@ -1,0 +1,10 @@
+        - source:
+            type: env
+            var: GITHUB_PUSH_TOKEN
+          inject:
+            header: "Authorization"
+            formatter: 'Basic {{ base64 "x-access-token:" .Value }}'
+          # Only this task's repository: other repositories get no credential.
+          rules:
+            - host: "github.com"
+              paths: ["/@REPO@.git/*", "/@REPO@/*"]

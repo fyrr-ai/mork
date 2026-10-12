@@ -1,0 +1,26 @@
+# Slack app for Mork. Create it at https://api.slack.com/apps → "From a
+# manifest". The request URL is the `slack_events_url` output of the
+# Mork deployment stack. The bot token (xoxb-…) and the signing
+# secret go to Secrets Manager: mork/slack-bot-token and
+# mork/slack-signing-secret.
+display_information:
+  name: mork
+  description: Mork turns a request in Slack into a tracked issue and a verified draft PR
+features:
+  bot_user:
+    display_name: mork
+    always_online: true
+oauth_config:
+  scopes:
+    bot:
+      - app_mentions:read
+      - chat:write
+      - reactions:write
+settings:
+  event_subscriptions:
+    request_url: https://slack-events.example.com/
+    bot_events:
+      - app_mention
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+  token_rotation_enabled: false
