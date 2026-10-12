@@ -1,6 +1,6 @@
 // The recommendation a human gets with the finished work. Hard rules decide
-// first and can only raise the level; the decision model may lower the safe
-// default (careful) to quick only when it is confident and no rule objects.
+// first and can only raise the level; a confident decision model sets the
+// level, never below what the rules require, and an unsure one leaves careful.
 import { type GateReport, type PublicPlan, type ReviewerOutput, type ReviewLevel, raiseLevel } from "@mork/contracts";
 import { boundEvidence, type CriterionVerdict, type DecisionPanel, type DecisionTrace } from "@mork/decision";
 

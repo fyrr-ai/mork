@@ -1,13 +1,13 @@
 // A question the agent asked in a Slack thread, waiting for the requester's
 // answer. Step Functions holds the run on a task token; the token is kept in
-// the factory bucket under the thread, so the answer can find its way back.
+// the Mork bucket under the thread, so the answer can find its way back.
 import { z } from "zod";
 import type { SlackRef } from "./types.ts";
 
 export const Pending = z.object({
   task_token: z.string(),
   execution_arn: z.string(),
-  /** Task prefix in the factory bucket; answers go to `${prefix}/answers.json`. */
+  /** Task prefix in the Mork bucket; answers go to `${prefix}/answers.json`. */
   prefix: z.string(),
   /** Phase that runs (again) once the answer is in. */
   resume: z.enum(["plan", "build", "check"]),

@@ -6,7 +6,7 @@ import { draftIssue, findIssueKey, Jira, jiraReporter } from "./jira.ts";
 import { loadSecrets } from "./secrets.ts";
 import { Slack, slackReporter } from "./slack.ts";
 import { type Pending, type ThreadStore, threadKey } from "./threads.ts";
-import type { Complete, ReportEvent, Reporter, SlackRef, SlackStart, Work } from "./types.ts";
+import type { Complete, ReportEvent, Reporter, SlackRef, SlackStart, TrackerIssue } from "./types.ts";
 
 export { deliverAnswer } from "./answers.ts";
 export { channelsFromEnv } from "./channels.ts";
@@ -37,17 +37,17 @@ export function allOf(reporters: Reporter[], log: (error: unknown) => void = con
 
 export type SlackSource = {
   /** The Jira issue the request names, or a new Story or Bug for it. */
-  resolve(input: SlackStart): Promise<Work>;
+  resolve(input: SlackStart): Promise<TrackerIssue>;
   /**
    * Short updates into the Slack thread; PR, handover and clarify also go on
    * the Jira issue once there is one (a Start that fails before resolving has none).
    */
-  reporter(input: SlackStart, work?: Work): Reporter;
+  reporter(input: SlackStart, work?: TrackerIssue): Reporter;
   /**
    * Asks the requester in the thread and parks the run's task token under the
    * thread; the Slack intake sends the answer back with SendTaskSuccess.
    */
-  askInThread(input: SlackStart, work: Work | undefined, question: AskedQuestion): Promise<void>;
+  askInThread(input: SlackStart, work: TrackerIssue | undefined, question: AskedQuestion): Promise<void>;
 };
 
 export type AskedQuestion = {
@@ -60,7 +60,7 @@ export type AskedQuestion = {
 };
 
 export function slackSource(slack: Slack, jira: Jira, complete?: Complete, store?: ThreadStore): SlackSource {
-  const reporter = (input: SlackStart, work?: Work) =>
+  const reporter = (input: SlackStart, work?: TrackerIssue) =>
     allOf(work ? [slackReporter(slack, input.ref), jiraReporter(jira, work.key)] : [slackReporter(slack, input.ref)]);
   return {
     async resolve(input) {
@@ -82,7 +82,7 @@ export function slackSource(slack: Slack, jira: Jira, complete?: Complete, store
     },
     reporter,
     async askInThread(input, work, asked) {
-      if (!store) throw new Error("asking needs the factory bucket (MORK_BUCKET)");
+      if (!store) throw new Error("asking needs the Mork bucket (MORK_BUCKET)");
       const pending: Pending = {
         task_token: asked.taskToken,
         execution_arn: asked.executionArn,

@@ -33,20 +33,20 @@ data "aws_iam_policy_document" "steps" {
   statement {
     sid       = "ReadTaskOutputs"
     actions   = ["s3:GetObject"]
-    resources = ["${aws_s3_bucket.factory.arn}/tasks/*"]
+    resources = ["${aws_s3_bucket.mork.arn}/tasks/*"]
   }
   statement {
     sid       = "HiddenTestsStayHidden"
     effect    = "Deny"
     actions   = ["s3:GetObject"]
-    resources = ["${aws_s3_bucket.factory.arn}/tasks/*/hidden/*"]
+    resources = ["${aws_s3_bucket.mork.arn}/tasks/*/hidden/*"]
   }
   statement {
     # Without ListBucket, S3 answers a missing key with 403 instead of 404, and
     # "no answers yet" or "no parked question" would look like an access error.
     sid       = "SeeMissingKeys"
     actions   = ["s3:ListBucket"]
-    resources = [aws_s3_bucket.factory.arn]
+    resources = [aws_s3_bucket.mork.arn]
     condition {
       test     = "StringLike"
       variable = "s3:prefix"
@@ -56,13 +56,13 @@ data "aws_iam_policy_document" "steps" {
   statement {
     sid       = "WriteIssue"
     actions   = ["s3:PutObject"]
-    resources = ["${aws_s3_bucket.factory.arn}/tasks/*/issue.json"]
+    resources = ["${aws_s3_bucket.mork.arn}/tasks/*/issue.json"]
   }
   statement {
     # Fix runs after the PR: the feedback for Build and the PR record that lets them continue the task.
     sid       = "WriteFixRuns"
     actions   = ["s3:PutObject"]
-    resources = ["${aws_s3_bucket.factory.arn}/tasks/*/pr.json", "${aws_s3_bucket.factory.arn}/tasks/*/fix/*", "${aws_s3_bucket.factory.arn}/tasks/*/build/*/feedback.md"]
+    resources = ["${aws_s3_bucket.mork.arn}/tasks/*/pr.json", "${aws_s3_bucket.mork.arn}/tasks/*/fix/*", "${aws_s3_bucket.mork.arn}/tasks/*/build/*/feedback.md"]
   }
   statement {
     # A fix run's claim on its PR expires with its execution.
@@ -151,7 +151,7 @@ resource "aws_lambda_function" "steps" {
 
   environment {
     variables = merge({
-      MORK_BUCKET               = aws_s3_bucket.factory.bucket
+      MORK_BUCKET               = aws_s3_bucket.mork.bucket
       MORK_TIMELINE_TABLE       = aws_dynamodb_table.timeline.name
       SLACK_BOT_TOKEN_SECRET_ID = local.source_secret_names.slack_bot_token
       JIRA_API_TOKEN_SECRET_ID  = local.source_secret_names.jira_api_token

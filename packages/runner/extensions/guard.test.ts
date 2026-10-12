@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { pushDenied } from "./guard.ts";
 
-const branch = "factory/issue-7-abc12345";
+const branch = "mork/issue-7-abc12345";
 
 describe("guard: push", () => {
   test("the work branch may be pushed, also after a commit", () => {

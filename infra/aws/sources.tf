@@ -42,7 +42,7 @@ data "aws_iam_policy_document" "slack" {
     # "no answers yet" or "no parked question" would look like an access error.
     sid       = "SeeMissingKeys"
     actions   = ["s3:ListBucket"]
-    resources = [aws_s3_bucket.factory.arn]
+    resources = [aws_s3_bucket.mork.arn]
     condition {
       test     = "StringLike"
       variable = "s3:prefix"
@@ -52,7 +52,7 @@ data "aws_iam_policy_document" "slack" {
   statement {
     sid       = "AnswerQuestions"
     actions   = ["s3:GetObject", "s3:PutObject"]
-    resources = ["${aws_s3_bucket.factory.arn}/threads/*", "${aws_s3_bucket.factory.arn}/tasks/*/answers.json"]
+    resources = ["${aws_s3_bucket.mork.arn}/threads/*", "${aws_s3_bucket.mork.arn}/tasks/*/answers.json"]
   }
   statement {
     sid       = "ReportStatus"
@@ -82,7 +82,7 @@ data "aws_iam_policy_document" "steps_sources" {
   statement {
     sid       = "ParkQuestions"
     actions   = ["s3:GetObject", "s3:PutObject"]
-    resources = ["${aws_s3_bucket.factory.arn}/threads/*"]
+    resources = ["${aws_s3_bucket.mork.arn}/threads/*"]
   }
 }
 
@@ -108,7 +108,7 @@ resource "aws_lambda_function" "slack" {
   environment {
     variables = {
       STATE_MACHINE_ARN              = aws_sfn_state_machine.this.arn
-      MORK_BUCKET                    = aws_s3_bucket.factory.bucket
+      MORK_BUCKET                    = aws_s3_bucket.mork.bucket
       SLACK_CHANNELS                 = jsonencode(var.slack_channels)
       SLACK_SIGNING_SECRET_SECRET_ID = local.source_secret_names.slack_signing_secret
       SLACK_BOT_TOKEN_SECRET_ID      = local.source_secret_names.slack_bot_token

@@ -1,5 +1,5 @@
 // The agent's session (Pi JSONL) is the record of what it did. It is saved to
-// the factory bucket while the station runs, at the end and on shutdown, with
+// the Mork bucket while the station runs, at the end and on shutdown, with
 // every secret the container holds redacted, plus an HTML export for people.
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";

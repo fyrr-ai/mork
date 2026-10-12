@@ -25,10 +25,10 @@ type UrlEvent = {
 type UrlResult = { statusCode: number; headers?: Record<string, string>; body?: string };
 
 const sfn = new SFNClient({});
-let factoryStore: Store | undefined;
+let bucketStore: Store | undefined;
 function store(): Store {
-  factoryStore ??= Store.fromEnv(process.env);
-  return factoryStore;
+  bucketStore ??= Store.fromEnv(process.env);
+  return bucketStore;
 }
 
 /** A thread waits for an answer when a question is parked there and still open. */

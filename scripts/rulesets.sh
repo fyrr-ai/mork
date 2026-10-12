@@ -2,7 +2,7 @@
 # Applies the repository rulesets Mork relies on, because the
 # implementer pushes with its own token: the default branch only changes
 # through pull requests (no force-push, no deletion), and new branches must
-# be factory/*. Rulesets need an organization repository (or GitHub Pro).
+# be mork/*. Rulesets need an organization repository (or GitHub Pro).
 # Re-running replaces rulesets with the same name, so it converges.
 #   mise run rulesets:apply -- <owner/repo>
 set -euo pipefail

@@ -2,7 +2,7 @@
 // that mentions @mork starts a fix run. It continues the task on the same
 // branch and prefix (same plan and hidden tests), runs Build → Check →
 // Decide, and Decide comments on the PR instead of opening a new one.
-import { keys, lastAttempt, MAX_FIX_ATTEMPTS, MAX_FIX_ROUNDS } from "@mork/contracts";
+import { BRANCH_PREFIX, keys, lastAttempt, MAX_FIX_ATTEMPTS, MAX_FIX_ROUNDS } from "@mork/contracts";
 import { prTask } from "@mork/timeline";
 import { z } from "zod";
 import type { Deps, Dismissed, FlowState } from "./flow.ts";
@@ -57,7 +57,7 @@ export function fixTrigger(
   if (event === "check_suite" && payload.action === "completed") {
     const suite = payload.check_suite;
     const pr = suite?.pull_requests?.[0]?.number;
-    if (!suite?.head_sha || !pr || !suite.head_branch?.startsWith("factory/")) return undefined;
+    if (!suite?.head_sha || !pr || !suite.head_branch?.startsWith(BRANCH_PREFIX)) return undefined;
     if (suite.conclusion !== "failure" && suite.conclusion !== "timed_out") return undefined;
     return { pr, trigger: { kind: "ci", sha: suite.head_sha }, key: `ci-${suite.head_sha.slice(0, 12)}` };
   }

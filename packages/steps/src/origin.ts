@@ -23,10 +23,10 @@ export type Naming = { id: string; prefix: string; branch: string; ref: string }
 export function naming(repo: string, origin: Origin, short: string): Naming {
   if (origin.kind === "github") {
     const n = origin.issue;
-    return { id: `${repo}#${n}/${short}`, prefix: `tasks/${repo}/${n}/${short}`, branch: `factory/issue-${n}-${short}`, ref: `#${n}` };
+    return { id: `${repo}#${n}/${short}`, prefix: `tasks/${repo}/${n}/${short}`, branch: `mork/issue-${n}-${short}`, ref: `#${n}` };
   }
   const key = origin.work?.key ?? "unresolved";
-  return { id: `${repo}#${key}/${short}`, prefix: `tasks/${repo}/${key}/${short}`, branch: `factory/${key.toLowerCase()}-${short}`, ref: key };
+  return { id: `${repo}#${key}/${short}`, prefix: `tasks/${repo}/${key}/${short}`, branch: `mork/${key.toLowerCase()}-${short}`, ref: key };
 }
 
 /** PR title and the line that links the PR back to its tracker. */
@@ -37,7 +37,7 @@ export function prLink(origin: Origin, title: string): { title: string; footer: 
 }
 
 export const LABELS = {
-  trigger: { name: "factory", color: "5319e7", description: "Hand this issue to Mork" },
+  trigger: { name: "mork", color: "5319e7", description: "Hand this issue to Mork" },
   working: { name: "mork:working", color: "fbca04", description: "Mork is working on this" },
   done: { name: "mork:done", color: "0e8a16", description: "Mork opened a draft PR" },
   takeover: { name: "needs-human", color: "b60205", description: "Mork hands this to a person" },

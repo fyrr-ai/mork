@@ -8,7 +8,7 @@
         "~ALL"
       ],
       "exclude": [
-        "refs/heads/factory/**",
+        "refs/heads/mork/**",
         "~DEFAULT_BRANCH"
       ]
     }

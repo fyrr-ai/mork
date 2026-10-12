@@ -1,12 +1,12 @@
-// Contracts shared by the conductor and the station containers. Everything that
+// Contracts shared by the Lambdas and the phase containers. Everything that
 // crosses a process boundary is parsed with these schemas at the boundary.
 import { parse as parseToml } from "smol-toml";
 import { z } from "zod";
 
-export const BRANCH_PREFIX = "factory/";
+export const BRANCH_PREFIX = "mork/";
 
 /** Conservative branch-name subset; nothing outside it reaches a git command line. */
-export const BRANCH_PATTERN = /^factory\/[a-z0-9][a-z0-9._-]{0,80}$/;
+export const BRANCH_PATTERN = /^mork\/[a-z0-9][a-z0-9._-]{0,80}$/;
 
 // ---------------------------------------------------------------------------
 // Repository configuration: `.mork/config.toml`, always read from the
@@ -157,7 +157,7 @@ export const GateReport = z.object({
 export type GateReport = z.infer<typeof GateReport>;
 
 // ---------------------------------------------------------------------------
-// Run spec: what the conductor serves to a station container for one run.
+// What Step Functions hands a phase container for one run.
 
 export const RepoRef = z.object({
   full_name: z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/),
@@ -178,7 +178,7 @@ export const MAX_FIX_ROUNDS = 2;
 export const MAX_FIX_ATTEMPTS = 2;
 
 // ---------------------------------------------------------------------------
-// The factory bucket holds outputs only, at keys fixed by convention, so
+// The Mork bucket holds outputs only, at keys fixed by convention, so
 // Step Functions passes nothing but the brief.
 
 export const keys = {
@@ -224,7 +224,7 @@ export const SlackThread = z.object({
 export const Brief = z.object({
   /** Build attempt this run belongs to (Plan uses 1). */
   attempt: z.number().int().positive(),
-  /** Object key prefix of this task in the factory bucket. */
+  /** Object key prefix of this task in the Mork bucket. */
   prefix: z.string().regex(/^tasks\/[A-Za-z0-9._/-]+$/),
   repo: RepoRef,
   branch: z.string().regex(BRANCH_PATTERN),

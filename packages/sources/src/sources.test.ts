@@ -125,8 +125,8 @@ describe("reporting", () => {
     expect(slackText({ kind: "plan", criteria: 5, hidden_tests: 1 })).toBe("*Plan ready:* 5 acceptance criteria, 1 hidden test");
     expect(slackText({ kind: "build", attempt: 2, max: 3 })).toBe("*Implementing:* attempt 2 of 3");
     expect(
-      slackText({ kind: "built", attempt: 1, branch: "factory/PROJ-9-ab", branch_url: "https://github.com/o/r/tree/factory/PROJ-9-ab", files: 3 }),
-    ).toBe("*Pushed:* <https://github.com/o/r/tree/factory/PROJ-9-ab|factory/PROJ-9-ab> (3 files changed), running checks");
+      slackText({ kind: "built", attempt: 1, branch: "mork/proj-9-ab", branch_url: "https://github.com/o/r/tree/mork/proj-9-ab", files: 3 }),
+    ).toBe("*Pushed:* <https://github.com/o/r/tree/mork/proj-9-ab|mork/proj-9-ab> (3 files changed), running checks");
     expect(slackText({ kind: "check", attempt: 1, passed: false, failures: ["AC2 not met"] })).toBe("*Checks failed* (attempt 1)\n• AC2 not met");
     expect(
       slackText({ kind: "pr", url: "https://github.com/o/r/pull/27", level: "quick", reasons: ["Decision model (jev): quick with confidence 1.00"] }),

@@ -15,7 +15,7 @@ describe("contracts", () => {
     expect(raiseLevel("takeover", "quick")).toBe("takeover");
   });
   test("branch pattern refuses main, refs and metacharacters", () => {
-    for (const b of ["main", "factory/../main", "refs/heads/factory/x", "factory/a;rm", "factory/A"]) expect(BRANCH_PATTERN.test(b)).toBe(false);
-    expect(BRANCH_PATTERN.test("factory/issue-12-fix-reset")).toBe(true);
+    for (const b of ["main", "mork/../main", "refs/heads/mork/x", "mork/a;rm", "mork/A"]) expect(BRANCH_PATTERN.test(b)).toBe(false);
+    expect(BRANCH_PATTERN.test("mork/issue-12-fix-reset")).toBe(true);
   });
 });

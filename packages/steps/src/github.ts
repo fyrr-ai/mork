@@ -1,5 +1,6 @@
-// Small GitHub REST client. Only the conductor talks to GitHub with write
-// access; station containers get a read token per run.
+// Small GitHub REST client for the Lambdas, the only part of Mork that writes
+// issues and pull requests; containers get a read token, and Build pushes its
+// branch through the egress sidecar.
 
 export type TokenSource = () => Promise<string>;
 

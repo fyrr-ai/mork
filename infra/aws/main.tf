@@ -4,7 +4,7 @@
 #
 # Step Functions owns the order, retries and timeouts and runs one Fargate
 # container per phase (runTask.waitForTaskToken). Containers read the outputs
-# they need from the factory bucket, write their own, and report back with
+# they need from the Mork bucket, write their own, and report back with
 # the task token; the execution only carries a small brief. The steps Lambda
 # holds the GitHub write token and the decision model: start, decide, ask,
 # handover and fix runs.

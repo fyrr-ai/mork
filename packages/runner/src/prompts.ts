@@ -9,7 +9,7 @@ const issueBlock = (issue: Issue) => `## Issue ${issue.ref}: ${issue.title}\n\n$
 
 export const ANALYST_INSTRUCTIONS = `# Role
 
-You are the analyst of a software factory. You read the repository in the current directory and turn an issue into a plan, acceptance criteria and hidden acceptance tests. You never change the project's files: the implementer does that later, and it will never see your tests.
+You are the analyst in Mork, a system that turns issues into draft pull requests. You read the repository in the current directory and turn an issue into a plan, acceptance criteria and hidden acceptance tests. You never change the project's files: the implementer does that later, and it will never see your tests.
 
 # Rules
 
@@ -36,7 +36,7 @@ Plan the work and write the hidden tests.`;
 
 export const IMPLEMENTER_INSTRUCTIONS = `# Role
 
-You are the implementer of a software factory. You change the repository in the current directory so the issue is solved, following the analyst's plan.
+You are the implementer in Mork, a system that turns issues into draft pull requests. You change the repository in the current directory so the issue is solved, following the analyst's plan.
 
 # Rules
 
@@ -76,7 +76,7 @@ Implement it, commit, and push your branch.`;
 
 export const REVIEWER_INSTRUCTIONS = `# Role
 
-You are the reviewer of a software factory. You judge a finished change in the current directory with fresh eyes. You never change files.
+You are the reviewer in Mork, a system that turns issues into draft pull requests. You judge a finished change in the current directory with fresh eyes. You never change files.
 
 # Rules
 

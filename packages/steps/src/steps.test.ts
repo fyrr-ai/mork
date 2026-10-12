@@ -137,7 +137,7 @@ const github = {
     number: n,
     state: "open",
     html_url: `https://github.com/o/r/pull/${n}`,
-    head: { sha: "c".repeat(40), ref: "factory/issue-1-abc" },
+    head: { sha: "c".repeat(40), ref: "mork/issue-1-abc" },
   }),
   failedChecks: async () => [{ name: "lint", summary: "2 errors", log: "src/strings.mjs: missing JSDoc" }],
   openPr: async () => undefined,
@@ -173,7 +173,7 @@ const baseState: FlowState = {
     attempt: 1,
     prefix,
     repo: { full_name: "o/r", default_branch: "main", base_sha: "a".repeat(40) },
-    branch: "factory/issue-1-abc",
+    branch: "mork/issue-1-abc",
   },
 };
 const publicPlan = { ...plan, hidden_tests: plan.hidden_tests.map(({ file, criteria }) => ({ file, criteria })) };
@@ -201,7 +201,7 @@ describe("flow", () => {
   });
   test("a branch that moved after the gate is handed over, not opened as a PR", async () => {
     calls.length = 0;
-    headOf.set("factory/issue-1-abc", "c".repeat(40));
+    headOf.set("mork/issue-1-abc", "c".repeat(40));
     const moved = decide(makeDeps(await checkedStore(true), live(fixedDecider("quick", 0.9))), { ...baseState, last: { ok: true, passed: true } });
     await expect(moved).rejects.toThrow("changed after the check");
     expect(calls).not.toContain("pr");
@@ -246,7 +246,7 @@ describe("triage", () => {
     const unclear = live({ name: "fixed", decide: async () => ({ actionable: { type: "noul", p: 0.05 } }) });
     const next = await start(makeDeps(memory(), unclear), { repo: "o/r", issue: 1, execution: "exec-12345678" });
     expect(next.next).toBe("done");
-    expect(calls).toEqual(["label:mork:working", "comment", "label:needs-info", "unlabel:mork:working", "unlabel:factory"]);
+    expect(calls).toEqual(["label:mork:working", "comment", "label:needs-info", "unlabel:mork:working", "unlabel:mork"]);
   });
   test("a clear issue is recorded and the task starts", async () => {
     const clear = live({ name: "fixed", decide: async () => ({ actionable: { type: "noul", p: 0.9 } }) });
@@ -269,7 +269,7 @@ describe("slack origin", () => {
     const clear = live({ name: "fixed", decide: async () => ({ actionable: { type: "noul", p: 0.9 } }) });
     const next = await start(makeDeps(memory(), clear), { ...slackStart, execution: "slack-Ev0ABCDEF12" });
     expect(next.task.id).toBe("o/r#PROJ-7/abcdef12");
-    expect(next.brief).toMatchObject({ prefix: "tasks/o/r/PROJ-7/abcdef12", branch: "factory/proj-7-abcdef12", report: slackStart.ref });
+    expect(next.brief).toMatchObject({ prefix: "tasks/o/r/PROJ-7/abcdef12", branch: "mork/proj-7-abcdef12", report: slackStart.ref });
     expect(events.map((e) => e.kind)).toEqual(["started"]);
   });
   test("Jev triages the raw message first: a greeting ends the run before any Jira issue is drafted", async () => {
@@ -446,7 +446,7 @@ describe("checks table", () => {
 
 describe("fix runs after the PR", () => {
   test("webhooks that ask for a fix, and ones that do not", () => {
-    const suite = (conclusion: string, head_branch = "factory/issue-1-abc") => ({
+    const suite = (conclusion: string, head_branch = "mork/issue-1-abc") => ({
       action: "completed",
       check_suite: { conclusion, head_branch, head_sha: "c".repeat(40), pull_requests: [{ number: 7 }] },
     });

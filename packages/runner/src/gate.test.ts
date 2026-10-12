@@ -26,7 +26,7 @@ const spec = (base: string) => ({
   kind: "gate" as const,
   run_id: "r",
   mode: "after" as const,
-  branch: "factory/x",
+  branch: "mork/x",
   allow_test_change: false,
   hidden_tests: [],
   repo: { full_name: "o/r", default_branch: "main", base_sha: base },

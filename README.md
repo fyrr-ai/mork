@@ -1,8 +1,8 @@
 # Mork
 
-Mork is a serverless software factory on AWS. Ask in Slack (`@mork add …`) or label a GitHub issue `factory`, and Mork plans the change, writes it, verifies it and opens a draft pull request with a recommendation of how carefully to review it. A person always merges.
+Mork is a serverless coding agent on AWS. Ask in Slack (`@mork add …`) or label a GitHub issue `mork`, and Mork plans the change, writes it, verifies it and opens a draft pull request with a recommendation of how carefully to review it. A person always merges.
 
-- **Tests decide, not models.** An analyst agent writes hidden acceptance tests that must fail before the change; the implementer never sees them; an LLM-free gate runs them, the repository's own tests and checks, a diff policy and mutation checks.
+- **Tests decide, not models.** An analyst agent writes hidden acceptance tests that must fail before the change; the implementer never sees them; an LLM-free gate runs them, the repository's own tests and repository checks, a diff policy and mutants.
 - **Any OpenAI-compatible LLM** does planning, coding and review through the [Pi](https://pi.dev) agent harness.
 - **An optional decision model** ([Jev](https://typesafe.ai) or OpenAI Decisions) triages requests, judges what tests cannot, supervises running agents and recommends the review depth. Hard rules always win.
 - **The agent holds no keys.** An egress sidecar adds the LLM key and a narrowed push token to outgoing requests.
@@ -36,7 +36,7 @@ Slack @mork / GitHub label → Start (triage) → Plan → Build → Check → D
 | `packages/runner` | The Plan, Build and Check containers: Pi as user `agent`, the LLM-free gate as user `sandbox`, Pi extensions (`guard`, `submit_result`, `verify`, `ask`, `dir-rules`) |
 | `packages/decision` | Decision models (Jev, OpenAI Decisions) behind one interface, policies, evidence budgets |
 | `packages/timeline` | Decision timeline in DynamoDB and export for calibration |
-| `packages/store` | The factory bucket |
+| `packages/store` | The Mork bucket |
 | `images/egress` | Egress sidecar (iron-proxy) configuration |
 | `infra/aws` | Terraform module for the whole deployment |
 | `scripts/` | Deploy, secrets, rulesets, execution watcher |

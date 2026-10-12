@@ -2,7 +2,7 @@
 // timeouts and runs the Plan, Build and Check containers on Fargate; the
 // steps here only do what needs the GitHub token or the decision model:
 // start the task (with triage), decide, hand over. Build pushes its branch.
-// Outputs live in the factory bucket at conventional keys; the state carries
+// Outputs live in the Mork bucket at conventional keys; the state carries
 // the brief. Every decision-model call lands in the timeline.
 import {
   Answers,
@@ -20,7 +20,7 @@ import {
   RunResult,
 } from "@mork/contracts";
 import { type CriterionVerdict, type DecisionPanel, type DecisionTrace, judgeCriteria, type Triage, triage, triageMessage } from "@mork/decision";
-import { executionUrl, findIssueKey, type ReportEvent, type Reporter, type SlackStart, type Work } from "@mork/sources";
+import { executionUrl, findIssueKey, type ReportEvent, type Reporter, type SlackStart, type TrackerIssue } from "@mork/sources";
 import type { Store } from "@mork/store";
 import { linkPr, recordDecision, recordTakeover, type TimelineStore } from "@mork/timeline";
 import { z } from "zod";
@@ -71,7 +71,7 @@ export type Deps = {
   /** Where the task's progress goes: GitHub labels and comments, or the Slack thread and Jira. */
   reporter: (task: Task) => Promise<Reporter>;
   /** Slack tasks: the Jira issue the request names, or a new one. */
-  resolveSlack: (start: SlackStart) => Promise<Work>;
+  resolveSlack: (start: SlackStart) => Promise<TrackerIssue>;
   /** Posts into a Slack request's thread before there is a task (e.g. "not a request"). */
   tellSlack: (start: SlackStart, event: ReportEvent) => Promise<void>;
   /** Posts the question to the requester and parks the task token until they answer. */
@@ -123,7 +123,7 @@ export async function start(deps: Deps, input: StartInput): Promise<FlowState | 
       .toLowerCase() || "run";
   const { repo } = input;
   let origin: Origin;
-  let work: Work;
+  let work: TrackerIssue;
   // A Slack message without a Jira key is triaged as written, before anything is drafted from it.
   let early: { triage: Triage; trace: DecisionTrace } | undefined;
   if ("source" in input) {
@@ -416,7 +416,7 @@ function taskFromStartInput(input: StartInput): Task {
   return { id: naming(input.repo, origin, "start").id, repo: input.repo, started_by: "", origin };
 }
 
-/** The task's saved agent sessions in the factory bucket; opening it needs AWS access, nothing is public. */
+/** The task's saved agent sessions in the Mork bucket; opening it needs AWS access, nothing is public. */
 export function transcriptsUrl(bucket: string, prefix: string, region = process.env.AWS_REGION ?? "eu-west-1"): string {
   return `https://${region}.console.aws.amazon.com/s3/buckets/${bucket}?region=${region}&prefix=${encodeURIComponent(`${prefix}/sessions/`)}`;
 }

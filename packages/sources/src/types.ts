@@ -1,5 +1,5 @@
-// What every source hands the factory, and what the factory tells it back.
-// A source turns its webhook into a StartInput; Start resolves it into Work
+// What every source hands Mork, and what Mork tells it back.
+// A source turns its webhook into a StartInput; Start resolves it into a tracker issue
 // and reports progress through the source's Reporter.
 import { z } from "zod";
 
@@ -26,8 +26,8 @@ export const SlackStart = z.object({
 });
 export type SlackStart = z.input<typeof SlackStart>;
 
-/** The task in its tracker: an existing Jira issue, or one created for the request. */
-export type Work = { key: string; title: string; body: string; url: string; created: boolean };
+/** The request in its tracker: an existing Jira issue, or one created for it. */
+export type TrackerIssue = { key: string; title: string; body: string; url: string; created: boolean };
 
 /**
  * Short state changes a source shows to the people who asked, sent as they
@@ -35,7 +35,7 @@ export type Work = { key: string; title: string; body: string; url: string; crea
  * phase, Decide and Handover report the outcome.
  */
 export type ReportEvent =
-  | { kind: "started"; work: Work; execution_url?: string; live_url?: string }
+  | { kind: "started"; work: TrackerIssue; execution_url?: string; live_url?: string }
   | { kind: "clarify"; questions: string }
   | { kind: "not_a_request" }
   | { kind: "question"; text: string }

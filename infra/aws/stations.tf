@@ -57,7 +57,7 @@ resource "aws_iam_role_policy" "station_exec_secrets" {
 # Sessions are per phase: the analyst's session contains the hidden tests it
 # wrote, so Build may only read and write its own (sessions/build-*).
 locals {
-  tasks_arn = "${aws_s3_bucket.factory.arn}/tasks"
+  tasks_arn = "${aws_s3_bucket.mork.arn}/tasks"
   phases = {
     plan = {
       reads  = ["issue.json", "answers.json", "sessions/plan-*", "sessions/pending.json"]
@@ -94,7 +94,7 @@ data "aws_iam_policy_document" "phase" {
     # "no answers yet" or "no parked question" would look like an access error.
     sid       = "SeeMissingKeys"
     actions   = ["s3:ListBucket"]
-    resources = [aws_s3_bucket.factory.arn]
+    resources = [aws_s3_bucket.mork.arn]
     condition {
       test     = "StringLike"
       variable = "s3:prefix"
@@ -165,7 +165,7 @@ resource "aws_ecs_task_definition" "phase" {
     mountPoints = [{ sourceVolume = "egress-ca", containerPath = "/mork-egress", readOnly = true }]
     environment = concat([
       { name = "MORK_PHASE", value = each.key },
-      { name = "MORK_BUCKET", value = aws_s3_bucket.factory.bucket },
+      { name = "MORK_BUCKET", value = aws_s3_bucket.mork.bucket },
       { name = "MORK_MODEL", value = var.model },
       { name = "LLM_BASE_URL", value = var.llm_base_url },
       { name = "AWS_REGION", value = data.aws_region.current.region },

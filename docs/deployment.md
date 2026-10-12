@@ -49,8 +49,8 @@ Builds the `runner`, `egress` and `lambda` images, pushes them under the commit 
 1. Add `.mork/config.toml` to its default branch ([reference](configuration.md#repository-configuration)) and, optionally, `AGENTS.md`.
 2. Add it to `repo_allowlist` and apply.
 3. Add a webhook: the module's `webhook_url` output, content type JSON, secret `<prefix>/webhook-secret`, events Issues, Pull requests, Pull request reviews, Pull request review comments, Issue comments and Check suites.
-4. `mise run rulesets:apply -- owner/repo`: the default branch changes only through pull requests with one fresh approval; new branches must be `factory/*` (needs an organization repository or GitHub Pro).
-5. Label an issue `factory` (needs at least triage access).
+4. `mise run rulesets:apply -- owner/repo`: the default branch changes only through pull requests with one fresh approval; new branches must be `mork/*` (needs an organization repository or GitHub Pro).
+5. Label an issue `mork` (needs at least triage access).
 
 ## 6. Slack (optional)
 

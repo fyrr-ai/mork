@@ -1,4 +1,4 @@
-// The factory bucket: one S3 bucket for every task's outputs.
+// The Mork bucket: one S3 bucket for every task's outputs.
 import { GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 
 export class Store {

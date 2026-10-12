@@ -1,5 +1,5 @@
 // The three containers of a task. Each reads the outputs it needs from the
-// factory bucket and writes its own at the conventional keys.
+// Mork bucket and writes its own at the conventional keys.
 //
 // Plan and Check run an LLM station and the LLM-free gate in one container.
 // The gate always works in its own fresh clone as the `sandbox` user, and
