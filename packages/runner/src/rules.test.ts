@@ -19,11 +19,12 @@ const plan: AnalystOutput = {
   ],
   hidden_tests: [{ file: "add.test.mjs", criteria: ["AC1"], content: "assert.equal(add(2, 3), 5) // HIDDEN_SOURCE" }],
 };
+const policy = { violations: [], changed_files: ["math.mjs"], protected_hits: [], flags: [], added_lines: 3, removed_lines: 1 };
 const gate: GateReport = {
   mode: "after",
   repo_tests: { command: "npm test", exit_code: 0, output: "" },
   hidden: [{ file: "add.test.mjs", criteria: ["AC1"], passed: true, output: "" }],
-  diff_policy: { violations: [], changed_files: ["math.mjs"], protected_hits: [], flags: [], added_lines: 3, removed_lines: 1 },
+  diff_policy: policy,
 };
 
 describe("plan checks", () => {
@@ -39,7 +40,7 @@ describe("plan checks", () => {
 describe("gate verdict", () => {
   test("green gate passes", () => expect(gatePassed(gate)).toBe(true));
   test("a violation fails the gate", () => {
-    expect(gatePassed({ ...gate, diff_policy: { ...gate.diff_policy!, violations: ["modifies existing test"] } })).toBe(false);
+    expect(gatePassed({ ...gate, diff_policy: { ...policy, violations: ["modifies existing test"] } })).toBe(false);
   });
   test("no hidden tests is not a pass", () => expect(gatePassed({ ...gate, hidden: [] })).toBe(false));
 });

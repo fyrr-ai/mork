@@ -6,7 +6,9 @@ const WORK_BRANCH = process.env.MORK_WORK_BRANCH;
 
 /** Every `git push` in the command must push the work branch to origin, nothing else. */
 export function pushDenied(command: string, branch = WORK_BRANCH): string | undefined {
-  const pushes = command.match(/\bgit\s+(?:-c\s+\S+\s+)*push\b[^;&|\n]*/g);
+  // Recognize global options too (-C, --git-dir, --work-tree, -c). Only the
+  // canonical form below is allowed; this guard is advice, not a shell sandbox.
+  const pushes = command.match(/\bgit\s+(?:[^;&|\n]*?\s+)?push\b[^;&|\n]*/g);
   if (!pushes) return undefined;
   if (!branch) return "This station never pushes.";
   const allowed = new RegExp(

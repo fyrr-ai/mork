@@ -3,14 +3,20 @@ import { logPiEvent } from "./llm.ts";
 import { type Logger, OtlpLogger } from "./otlp.ts";
 
 const bodies: unknown[] = [];
-const server = Bun.serve({ port: 0, fetch: async (req) => (bodies.push(await req.json()), new Response("{}")) });
+const server = Bun.serve({
+  port: 0,
+  fetch: async (req) => {
+    bodies.push(await req.json());
+    return new Response("{}");
+  },
+});
 afterAll(() => server.stop());
 
 describe("otlp logger", () => {
   test("batches redacted records with resource and per-station attributes", async () => {
     const root = new OtlpLogger({
       endpoint: `http://127.0.0.1:${server.port}`,
-      resource: { "service.name": "mork", "team.name": "example-team" },
+      resource: { "service.name": "mork", "team.name": "engineering" },
       secrets: () => ["sk-secret-value-123"],
       base: { "mork.execution": "slack-Ev1" },
     });

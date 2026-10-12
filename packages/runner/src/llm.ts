@@ -192,7 +192,7 @@ export async function runLlmStation(spec: LlmJob, env: RunnerEnv, repoDir: strin
         const parsed = schema.safeParse(parseJson(submitted));
         if (parsed.success) {
           output = parsed.data;
-          problem = spec.push ? (pushProblem(repoDir, spec.repo.base_sha, spec.push, opts) ?? "") : "";
+          problem = spec.push ? (pushProblem(spec.repo.base_sha, spec.push, opts) ?? "") : "";
           if (!problem && spec.verify) {
             // Pushed and submitted, but does it pass the repository's own checks? Still the agent's turn to fix it.
             const verified = await verifyAsAgent(env, verifyFile, opts);
@@ -307,11 +307,6 @@ export function logPiEvent(log: Logger, station: string, event: Record<string, u
   }
 }
 
-/**
- * Commits whatever the implementer left and pushes it to the work branch (no
- * force), so the next attempt or the resumed run continues from it. Runs as
- * the agent user with the agent's push credentials; failures are only logged.
- */
 /** The runner's own verify, as the agent user: repository code never runs as root. */
 async function verifyAsAgent(
   env: RunnerEnv,
@@ -328,6 +323,7 @@ async function verifyAsAgent(
   }
 }
 
+/** Commits and pushes unfinished work as the agent user; failures are logged. */
 function pushWip(branch: string, baseSha: string, opts: { cwd: string; env: Record<string, string>; uid?: number; gid?: number }): void {
   const git = (...args: string[]) => exec("git", args, opts);
   if (git("symbolic-ref", "--short", "HEAD").output.trim() !== branch) return;
@@ -344,7 +340,6 @@ function pushWip(branch: string, baseSha: string, opts: { cwd: string; env: Reco
  * agent-owned repository git would execute whatever hooks the agent set up.
  */
 function pushProblem(
-  repoDir: string,
   baseSha: string,
   push: NonNullable<LlmJob["push"]>,
   opts: { cwd: string; env: Record<string, string>; uid?: number; gid?: number },

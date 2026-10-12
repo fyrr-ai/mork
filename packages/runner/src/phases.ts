@@ -53,7 +53,6 @@ export type PhaseContext = {
   /** Supervises every LLM station; the keys stay with this process, not with Pi. */
   panel: DecisionPanel;
   superviseEveryMs: number;
-  /** Build only: the narrowed token the implementer pushes its branch with. */
   /** Progress for the people who asked (a Slack thread); a no-op for GitHub tasks. Never fails the phase. */
   reporter: Reporter;
   /** Every secret value the container holds, for redacting saved sessions. */

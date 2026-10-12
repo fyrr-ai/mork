@@ -42,6 +42,7 @@ export function execAsync(
       uid: options.uid,
       gid: options.gid,
       stdio: ["ignore", "pipe", "pipe"],
+      detached: true,
     });
     const keep = (chunk: Buffer) => {
       chunks.push(chunk);
@@ -51,7 +52,21 @@ export function execAsync(
     };
     child.stdout.on("data", keep);
     child.stderr.on("data", keep);
-    const timer = options.timeoutMs ? setTimeout(() => child.kill("SIGKILL"), options.timeoutMs) : undefined;
+    const timer = options.timeoutMs
+      ? setTimeout(() => {
+          // Kill the shell's process group, including children holding output
+          // pipes open. A child that starts its own group must not extend the
+          // timeout either; the caller cleans up the sandbox uid afterward.
+          try {
+            if (child.pid) process.kill(-child.pid, "SIGKILL");
+          } catch {
+            child.kill("SIGKILL");
+          }
+          child.stdout.destroy();
+          child.stderr.destroy();
+          resolve({ code: 124, output: Buffer.concat(chunks).toString("utf8") });
+        }, options.timeoutMs)
+      : undefined;
     child.on("error", (error) => {
       clearTimeout(timer);
       resolve({ code: 127, output: error.message });
@@ -101,14 +116,14 @@ export function remoteHead(fullName: string, token: string, branch: string): str
  * Creates `dir` with the base commit (and optionally a branch) fetched from
  * GitHub. Leaves HEAD detached at `checkout` (a sha or `refs/remotes/...`).
  */
-export function fetchRepo(opts: { dir: string; fullName: string; token: string; baseSha: string; branch?: string }): void {
+export function fetchRepo(opts: { dir: string; fullName: string; token: string; baseSha: string; branch?: string; localRepo?: string }): void {
   const git = (...args: string[]) => mustExec("git", [...SAFE_GIT, "-C", opts.dir, ...args]);
   mustExec("git", ["init", "-q", opts.dir]);
   const refspecs = [opts.baseSha];
   if (opts.branch) refspecs.push(`+refs/heads/${opts.branch}:refs/remotes/origin/${opts.branch}`);
-  mustExec("git", [...SAFE_GIT, "-C", opts.dir, "fetch", "-q", "--depth=200", repoUrl(opts.fullName), ...refspecs], {
+  mustExec("git", [...SAFE_GIT, "-C", opts.dir, "fetch", "-q", "--depth=200", "--", opts.localRepo ?? repoUrl(opts.fullName), ...refspecs], {
     timeoutMs: 300_000,
-    env: authEnv(opts.token),
+    env: opts.localRepo ? process.env : authEnv(opts.token),
   });
   git("checkout", "-q", opts.branch ? `refs/remotes/origin/${opts.branch}` : opts.baseSha);
 }

@@ -19,6 +19,9 @@ describe("guard: push", () => {
       "git push --tags",
       "git push",
       `git -c foo=bar push origin main`,
+      "git -C . push origin main",
+      "git --git-dir=.git push origin main",
+      "git --work-tree . -C . push origin main",
     ]) {
       expect(pushDenied(cmd, branch)).toBeDefined();
     }

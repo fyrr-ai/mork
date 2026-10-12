@@ -21,7 +21,10 @@ function memoryStore() {
     objects,
     store: {
       bucket: "b",
-      put: async (key: string, body: string | Uint8Array) => (objects.set(key, Buffer.from(body)), key),
+      put: async (key: string, body: string | Uint8Array) => {
+        objects.set(key, Buffer.from(body));
+        return key;
+      },
       bytes: async (key: string) => {
         const v = objects.get(key);
         if (!v) throw new Error(`no ${key}`);
