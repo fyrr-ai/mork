@@ -58,13 +58,18 @@ variable "secret_prefix" {
 }
 
 variable "decision_providers" {
-  description = "Decision models to ask (jev, openai); the first decides, the others are recorded for comparison. Empty: no decision model, every PR gets careful review. Each needs the secret <secret_prefix>/<provider>-api-key."
-  type        = list(string)
+  description = "Decision models to ask (name jev or openai, optional base_url and model); the first decides, the others are recorded for comparison. Empty: no decision model, every PR gets careful review. Each needs the secret <secret_prefix>/<name>-api-key."
+  type        = list(object({ name = string, base_url = optional(string), model = optional(string) }))
   default     = []
 
   validation {
-    condition     = alltrue([for p in var.decision_providers : contains(["jev", "openai"], p)])
-    error_message = "decision_providers may only list jev and openai."
+    condition     = alltrue([for p in var.decision_providers : contains(["jev", "openai"], p.name)])
+    error_message = "decision_providers may only name jev and openai."
+  }
+
+  validation {
+    condition     = length(distinct([for p in var.decision_providers : p.name])) == length(var.decision_providers)
+    error_message = "decision_providers may name each provider once."
   }
 }
 
@@ -79,6 +84,18 @@ variable "phase_seconds" {
   type        = object({ plan = number, build = number, check = number })
   # No turn or time limits run inside the containers; this only catches hangs.
   default = { plan = 7200, build = 7200, check = 7200 }
+}
+
+variable "station_size" {
+  description = "Fargate size of a phase container: vCPU units, memory MiB and ephemeral storage GiB."
+  type        = object({ cpu = optional(number, 2048), memory = optional(number, 8192), storage_gib = optional(number, 40) })
+  default     = {}
+}
+
+variable "spot_attempts" {
+  description = "Retries of a phase on Fargate Spot after an interruption or a capacity shortage before it moves to on-demand Fargate."
+  type        = number
+  default     = 4
 }
 
 variable "supervise_seconds" {
@@ -145,6 +162,12 @@ variable "grafana_url" {
   description = "Grafana that shows the live log (Loki); linked from the Slack thread and the PR. Null: no link."
   type        = string
   default     = null
+}
+
+variable "grafana_loki_uid" {
+  description = "Uid of the Loki data source in grafana_url."
+  type        = string
+  default     = "loki"
 }
 
 variable "bucket_expiration_days" {

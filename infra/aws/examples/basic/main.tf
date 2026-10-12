@@ -19,7 +19,7 @@ module "mork" {
   model        = "your-model-id"
 
   # Optional: a decision model for triage and the review recommendation.
-  # decision_providers = ["jev"]
+  # decision_providers = [{ name = "jev" }]
 
   # Optional: Slack as a task source, with Jira as the tracker.
   # slack_channels = { C0123456789 = { repo = "acme/widgets", jira_project = "PROJ" } }

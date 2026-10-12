@@ -16,18 +16,20 @@ Required: `vpc_id`, `vpc_cidr_block`, `vpc_private_subnet_ids`, `repo_allowlist`
 | `environment` | `dev` | Environment label on logs |
 | `llm_base_url`, `model` | — | The OpenAI-compatible LLM |
 | `secret_prefix` | `mork` | Secrets Manager names are `<prefix>/<name>` |
-| `decision_providers` | `[]` | `jev` and/or `openai`; empty means no decision model |
+| `decision_providers` | `[]` | Ordered `{ name, base_url, model }` with name `jev` or `openai`; the first decides, the others are recorded; empty means no decision model |
 | `repo_allowlist` | — | Repositories Mork may work on |
 | `slack_channels` | `{}` | Channel ID → `{ repo, jira_project, jira_components }` |
 | `jira_base_url`, `jira_email` | `""` | Jira Cloud site and service account for Slack tasks |
 | `phase_seconds` | 7200 each | Backstop timeout per phase |
+| `station_size` | 2048 CPU, 8192 MiB, 40 GiB | Fargate size of a phase container |
+| `spot_attempts` | 4 | Spot retries before a phase moves to on-demand Fargate |
 | `supervise_seconds` | 45 | How often the supervisor checks a running station |
 | `answer_seconds` | 259200 | How long a question waits for an answer |
 | `egress_allow` | `[]` | Extra hosts for the egress sidecar's allowlist |
 | `egress_enforce` | `false` | Block instead of log requests outside the allowlist |
 | `otlp_endpoint`, `otlp_cidr_block` | `null` | Live log over OTLP/HTTP |
 | `otel_resource_attributes` | `""` | Extra attributes on the live log |
-| `grafana_url` | `null` | Link to the live log in Grafana (Loki) |
+| `grafana_url`, `grafana_loki_uid` | `null`, `loki` | Link to the live log in Grafana and its Loki data source |
 | `bucket_expiration_days` | 90 | Retention of task outputs and sessions |
 | `image_tag` | `current` | Tag the deploy script moves |
 

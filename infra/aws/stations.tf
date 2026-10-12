@@ -136,8 +136,8 @@ resource "aws_ecs_task_definition" "phase" {
   family                   = "${local.name}_${each.key}"
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
-  cpu                      = 2048
-  memory                   = 8192
+  cpu                      = var.station_size.cpu
+  memory                   = var.station_size.memory
   execution_role_arn       = aws_iam_role.station_exec.arn
   task_role_arn            = aws_iam_role.phase[each.key].arn
 
@@ -147,7 +147,7 @@ resource "aws_ecs_task_definition" "phase" {
   }
 
   ephemeral_storage {
-    size_in_gib = 40
+    size_in_gib = var.station_size.storage_gib
   }
 
   volume {
@@ -176,6 +176,7 @@ resource "aws_ecs_task_definition" "phase" {
       # Live log over OTLP/HTTP (optional), e.g. to Grafana Alloy or an OpenTelemetry collector.
       var.otlp_endpoint == null ? [] : [{ name = "OTEL_EXPORTER_OTLP_ENDPOINT", value = var.otlp_endpoint }],
       var.otel_resource_attributes == "" ? [] : [{ name = "OTEL_RESOURCE_ATTRIBUTES", value = var.otel_resource_attributes }],
+      [for k, v in local.decision_settings : { name = k, value = v }],
     )
     secrets = concat(
       [{ name = "GITHUB_READ_TOKEN", valueFrom = data.aws_secretsmanager_secret.this["github_read_token"].arn }],

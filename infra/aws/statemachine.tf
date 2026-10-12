@@ -87,9 +87,9 @@ locals {
 
   catch = [{ ErrorEquals = ["States.ALL"], ResultPath = "$.error", Next = "Handover" }]
 
-  # Phases start on Fargate Spot. Four interruptions or capacity shortages in a
-  # row move the task to on-demand Fargate (SpotFallback); a failure there
-  # goes to a person.
+  # Phases start on Fargate Spot. When spot_attempts retries after
+  # interruptions or capacity shortages run out, the task moves to on-demand
+  # Fargate (SpotFallback); a failure there goes to a person.
   spot        = [{ CapacityProvider = "FARGATE_SPOT", Weight = 1 }]
   on_demand   = [{ CapacityProvider = "FARGATE", Weight = 1 }]
   spot_errors = ["Mork.Interrupted", "ECS.AmazonECSException", "AmazonECS.Unknown"]
@@ -108,8 +108,8 @@ locals {
     # ECS.AmazonECSException; one that returns Failures (no capacity) raises
     # AmazonECS.Unknown.
     Retry = [
-      { ErrorEquals = ["Mork.Interrupted"], MaxAttempts = 4, IntervalSeconds = 10, BackoffRate = 2 },
-      { ErrorEquals = ["ECS.AmazonECSException", "AmazonECS.Unknown"], MaxAttempts = 4, IntervalSeconds = 30, BackoffRate = 2 },
+      { ErrorEquals = ["Mork.Interrupted"], MaxAttempts = var.spot_attempts, IntervalSeconds = 10, BackoffRate = 2 },
+      { ErrorEquals = ["ECS.AmazonECSException", "AmazonECS.Unknown"], MaxAttempts = var.spot_attempts, IntervalSeconds = 30, BackoffRate = 2 },
     ]
     Catch = concat(
       [{ ErrorEquals = local.spot_errors, ResultPath = "$.error", Next = "SpotFallback", Assign = { failed_phase = name } }],

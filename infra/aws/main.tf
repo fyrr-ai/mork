@@ -39,10 +39,21 @@ data "aws_secretsmanager_secret" "this" {
 # Decision API keys go only to the steps Lambda and the Build container.
 locals {
   decision_env = { jev = "JEV_API", openai = "OPENAI_API_KEY" }
+  decision_setting_env = {
+    jev    = { base_url = "TYPESAFE_BASE_URL", model = "TYPESAFE_MODEL" }
+    openai = { base_url = "OPENAI_BASE_URL", model = "OPENAI_DECISIONS_MODEL" }
+  }
+  # Which provider decides, and endpoint or model overrides, for the steps Lambda and the stations.
+  decision_settings = merge(
+    length(var.decision_providers) == 0 ? {} : { MORK_DECISION_PRIMARY = var.decision_providers[0].name },
+    [for p in var.decision_providers : {
+      for k, v in { base_url = p.base_url, model = p.model } : local.decision_setting_env[p.name][k] => v if v != null
+    }]...
+  )
 }
 
 data "aws_secretsmanager_secret" "decision" {
-  for_each = toset(var.decision_providers)
+  for_each = { for p in var.decision_providers : p.name => p }
   name     = "${var.secret_prefix}/${each.key}-api-key"
 }
 

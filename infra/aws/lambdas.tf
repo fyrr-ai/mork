@@ -162,7 +162,8 @@ resource "aws_lambda_function" "steps" {
       ECS_CLUSTER               = aws_ecs_cluster.this.name
       GITHUB_TOKEN_SECRET_ID    = data.aws_secretsmanager_secret.this["github_token"].arn
       LLM_API_KEY_SECRET_ID     = data.aws_secretsmanager_secret.this["llm_api_key"].arn
-      }, var.grafana_url == null ? {} : { MORK_GRAFANA_URL = var.grafana_url },
+      }, var.grafana_url == null ? {} : { MORK_GRAFANA_URL = var.grafana_url, MORK_GRAFANA_LOKI_UID = var.grafana_loki_uid },
+      local.decision_settings,
     { for p, s in data.aws_secretsmanager_secret.decision : "${local.decision_env[p]}_SECRET_ID" => s.arn })
   }
 

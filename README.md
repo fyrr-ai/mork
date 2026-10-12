@@ -55,3 +55,7 @@ Tests run with Bun; the containers and Lambdas run on Node 24 with TypeScript ty
 ## Status
 
 Mork is young. It has been tested end to end on AWS, including Spot interruptions, fix runs and concurrent triggers, but only on small repositories. Read [SECURITY.md](SECURITY.md) before pointing it at code that matters.
+
+## License
+
+[Apache License 2.0](LICENSE).
