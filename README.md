@@ -19,7 +19,9 @@ Slack @mork / GitHub label → Start (triage) → Plan → Build → Check → D
 
 | Document | Contents |
 | --- | --- |
+| [CONTEXT.md](CONTEXT.md) | Glossary: the words Mork's code and docs use |
 | [docs/architecture.md](docs/architecture.md) | How it works: flow, verification, supervision, principles |
+| [docs/adr/](docs/adr/) | Architecture decisions and why they were made |
 | [docs/deployment.md](docs/deployment.md) | Deploying to AWS, adding a repository, Slack |
 | [docs/configuration.md](docs/configuration.md) | Terraform variables, secrets, `.mork/config.toml`, environment |
 | [SECURITY.md](SECURITY.md) | Trust boundaries and known gaps |

@@ -2,7 +2,7 @@
 
 Mork turns a request into a verified draft pull request. A request is a GitHub issue with the `mork` label or an `@mork` mention in a mapped Slack channel. An LLM agent plans, writes and reviews the change. Tests the implementer never sees decide whether it works. A decision model only recommends how much attention the change needs. A person always merges.
 
-Diagrams: [workflow](diagrams/workflow.html), [verification](diagrams/verification.html), [AWS architecture](diagrams/aws-architecture.html).
+Diagrams: [workflow](diagrams/workflow.html), [verification](diagrams/verification.html), [AWS architecture](diagrams/aws-architecture.html). Terms: [glossary](../CONTEXT.md). Why it is built this way: [decision records](adr/README.md).
 
 ## Components
 
