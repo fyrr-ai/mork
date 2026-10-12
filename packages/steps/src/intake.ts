@@ -24,6 +24,7 @@ const TRUSTED_ROLES = new Set(["admin", "maintain", "write", "triage"]);
 const WRITE_ROLES = new Set(["admin", "maintain", "write"]);
 
 export function signatureValid(secret: string, body: Buffer, header: string | undefined): boolean {
+  if (!secret.trim() || secret.trim().toLowerCase() === "unset") return false;
   const presented = Buffer.from(header ?? "");
   const expected = Buffer.from(`sha256=${createHmac("sha256", secret).update(body).digest("hex")}`);
   return presented.length === expected.length && timingSafeEqual(presented, expected);

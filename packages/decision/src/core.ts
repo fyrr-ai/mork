@@ -45,6 +45,33 @@ export function boundEvidence(value: unknown, maxString = 2_000): unknown {
 export const undecidedAll = (questions: Record<string, Question>, reason: string): Record<string, Answer> =>
   Object.fromEntries(Object.keys(questions).map((k) => [k, { type: "undecided", reason } as Answer]));
 
+export const isRecord = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value);
+const probability = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1;
+
+/** Validate provider output before any probability can affect a workflow. */
+export function validateAnswer(question: Question, raw: unknown): Answer {
+  if (isRecord(raw)) {
+    if (raw.type === "undecided" && typeof raw.reason === "string") return { type: "undecided", reason: raw.reason };
+    if (question.type === "noul" && raw.type === "noul" && probability(raw.p)) return { type: "noul", p: raw.p };
+    if (
+      question.type === "choice" &&
+      raw.type === "choice" &&
+      typeof raw.choice === "string" &&
+      Object.hasOwn(question.options, raw.choice) &&
+      probability(raw.confidence) &&
+      isRecord(raw.probabilities)
+    ) {
+      const values = Object.entries(raw.probabilities);
+      if (
+        values.every(([key, p]) => Object.hasOwn(question.options, key) && probability(p)) &&
+        values.reduce((sum, [, p]) => sum + (p as number), 0) <= 1 + 1e-6
+      )
+        return { type: "choice", choice: raw.choice, confidence: raw.confidence, probabilities: raw.probabilities as Record<string, number> };
+    }
+  }
+  return { type: "undecided", reason: "invalid answer" };
+}
+
 /** Shared HTTP call: budget check, timeout, and any failure becomes `undecided`. */
 export async function postDecision(
   provider: string,
@@ -65,7 +92,8 @@ export async function postDecision(
       signal: AbortSignal.timeout(30_000),
     });
     if (!response.ok) return undecidedAll(questions, `${provider} ${response.status}`);
-    return parse(await response.json());
+    const answers = parse(await response.json());
+    return Object.fromEntries(Object.entries(questions).map(([key, question]) => [key, validateAnswer(question, answers[key])]));
   } catch (error) {
     return undecidedAll(questions, `${provider} error: ${(error as Error).message}`);
   }
@@ -86,6 +114,7 @@ export class DecisionPanel {
   readonly #primary: string | undefined;
 
   constructor(providers: Decider[], primary?: string) {
+    if (new Set(providers.map((provider) => provider.name)).size !== providers.length) throw new Error("decision provider names must be unique");
     if (primary && !providers.some((p) => p.name === primary)) throw new Error(`primary decision provider ${primary} is not configured`);
     this.#providers = providers;
     this.#primary = primary ?? providers[0]?.name;
@@ -95,7 +124,13 @@ export class DecisionPanel {
     const results = await Promise.all(
       this.#providers.map(async (provider) => {
         const started = Date.now();
-        const answers = await provider.decide(state, questions);
+        let answers: Record<string, Answer>;
+        try {
+          const raw = await provider.decide(state, questions);
+          answers = Object.fromEntries(Object.entries(questions).map(([key, question]) => [key, validateAnswer(question, raw[key])]));
+        } catch (error) {
+          answers = undecidedAll(questions, `${provider.name} error: ${(error as Error).message}`);
+        }
         return [provider.name, { answers, ms: Date.now() - started }] as const;
       }),
     );

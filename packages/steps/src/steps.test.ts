@@ -21,13 +21,13 @@ const plan: AnalystOutput = {
   ],
   hidden_tests: [{ file: "add.test.mjs", criteria: ["AC1"], content: "assert.equal(add(2, 3), 5) // HIDDEN_SOURCE" }],
 };
-const gate: GateReport = {
+const gate = {
   mode: "after",
   head_sha: "b".repeat(40),
   repo_tests: { command: "npm test", exit_code: 0, output: "" },
   hidden: [{ file: "add.test.mjs", criteria: ["AC1"], passed: true, output: "" }],
   diff_policy: { violations: [], changed_files: ["math.mjs"], protected_hits: [], flags: [], added_lines: 3, removed_lines: 1 },
-};
+} satisfies GateReport;
 const review: ReviewerOutput = {
   summary: "ok",
   criteria: [{ id: "AC2", pass: true, evidence: [{ where: "README.md:3", quote: "add(a, b) returns the sum" }] }],
@@ -86,7 +86,7 @@ describe("recommendation", () => {
     expect(await rec({ panel: q, plan: { ...plan, security_sensitive: true } })).toBe("takeover");
     expect(await rec({ panel: q, security: true })).toBe("takeover");
     expect(await rec({ panel: q, review: { ...review, findings: [{ severity: "P1", where: "a:1", what: "x" }] } })).toBe("careful");
-    const flagged = { ...gate, diff_policy: { ...gate.diff_policy!, flags: ["test script changed"] } };
+    const flagged = { ...gate, diff_policy: { ...gate.diff_policy, flags: ["test script changed"] } };
     expect(await rec({ panel: q, gate: flagged })).toBe("careful");
   });
 });
@@ -107,7 +107,7 @@ class MemoryStore {
   }
   async text(key: string) {
     const value = this.objects.get(key);
-    if (value === undefined) throw new Error(`no ${key}`);
+    if (value === undefined) throw Object.assign(new Error(`no ${key}`), { name: "NoSuchKey" });
     return value;
   }
   async json(key: string) {
@@ -372,6 +372,15 @@ describe("questions", () => {
     await ask(makeDeps(memory()), state, "tok");
     expect(asked[0]).toMatchObject({ question: "new", resume: "check" });
   });
+  test("an unavailable answer history cannot reset the question limit", async () => {
+    asked.length = 0;
+    const deps = makeDeps(memory());
+    deps.store.json = async () => {
+      throw new Error("S3 unavailable");
+    };
+    await expect(ask(deps, { ...baseState, task: slackTask, last: { question: "Which?", resume: "plan" } }, "tok")).rejects.toThrow("S3 unavailable");
+    expect(asked).toEqual([]);
+  });
   test("GitHub tasks and the fourth question go to a person", async () => {
     const q = { ok: true, question: "Which?", resume: "plan" };
     await expect(ask(makeDeps(memory()), { ...baseState, last: q }, "tok")).rejects.toMatchObject({ name: "Handover" });
@@ -405,6 +414,10 @@ describe("intake", () => {
     expect(signatureValid("s", body, good)).toBe(true);
     expect(signatureValid("s", body, "sha256=00")).toBe(false);
     expect(signatureValid("s", body, undefined)).toBe(false);
+    for (const secret of ["", " ", "unset"]) {
+      const placeholderSignature = `sha256=${createHmac("sha256", secret).update(body).digest("hex")}`;
+      expect(signatureValid(secret, body, placeholderSignature)).toBe(false);
+    }
   });
 });
 

@@ -3,14 +3,14 @@
 // execution; Start resolves the Jira issue. The execution is named after the
 // Slack event, so Slack's retries start nothing twice. A mention inside a
 // thread answers the question a run is waiting on there, or asks for status.
-import { ExecutionAlreadyExists, SendTaskSuccessCommand, SFNClient, StartExecutionCommand } from "@aws-sdk/client-sfn";
+import { ExecutionAlreadyExists, SFNClient, StartExecutionCommand } from "@aws-sdk/client-sfn";
 import { Store } from "@mork/store";
 import { deliverAnswer } from "./answers.ts";
 import { channelsFromEnv } from "./channels.ts";
 import { allOf } from "./index.ts";
 import { Jira, jiraReporter } from "./jira.ts";
 import { loadSecrets } from "./secrets.ts";
-import { describeRun } from "./sfn-run.ts";
+import { describeRun, resumeAnswer } from "./sfn-run.ts";
 import { parseSlackRequest, Slack, slackReporter, slackSignatureValid, slackText } from "./slack.ts";
 import { asksForStatus, statusText, type ThreadTask, taskKey } from "./status.ts";
 import { pendingQuestion } from "./threads.ts";
@@ -47,9 +47,6 @@ export async function handler(event: UrlEvent): Promise<UrlResult> {
   const secret = process.env.SLACK_SIGNING_SECRET ?? "";
   if (!secret || !slackSignatureValid(secret, body, headers["x-slack-request-timestamp"], headers["x-slack-signature"])) return { statusCode: 401 };
 
-  // Slack retries when the first delivery took over 3 s; that delivery is still being handled.
-  if (headers["x-slack-retry-reason"] === "http_timeout") return { statusCode: 200 };
-
   const request = parseSlackRequest(body);
   if (request.kind === "challenge") return { statusCode: 200, headers: { "content-type": "text/plain" }, body: request.challenge };
   if (request.kind === "ignored") return { statusCode: 200 };
@@ -69,9 +66,7 @@ export async function handler(event: UrlEvent): Promise<UrlResult> {
         slack,
         reporter: (jiraKey) =>
           allOf(jira && jiraKey ? [slackReporter(slack, request.ref), jiraReporter(jira, jiraKey)] : [slackReporter(slack, request.ref)]),
-        resume: async (taskToken, output) => {
-          await sfn.send(new SendTaskSuccessCommand({ taskToken, output: JSON.stringify(output) }));
-        },
+        resume: (taskToken, output, executionArn) => resumeAnswer(sfn, executionArn, taskToken, output),
       },
       { event_id: request.event_id, ref: request.ref, text: request.ask },
     );

@@ -3,16 +3,7 @@
 // question order and echo the name; a declined question is `refusal`.
 // Wire format per the OpenAI-compatible reference (Vercel AI Gateway docs);
 // not yet exercised against the live API (no OpenAI key in this project).
-import { type Answer, type Decider, postDecision, type Question } from "./core.ts";
-
-type WireAnswer = {
-  type?: string;
-  name?: string | null;
-  probability?: number;
-  choice?: string | boolean;
-  confidence?: number;
-  probabilities?: { value: string | boolean; probability: number }[];
-};
+import { type Answer, type Decider, isRecord, postDecision, type Question } from "./core.ts";
 
 export class OpenAiDecider implements Decider {
   readonly name = "openai";
@@ -45,24 +36,38 @@ export class OpenAiDecider implements Decider {
       state,
       questions,
       (json) => {
-        const answers = (json as { answers?: WireAnswer[] }).answers ?? [];
-        const byName = new Map(answers.map((a) => [a.name, a]));
-        return Object.fromEntries(Object.entries(questions).map(([name, q]) => [name, parseOpenAiAnswer(q, byName.get(name))]));
+        const answers: unknown[] = isRecord(json) && Array.isArray(json.answers) ? json.answers : [];
+        return Object.fromEntries(
+          Object.entries(questions).map(([name, q]) => {
+            const matching = answers.filter((a) => isRecord(a) && a.name === name);
+            return [name, matching.length === 1 ? parseOpenAiAnswer(q, matching[0]) : { type: "undecided", reason: "missing or duplicate answer" }];
+          }),
+        );
       },
     );
   }
 }
 
-function parseOpenAiAnswer(question: Question, raw: WireAnswer | undefined): Answer {
-  if (!raw) return { type: "undecided", reason: "missing answer" };
+function parseOpenAiAnswer(question: Question, raw: unknown): Answer {
+  if (!isRecord(raw)) return { type: "undecided", reason: "missing answer" };
   if (raw.type === "refusal") return { type: "undecided", reason: "openai refused to answer" };
   if (question.type === "noul" && raw.type === "predicate" && typeof raw.probability === "number") return { type: "noul", p: raw.probability };
-  if (question.type === "choice" && raw.type === "choice" && raw.choice !== undefined) {
+  if (
+    question.type === "choice" &&
+    raw.type === "choice" &&
+    (typeof raw.choice === "string" || typeof raw.choice === "boolean") &&
+    typeof raw.confidence === "number" &&
+    Array.isArray(raw.probabilities) &&
+    raw.probabilities.every(
+      (p) => isRecord(p) && (typeof p.value === "string" || typeof p.value === "boolean") && typeof p.probability === "number",
+    ) &&
+    new Set(raw.probabilities.map((p) => String(p.value))).size === raw.probabilities.length
+  ) {
     return {
       type: "choice",
       choice: String(raw.choice),
-      confidence: typeof raw.confidence === "number" ? raw.confidence : 0,
-      probabilities: Object.fromEntries((raw.probabilities ?? []).map((p) => [String(p.value), p.probability])),
+      confidence: raw.confidence,
+      probabilities: Object.fromEntries(raw.probabilities.map((p) => [String(p.value), p.probability])),
     };
   }
   return { type: "undecided", reason: "unexpected answer shape" };

@@ -1,6 +1,7 @@
 # Slack app for Mork. Create it at https://api.slack.com/apps → "From a
 # manifest". The request URL is the `slack_events_url` output of the
-# Mork deployment stack. The bot token (xoxb-…) and the signing
+# Terraform module in infra/aws. Replace the example request URL below.
+# The bot token (xoxb-…) and the signing
 # secret go to Secrets Manager: mork/slack-bot-token and
 # mork/slack-signing-secret.
 display_information:
@@ -18,7 +19,7 @@ oauth_config:
       - reactions:write
 settings:
   event_subscriptions:
-    request_url: https://slack-events.example.com/
+    request_url: https://example.com/slack/events
     bot_events:
       - app_mention
   org_deploy_enabled: false

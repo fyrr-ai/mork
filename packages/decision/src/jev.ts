@@ -1,7 +1,7 @@
 // TypeSafe Jev over `POST /v1/systemone`. Questions travel as an object keyed
 // by name; `choice` options are called `criteria` on the wire. Verified
 // against the live API on 2026-10-10.
-import { type Answer, type Decider, postDecision, type Question } from "./core.ts";
+import { type Answer, type Decider, isRecord, postDecision, type Question } from "./core.ts";
 
 export class JevDecider implements Decider {
   readonly name = "jev";
@@ -30,22 +30,22 @@ export class JevDecider implements Decider {
       state,
       questions,
       (json) => {
-        const answers = (json as { answers?: Record<string, Record<string, unknown>> }).answers;
+        const answers = isRecord(json) && isRecord(json.answers) ? json.answers : {};
         return Object.fromEntries(Object.entries(questions).map(([key, q]) => [key, parseJevAnswer(q, answers?.[key])]));
       },
     );
   }
 }
 
-function parseJevAnswer(question: Question, raw: Record<string, unknown> | undefined): Answer {
-  if (!raw) return { type: "undecided", reason: "missing answer" };
+function parseJevAnswer(question: Question, raw: unknown): Answer {
+  if (!isRecord(raw)) return { type: "undecided", reason: "missing answer" };
   if (question.type === "noul" && typeof raw.noul === "number") return { type: "noul", p: raw.noul };
-  if (question.type === "choice" && typeof raw.choice === "string") {
+  if (question.type === "choice" && typeof raw.choice === "string" && typeof raw.confidence === "number" && isRecord(raw.probabilities)) {
     return {
       type: "choice",
       choice: raw.choice,
-      confidence: typeof raw.confidence === "number" ? raw.confidence : 0,
-      probabilities: (raw.probabilities as Record<string, number>) ?? {},
+      confidence: raw.confidence,
+      probabilities: raw.probabilities as Record<string, number>,
     };
   }
   return { type: "undecided", reason: "unexpected answer shape" };

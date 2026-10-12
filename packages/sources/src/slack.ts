@@ -14,6 +14,7 @@ export function slackSignatureValid(
   signature: string | undefined,
   now = Date.now(),
 ): boolean {
+  if (!secret.trim() || secret.trim().toLowerCase() === "unset") return false;
   const ts = Number(timestamp);
   if (!Number.isInteger(ts) || Math.abs(now / 1000 - ts) > MAX_SKEW_SECONDS) return false;
   const expected = Buffer.from(`v0=${createHmac("sha256", secret).update(`v0:${ts}:${body}`).digest("hex")}`);
@@ -47,7 +48,13 @@ export type SlackRequest =
 
 /** Reads a verified Events API body. Only human @mentions become tasks. */
 export function parseSlackRequest(body: string): SlackRequest {
-  const parsed = Envelope.safeParse(JSON.parse(body));
+  let json: unknown;
+  try {
+    json = JSON.parse(body);
+  } catch {
+    return { kind: "ignored", why: "invalid JSON" };
+  }
+  const parsed = Envelope.safeParse(json);
   if (!parsed.success) return { kind: "ignored", why: "unknown payload" };
   const envelope = parsed.data;
   if (envelope.type === "url_verification") return { kind: "challenge", challenge: envelope.challenge };

@@ -220,7 +220,12 @@ export async function ask(deps: Deps, state: FlowState, taskToken: string): Prom
   const fromStation = StationQuestion.safeParse(state.last);
   const pending = fromStation.success ? fromStation.data : state.ask;
   if (!pending) throw new Error("ask without a question");
-  const answered = Answers.parse(await deps.store.json(keys.answers(brief.prefix)).catch(() => []));
+  const answered = Answers.parse(
+    await deps.store.json(keys.answers(brief.prefix)).catch((error: unknown) => {
+      if ((error as { name?: string }).name === "NoSuchKey") return [];
+      throw error;
+    }),
+  );
   if (answered.length >= MAX_QUESTIONS) {
     throw new HandoverError(`Mork already asked ${MAX_QUESTIONS} questions and still needs to know:\n\n${pending.question}`);
   }
@@ -410,8 +415,8 @@ function taskFromStartInput(input: StartInput): Task {
 }
 
 /** The task's saved agent sessions in the Mork bucket; opening it needs AWS access, nothing is public. */
-export function transcriptsUrl(bucket: string, prefix: string, region = process.env.AWS_REGION ?? "eu-west-1"): string {
-  return `https://${region}.console.aws.amazon.com/s3/buckets/${bucket}?region=${region}&prefix=${encodeURIComponent(`${prefix}/sessions/`)}`;
+export function transcriptsUrl(bucket: string, prefix: string, region = process.env.AWS_REGION ?? ""): string {
+  return `https://${region ? `${region}.` : ""}console.aws.amazon.com/s3/buckets/${bucket}?${region ? `region=${region}&` : ""}prefix=${encodeURIComponent(`${prefix}/sessions/`)}`;
 }
 
 /** What the checks table reports beyond the gate after: the gate before, the attempt and the commit Decide verified. */

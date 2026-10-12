@@ -1,12 +1,15 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import { createHmac } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
+import { DescribeExecutionCommand, GetExecutionHistoryCommand, SendTaskSuccessCommand, type SFNClient } from "@aws-sdk/client-sfn";
 import { type AnswerDeps, deliverAnswer } from "./answers.ts";
 import { channelsFromEnv } from "./channels.ts";
 import { allOf, slackSource } from "./index.ts";
+import { handler as slackIntake } from "./intake.ts";
 import { adfToText, draftByRules, draftIssue, findIssueKey, Jira, textToAdf } from "./jira.ts";
+import { resumeAnswer } from "./sfn-run.ts";
 import { executionUrl, grafanaLiveUrl, parseSlackRequest, Slack, slackSignatureValid, slackText, statusOf } from "./slack.ts";
 import { asksForStatus, statusText, taskKey } from "./status.ts";
-import { threadKey } from "./threads.ts";
+import { answerCompletionKey, pendingQuestion, threadKey } from "./threads.ts";
 import type { SlackStart } from "./types.ts";
 
 const sign = (secret: string, ts: number, body: string) => `v0=${createHmac("sha256", secret).update(`v0:${ts}:${body}`).digest("hex")}`;
@@ -16,6 +19,50 @@ const mention = (text: string, extra: Record<string, unknown> = {}) =>
     event_id: "Ev0ABC123",
     event: { type: "app_mention", user: "U1", text, channel: "C0DEMO", ts: "1791631492.000100", ...extra },
   });
+
+describe("answer callback recovery", () => {
+  const output = { answered: true as const, resume: "build", answer: "chars", answer_event: "Ev1" };
+  test("a used token whose callback is in paginated history is a successful retry", async () => {
+    const seen: string[] = [];
+    const sfn = {
+      send: async (command: unknown) => {
+        if (command instanceof SendTaskSuccessCommand) throw Object.assign(new Error("used token"), { name: "InvalidToken" });
+        if (command instanceof GetExecutionHistoryCommand) {
+          seen.push(command.input.nextToken ?? "first");
+          return command.input.nextToken
+            ? { events: [{ taskSucceededEventDetails: { output: JSON.stringify(output) } }] }
+            : { events: [], nextToken: "page2" };
+        }
+        throw new Error("unexpected command");
+      },
+    } as unknown as Pick<SFNClient, "send">;
+    await resumeAnswer(sfn, "arn", "tok", output);
+    expect(seen).toEqual(["first", "page2"]);
+  });
+  test("an ambiguous callback on a running execution stays retryable", async () => {
+    const sfn = {
+      send: async (command: unknown) => {
+        if (command instanceof SendTaskSuccessCommand) throw Object.assign(new Error("used token"), { name: "TaskDoesNotExist" });
+        if (command instanceof GetExecutionHistoryCommand) return { events: [] };
+        if (command instanceof DescribeExecutionCommand) return { status: "RUNNING" };
+        throw new Error("unexpected command");
+      },
+    } as unknown as Pick<SFNClient, "send">;
+    await expect(resumeAnswer(sfn, "arn", "tok", output)).rejects.toThrow("not yet visible");
+  });
+  test("a terminal run without an accepted callback retains its expired-token error", async () => {
+    const expired = Object.assign(new Error("timed out"), { name: "TaskTimedOut" });
+    const sfn = {
+      send: async (command: unknown) => {
+        if (command instanceof SendTaskSuccessCommand) throw expired;
+        if (command instanceof GetExecutionHistoryCommand) return { events: [] };
+        if (command instanceof DescribeExecutionCommand) return { status: "TIMED_OUT" };
+        throw new Error("unexpected command");
+      },
+    } as unknown as Pick<SFNClient, "send">;
+    await expect(resumeAnswer(sfn, "arn", "tok", output)).rejects.toBe(expired);
+  });
+});
 
 describe("slack intake", () => {
   const now = 1_791_631_500_000;
@@ -27,6 +74,34 @@ describe("slack intake", () => {
     expect(slackSignatureValid("s", "{}", String(ts), sign("other", ts, "{}"), now)).toBe(false);
     expect(slackSignatureValid("s", "{}", String(ts - 600), sign("s", ts - 600, "{}"), now)).toBe(false);
     expect(slackSignatureValid("s", "{}", undefined, undefined, now)).toBe(false);
+  });
+  test("rejects disabled or blank signing keys even with their correct signature", () => {
+    for (const secret of ["", " ", "unset", " UNSET "]) {
+      expect(slackSignatureValid(secret, "{}", String(ts), sign(secret, ts, "{}"), now)).toBe(false);
+    }
+  });
+  test("the webhook handler rejects a request signed with the deployment placeholder", async () => {
+    const before = { secret: process.env.SLACK_SIGNING_SECRET, token: process.env.SLACK_BOT_TOKEN };
+    process.env.SLACK_SIGNING_SECRET = "unset";
+    process.env.SLACK_BOT_TOKEN = "unused";
+    try {
+      const timestamp = Math.floor(Date.now() / 1000);
+      expect(
+        await slackIntake({
+          requestContext: { http: { method: "POST" } },
+          body: "{}",
+          headers: { "x-slack-request-timestamp": String(timestamp), "x-slack-signature": sign("unset", timestamp, "{}") },
+        }),
+      ).toEqual({ statusCode: 401 });
+    } finally {
+      if (before.secret === undefined) delete process.env.SLACK_SIGNING_SECRET;
+      else process.env.SLACK_SIGNING_SECRET = before.secret;
+      if (before.token === undefined) delete process.env.SLACK_BOT_TOKEN;
+      else process.env.SLACK_BOT_TOKEN = before.token;
+    }
+  });
+  test("ignores malformed JSON instead of failing the webhook", () => {
+    expect(parseSlackRequest("{")).toEqual({ kind: "ignored", why: "invalid JSON" });
   });
   test("answers the URL verification challenge", () => {
     expect(parseSlackRequest(JSON.stringify({ type: "url_verification", challenge: "abc" }))).toEqual({ kind: "challenge", challenge: "abc" });
@@ -277,6 +352,10 @@ describe("answers in a thread", () => {
           objects.set(key, value);
           return key;
         },
+        updateJson: async (key, update) => {
+          objects.set(key, update(objects.get(key)));
+          return key;
+        },
         claim: async (key, value) => {
           if (objects.has(key)) return false;
           objects.set(key, value);
@@ -302,9 +381,9 @@ describe("answers in a thread", () => {
   test("the requester's answer is recorded, resumes the run once, and goes to Jira", async () => {
     const t = setup(pending);
     expect(await deliverAnswer(t.deps, { event_id: "Ev1", ref, text: "chars" })).toBe("resumed");
-    expect(t.resumed).toEqual([{ token: "tok", output: { answered: true, resume: "build", answer: "chars" } }]);
+    expect(t.resumed).toEqual([{ token: "tok", output: { answered: true, resume: "build", answer: "chars", answer_event: "Ev1" } }]);
     expect(t.objects.get(`${prefix}/answers.json`)).toEqual([
-      { question: "Bytes or chars?", answer: "chars", by: "U1", resume: "build", at: expect.any(String) },
+      { question: "Bytes or chars?", answer: "chars", by: "U1", resume: "build", at: expect.any(String), event_id: "Ev1" },
     ]);
     expect(t.reported).toEqual([{ jira: "PROJ-9", kind: "answered" }]);
     expect(await deliverAnswer(t.deps, { event_id: "Ev1", ref, text: "chars" })).toBe("duplicate");
@@ -320,6 +399,231 @@ describe("answers in a thread", () => {
     expect(outcomes.sort()).toEqual(["already_answered", "resumed"]);
     expect(t.resumed).toHaveLength(1);
     expect(t.objects.get(`${prefix}/answers.json`)).toHaveLength(1);
+  });
+  test("a delivery delayed before reading the thread uses the winning event binding", async () => {
+    const t = setup(pending);
+    const next = { ...pending, task_token: "tok-next", question: "Which format?" };
+    let delayedAtRead!: () => void;
+    let releaseRead!: () => void;
+    const atRead = new Promise<void>((resolve) => {
+      delayedAtRead = resolve;
+    });
+    const released = new Promise<void>((resolve) => {
+      releaseRead = resolve;
+    });
+    const json = t.deps.store.json;
+    let threadReads = 0;
+    t.deps.store.json = async (key) => {
+      if (key === threadKey(ref) && ++threadReads === 1) {
+        delayedAtRead();
+        await released;
+      }
+      return json(key);
+    };
+    const tokens: string[] = [];
+    t.deps.resume = async (token) => {
+      tokens.push(token);
+      t.objects.set(threadKey(ref), next);
+    };
+    const answer = { event_id: "Ev1", ref, text: "chars" };
+    const delayed = deliverAnswer(t.deps, answer);
+    await atRead;
+    expect(await deliverAnswer(t.deps, answer)).toBe("resumed");
+    releaseRead();
+    expect(await delayed).toBe("duplicate");
+    expect(tokens).toEqual(["tok"]);
+    expect(t.objects.get(threadKey(ref))).toEqual(next);
+    expect((t.objects.get(`${prefix}/answers.json`) as { question: string }[]).map((record) => record.question)).toEqual([pending.question]);
+  });
+  test("rejected events keep their original question snapshot after a reply failure", async () => {
+    for (const scenario of [
+      { initial: undefined, outcome: "nothing_pending", ref, text: "chars" },
+      { initial: { ...pending, answered_at: "t" }, outcome: "already_answered", ref, text: "chars" },
+      { initial: pending, outcome: "not_requester", ref: { ...ref, user: "U2" }, text: "chars" },
+      { initial: pending, outcome: "empty", ref, text: "" },
+    ]) {
+      const t = setup(scenario.initial);
+      let fail = true;
+      t.deps.slack.reply = async () => {
+        if (fail) {
+          fail = false;
+          throw new Error("reply response lost");
+        }
+      };
+      const answer = { event_id: "EvRejected", ref: scenario.ref, text: scenario.text };
+      await expect(deliverAnswer(t.deps, answer)).rejects.toThrow("reply response lost");
+      const next = { ...pending, task_token: "tok-next", question: "New task?", asked_by_user: scenario.ref.user };
+      t.objects.set(threadKey(ref), next);
+      expect(await deliverAnswer(t.deps, answer)).toBe(scenario.outcome);
+      expect(t.resumed).toHaveLength(0);
+      expect(t.objects.get(threadKey(ref))).toEqual(next);
+    }
+  });
+  test("an overlapping retry of the same event cannot erase a later question's answer", async () => {
+    const t = setup(pending);
+    const next = { ...pending, task_token: "tok-next", question: "Which format?" };
+    let firstAtResume!: () => void;
+    let duplicateAtUpdate!: () => void;
+    let releaseDuplicate!: () => void;
+    const atResume = new Promise<void>((resolve) => {
+      firstAtResume = resolve;
+    });
+    const atUpdate = new Promise<void>((resolve) => {
+      duplicateAtUpdate = resolve;
+    });
+    const duplicateReleased = new Promise<void>((resolve) => {
+      releaseDuplicate = resolve;
+    });
+    const update = t.deps.store.updateJson;
+    let updates = 0;
+    t.deps.store.updateJson = async (key, change) => {
+      if (++updates === 2) {
+        duplicateAtUpdate();
+        await duplicateReleased;
+      }
+      return update(key, change);
+    };
+    let callbacks = 0;
+    t.deps.resume = async (token) => {
+      if (token === pending.task_token && ++callbacks === 1) {
+        firstAtResume();
+        await atUpdate;
+        t.objects.set(threadKey(ref), next);
+        await deliverAnswer(t.deps, { event_id: "Ev2", ref, text: "CSV" });
+      }
+    };
+    const answer = { event_id: "Ev1", ref, text: "chars" };
+    const first = deliverAnswer(t.deps, answer);
+    await atResume;
+    const duplicate = deliverAnswer(t.deps, answer);
+    expect(await first).toBe("resumed");
+    releaseDuplicate();
+    expect(await duplicate).toBe("resumed");
+    expect((t.objects.get(`${prefix}/answers.json`) as { event_id: string }[]).map((record) => record.event_id)).toEqual(["Ev1", "Ev2"]);
+    expect((await pendingQuestion(t.deps.store, ref))?.task_token).toBe("tok-next");
+  });
+  test("callback completion never writes the thread pointer while a new question is parked", async () => {
+    const t = setup(pending);
+    const next = { ...pending, task_token: "tok-next", question: "Which format?" };
+    const put = t.deps.store.putJson;
+    t.deps.store.putJson = async (key, value) => {
+      if (key === threadKey(ref)) throw new Error("only the question producer may write the thread pointer");
+      return put(key, value);
+    };
+    const claim = t.deps.store.claim;
+    t.deps.store.claim = async (key, value) => {
+      if (key === answerCompletionKey(ref, pending.task_token)) t.objects.set(threadKey(ref), next);
+      return claim(key, value);
+    };
+    expect(await deliverAnswer(t.deps, { event_id: "Ev1", ref, text: "chars" })).toBe("resumed");
+    expect(await pendingQuestion(t.deps.store, ref)).toEqual(next);
+  });
+  test("a completion receipt failure retries its original question without losing answered status", async () => {
+    const t = setup(pending);
+    const claim = t.deps.store.claim;
+    let fail = true;
+    t.deps.store.claim = async (key, value) => {
+      if (key === answerCompletionKey(ref, pending.task_token) && fail) {
+        fail = false;
+        throw new Error("receipt storage unavailable");
+      }
+      return claim(key, value);
+    };
+    const answer = { event_id: "Ev1", ref, text: "chars" };
+    await expect(deliverAnswer(t.deps, answer)).rejects.toThrow("receipt storage unavailable");
+    expect(await deliverAnswer(t.deps, answer)).toBe("resumed");
+    expect(await pendingQuestion(t.deps.store, ref)).toMatchObject({ task_token: "tok", answered_event: "Ev1", answered_at: expect.any(String) });
+    expect(t.objects.get(threadKey(ref))).toEqual(pending);
+    expect(t.objects.get(`${prefix}/answers.json`)).toHaveLength(1);
+  });
+  test("a failed event receipt write leaves a durable answered status and a safe retry", async () => {
+    const t = setup(pending);
+    const put = t.deps.store.putJson;
+    let fail = true;
+    t.deps.store.putJson = async (key, value) => {
+      if (key.includes(".event-") && fail) {
+        fail = false;
+        throw new Error("event receipt write failed");
+      }
+      return put(key, value);
+    };
+    const answer = { event_id: "Ev1", ref, text: "chars" };
+    await expect(deliverAnswer(t.deps, answer)).rejects.toThrow("event receipt write failed");
+    expect(await pendingQuestion(t.deps.store, ref)).toMatchObject({ answered_event: "Ev1" });
+    expect(await deliverAnswer(t.deps, answer)).toBe("resumed");
+    expect(t.objects.get(`${prefix}/answers.json`)).toHaveLength(1);
+  });
+  test("a transient resume failure can be retried without duplicating the stored answer", async () => {
+    let attempts = 0;
+    const t = setup(pending, async () => {
+      if (++attempts === 1) throw new Error("temporary network failure");
+    });
+    const answer = { event_id: "EvRetry", ref, text: "chars" };
+    await expect(deliverAnswer(t.deps, answer)).rejects.toThrow("temporary network failure");
+    expect(t.objects.get(`${prefix}/answers.json`)).toHaveLength(1);
+    expect(await deliverAnswer(t.deps, answer)).toBe("resumed");
+    expect(t.objects.get(`${prefix}/answers.json`)).toHaveLength(1);
+    expect(attempts).toBe(2);
+    expect(await deliverAnswer(t.deps, answer)).toBe("duplicate");
+  });
+  test("a storage failure after taking the claim can retry the same event", async () => {
+    const t = setup(pending);
+    const update = t.deps.store.updateJson;
+    let fail = true;
+    t.deps.store.updateJson = async (key, change) => {
+      if (key === `${prefix}/answers.json` && fail) {
+        fail = false;
+        throw new Error("S3 temporarily unavailable");
+      }
+      return update(key, change);
+    };
+    const answer = { event_id: "EvRetry", ref, text: "chars" };
+    await expect(deliverAnswer(t.deps, answer)).rejects.toThrow("S3 temporarily unavailable");
+    expect(await deliverAnswer(t.deps, answer)).toBe("resumed");
+    expect(t.resumed).toHaveLength(1);
+    expect(t.objects.get(`${prefix}/answers.json`)).toHaveLength(1);
+  });
+  test("a retry can upgrade an older event-only claim without appending its answer twice", async () => {
+    const t = setup(pending);
+    const hash = createHash("sha256").update(pending.task_token).digest("hex").slice(0, 16);
+    t.objects.set(`${threadKey(ref).replace(/\.json$/, "")}.answer-${hash}.json`, { event_id: "Ev1" });
+    t.objects.set(`${prefix}/answers.json`, [{ question: pending.question, answer: "chars", by: ref.user, resume: pending.resume, at: "t1" }]);
+    expect(await deliverAnswer(t.deps, { event_id: "Ev1", ref, text: "chars" })).toBe("resumed");
+    expect(t.objects.get(`${prefix}/answers.json`)).toEqual([
+      { question: pending.question, answer: "chars", by: ref.user, resume: pending.resume, at: "t1", event_id: "Ev1" },
+    ]);
+    expect(t.resumed).toHaveLength(1);
+  });
+  test("resuming an answer preserves a subsequent question already parked by the phase", async () => {
+    const t = setup(pending);
+    const next = { ...pending, task_token: "tok-next", question: "Which format?" };
+    t.deps.resume = async () => {
+      t.objects.set(threadKey(ref), next);
+    };
+    expect(await deliverAnswer(t.deps, { event_id: "Ev1", ref, text: "chars" })).toBe("resumed");
+    expect(t.objects.get(threadKey(ref))).toEqual(next);
+  });
+  test("a retry after a lost callback response cannot answer a newer question or erase its answer", async () => {
+    const t = setup(pending);
+    const next = { ...pending, task_token: "tok-next", question: "Which format?" };
+    const tokens: string[] = [];
+    t.deps.resume = async (token) => {
+      tokens.push(token);
+      if (tokens.length === 1) {
+        t.objects.set(threadKey(ref), next);
+        throw new Error("callback response lost");
+      }
+    };
+    const answer = { event_id: "Ev1", ref, text: "chars" };
+    await expect(deliverAnswer(t.deps, answer)).rejects.toThrow("callback response lost");
+    const newer = { question: "Which format?", answer: "CSV", by: "U1", resume: "build", at: "t2", event_id: "Ev2" };
+    const answers = t.objects.get(`${prefix}/answers.json`) as unknown[];
+    t.objects.set(`${prefix}/answers.json`, [...answers, newer]);
+    expect(await deliverAnswer(t.deps, answer)).toBe("resumed");
+    expect(tokens).toEqual(["tok", "tok"]);
+    expect(t.objects.get(`${prefix}/answers.json`)).toEqual([...answers, newer]);
+    expect(t.objects.get(threadKey(ref))).toEqual(next);
+    expect(await deliverAnswer(t.deps, answer)).toBe("duplicate");
   });
   test("answers accumulate in answers.json", async () => {
     const t = setup(pending);
@@ -362,6 +666,10 @@ describe("answers in a thread", () => {
           objects.set(key, value);
           return key;
         },
+        updateJson: async (key: string, update: (current: unknown) => unknown) => {
+          objects.set(key, update(objects.get(key)));
+          return key;
+        },
         claim: async () => true,
       };
       const source = slackSource(new Slack("xoxb"), new Jira("https://x.atlassian.net", "bot@x", "t"), undefined, store);
@@ -397,6 +705,7 @@ describe("status in a thread", () => {
       return objects[key];
     },
     putJson: async (key: string) => key,
+    updateJson: async (key: string) => key,
     claim: async () => true,
   });
   const task = { [taskKey(ref)]: { execution_arn: arn, started_at: "2026-10-10T12:00:00Z" } };

@@ -1,4 +1,4 @@
-// DynamoDB-backed timeline store (table from the data/mork-timeline stack).
+// DynamoDB-backed timeline store (table configured by MORK_TIMELINE_TABLE).
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, ScanCommand } from "@aws-sdk/lib-dynamodb";
 import type { TimelineItem, TimelineStore } from "./index.ts";

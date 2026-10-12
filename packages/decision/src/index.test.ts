@@ -13,6 +13,7 @@ import {
   STEER_GRACE_MS,
   supervise,
   triageFrom,
+  validateAnswer,
 } from "./index.ts";
 
 const q = { level: { type: "choice" as const, instructions: "pick", options: { quick: "a", careful: "b" } } };
@@ -24,6 +25,8 @@ const server = Bun.serve({
     const path = new URL(req.url).pathname;
     const body = (await req.json()) as Record<string, unknown>;
     requests.push({ path, body });
+    const state = body.state ?? (typeof body.input === "string" ? JSON.parse(body.input) : {});
+    if (state && typeof state === "object" && "response" in state) return Response.json(state.response);
     if (path === "/v1/systemone") return Response.json({ answers: { level: { choice: "quick", confidence: 0.9, probabilities: { quick: 0.9 } } } });
     if (path === "/v1/decisions") {
       return Response.json({
@@ -43,6 +46,47 @@ const base = `http://127.0.0.1:${server.port}`;
 const fixed = (name: string, answers: Record<string, Answer>): Decider => ({ name, decide: async () => answers });
 
 describe("providers", () => {
+  test("invalid remote values cannot become a confident decision", async () => {
+    const questions = { ...q, ok: { type: "noul" as const, instructions: "ok?" } };
+    const responses = [
+      { level: { choice: "unexpected", confidence: 0.99, probabilities: {} }, ok: { noul: 2 } },
+      { level: { choice: "quick", confidence: -1, probabilities: {} }, ok: { noul: "0.9" } },
+      { level: { choice: "quick", confidence: 0.9, probabilities: { quick: 1.2 } }, ok: { noul: null } },
+      { level: { choice: "quick", confidence: 0.9, probabilities: { other: 0.9 } }, ok: { noul: -0.1 } },
+      { level: { choice: "quick", confidence: 0.9, probabilities: { quick: 0.8, careful: 0.8 } }, ok: {} },
+    ];
+    for (const answers of responses) {
+      const result = await new JevDecider("k", base).decide({ response: { answers } }, questions);
+      expect(result.level?.type).toBe("undecided");
+      expect(result.ok?.type).toBe("undecided");
+    }
+    expect(validateAnswer(questions.ok, { type: "noul", p: Number.NaN }).type).toBe("undecided");
+    expect(validateAnswer(questions.ok, { type: "noul", p: Number.POSITIVE_INFINITY }).type).toBe("undecided");
+  });
+  test("OpenAI rejects duplicate answers and malformed choice probabilities", async () => {
+    for (const answers of [
+      [{ name: "level", type: "choice", choice: "quick", confidence: 0.9, probabilities: [{ value: "quick", probability: 2 }] }],
+      [
+        {
+          name: "level",
+          type: "choice",
+          choice: "quick",
+          confidence: 0.9,
+          probabilities: [
+            { value: "quick", probability: 0.5 },
+            { value: "quick", probability: 0.5 },
+          ],
+        },
+      ],
+      [
+        { name: "level", type: "choice", choice: "quick", confidence: 0.9, probabilities: [] },
+        { name: "level", type: "choice", choice: "careful", confidence: 0.9, probabilities: [] },
+      ],
+    ]) {
+      const result = await new OpenAiDecider("k", `${base}/v1`).decide({ response: { answers } }, q);
+      expect(result.level?.type).toBe("undecided");
+    }
+  });
   test("budget rejects oversized state", () => {
     expect(checkBudget({ big: "x".repeat(40_000) }, q)).toContain("state + longest question");
     expect(checkBudget({ small: "x" }, q)).toBeUndefined();
@@ -62,7 +106,7 @@ describe("providers", () => {
   test("jev wire format: keyed questions, options as criteria", async () => {
     const answers = await new JevDecider("k", base).decide({ s: 1 }, q);
     expect(answers.level).toEqual({ type: "choice", choice: "quick", confidence: 0.9, probabilities: { quick: 0.9 } });
-    const sent = requests.find((r) => r.path === "/v1/systemone")?.body as { questions: Record<string, { criteria: unknown }> };
+    const sent = requests.findLast((r) => r.path === "/v1/systemone")?.body as { questions: Record<string, { criteria: unknown }> };
     expect(sent.questions.level?.criteria).toEqual({ quick: "a", careful: "b" });
   });
   test("openai wire format: named predicate/choice array, refusal is undecided", async () => {
@@ -73,7 +117,7 @@ describe("providers", () => {
     expect(answers.level).toEqual({ type: "choice", choice: "careful", confidence: 0.7, probabilities: { careful: 0.7 } });
     expect(answers.ok).toEqual({ type: "noul", p: 0.95 });
     expect(answers.nope?.type).toBe("undecided");
-    const sent = requests.find((r) => r.path === "/v1/decisions")?.body as { input: string; questions: { type: string; name: string }[] };
+    const sent = requests.findLast((r) => r.path === "/v1/decisions")?.body as { input: string; questions: { type: string; name: string }[] };
     expect(sent.input).toBe('{"s":1}');
     expect(sent.questions.map((x) => `${x.type}:${x.name}`)).toEqual(["choice:level", "predicate:ok", "predicate:nope"]);
   });
@@ -87,6 +131,18 @@ describe("panel", () => {
     const { answers, trace } = await new DecisionPanel([]).decide({ s: 1 }, q);
     expect(answers.level?.type).toBe("undecided");
     expect(trace.used).toBe("none");
+  });
+  test("a broken secondary provider does not discard the primary answer", async () => {
+    const broken: Decider = {
+      name: "broken",
+      decide: async () => {
+        throw new Error("provider unavailable");
+      },
+    };
+    const { answers, trace } = await new DecisionPanel([jev, broken], "jev").decide({}, q);
+    expect(answers.level).toMatchObject({ choice: "quick" });
+    expect(trace.providers.broken?.answers.level?.type).toBe("undecided");
+    expect(() => new DecisionPanel([jev, jev])).toThrow("unique");
   });
   test("the primary decides and the others are still recorded", async () => {
     const { answers, trace } = await new DecisionPanel([jev, openai], "openai").decide({}, q);

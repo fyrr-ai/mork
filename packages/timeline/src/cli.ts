@@ -9,6 +9,6 @@ if (!POINTS.includes(point)) {
   console.error(`usage: timeline:export -- <${POINTS.join("|")}>`);
   process.exit(2);
 }
-const rows = await exportJevcal(new DynamoStore(process.env.MORK_TIMELINE_TABLE ?? "mork-timeline-test"), point);
+const rows = await exportJevcal(DynamoStore.fromEnv(process.env), point);
 for (const row of rows) console.log(JSON.stringify(row));
 console.error(`${rows.length} rows, ${rows.filter((r) => Object.keys(r.labels).length).length} labelled`);
