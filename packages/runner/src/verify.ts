@@ -2,10 +2,10 @@
 // test and `checks` commands plus a preview of the diff policy, run on the
 // working tree while the agent still works. Hidden tests are not part of it;
 // they stay in Check. Runs as the agent user, like any of its bash calls.
-import { spawn } from "node:child_process";
 import { existsSync, writeFileSync } from "node:fs";
 import type { RepoConfig, RepoRef } from "@mork/contracts";
 import { checkDiff } from "./gate.ts";
+import { execAsync } from "./git.ts";
 
 /** Written by the runner from the base commit's config; the agent's branch cannot change it. */
 export type VerifySpec = {
@@ -21,32 +21,10 @@ export type VerifyResult = { passed: boolean; steps: VerifyStep[]; violations: s
 const TAIL = 1_500;
 const COMMAND_TIMEOUT_MS = 15 * 60_000;
 
-/** Async on purpose: inside Pi a blocking run would freeze the agent (and its supervisor) for the whole test. */
-function shell(command: string, cwd: string, env: NodeJS.ProcessEnv): Promise<{ code: number; output: string }> {
-  return new Promise((resolve) => {
-    const child = spawn("bash", ["-c", command], { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
-    let output = "";
-    const keep = (chunk: Buffer) => {
-      output = (output + chunk.toString("utf8")).slice(-4 * TAIL);
-    };
-    child.stdout.on("data", keep);
-    child.stderr.on("data", keep);
-    const timer = setTimeout(() => child.kill("SIGKILL"), COMMAND_TIMEOUT_MS);
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      resolve({ code: code ?? 1, output });
-    });
-    child.on("error", (error) => {
-      clearTimeout(timer);
-      resolve({ code: 127, output: String(error) });
-    });
-  });
-}
-
 export async function runVerify(spec: VerifySpec, repoDir: string, env: NodeJS.ProcessEnv = process.env): Promise<VerifyResult> {
   const steps: VerifyStep[] = [];
   const run = async (name: string, command: string) => {
-    const result = await shell(command, repoDir, env);
+    const result = await execAsync("bash", ["-c", command], { cwd: repoDir, env, timeoutMs: COMMAND_TIMEOUT_MS });
     const step = { name, command, exit_code: result.code, output: result.output.slice(-TAIL) };
     steps.push(step);
     return step.exit_code === 0;

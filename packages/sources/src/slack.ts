@@ -2,7 +2,7 @@
 // post short updates into the thread under it.
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
-import type { ReportEvent, Reporter, SlackRef } from "./types.ts";
+import { REVIEW_LEVEL_TEXT, type ReportEvent, type Reporter, type SlackRef } from "./types.ts";
 
 const MAX_SKEW_SECONDS = 300;
 
@@ -142,8 +142,6 @@ export function statusOf(event: ReportEvent): Status {
   }
 }
 
-const LEVEL = { quick: "a quick look is enough", careful: "review carefully" } as const;
-
 const link = (url: string | undefined, text: string) => (url ? `<${url}|${text}>` : text);
 const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
 const bullets = (items: string[]) => items.map((item) => `• ${item}`).join("\n");
@@ -187,7 +185,7 @@ export function slackText(event: ReportEvent): string {
       if (event.passed) return "*Checks passed:* repository tests, hidden tests and review";
       return `*Checks failed* (attempt ${event.attempt})${event.failures?.length ? `\n${bullets(event.failures)}` : ""}`;
     case "pr":
-      return `*Draft PR ready:* ${link(event.url, prLabel(event.url))}\n*Recommendation:* ${LEVEL[event.level]}${event.reasons.length ? `\n${bullets(event.reasons)}` : ""}${event.transcripts_url ? `\n${link(event.transcripts_url, "Agent transcripts")}` : ""}`;
+      return `*Draft PR ready:* ${link(event.url, prLabel(event.url))}\n*Recommendation:* ${REVIEW_LEVEL_TEXT[event.level]}${event.reasons.length ? `\n${bullets(event.reasons)}` : ""}${event.transcripts_url ? `\n${link(event.transcripts_url, "Agent transcripts")}` : ""}`;
     case "handover":
       return `*Handed over to a person:* ${event.reason.split("\n")[0]?.slice(0, 300)}`;
     case "fix":

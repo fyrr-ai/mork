@@ -289,6 +289,12 @@ export type RunResult = z.infer<typeof RunResult>;
 
 /** Error a container or step raises when the task goes to a person. */
 export const HANDOVER_ERROR = "Handover";
+export class HandoverError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = HANDOVER_ERROR;
+  }
+}
 /** A station container stopped before it finished (Fargate Spot reclaim, StopTask); Step Functions retries the phase. */
 export const INTERRUPTED_ERROR = "Mork.Interrupted";
 

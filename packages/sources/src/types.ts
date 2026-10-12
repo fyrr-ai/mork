@@ -54,5 +54,7 @@ export interface Reporter {
   report(event: ReportEvent): Promise<void>;
 }
 
+export const REVIEW_LEVEL_TEXT = { quick: "a quick look is enough", careful: "review carefully", takeover: "take over" } as const;
+
 /** One-shot completion, e.g. steps' llmFromEnv. */
 export type Complete = (system: string, user: string) => Promise<string>;

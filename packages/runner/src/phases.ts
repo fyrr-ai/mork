@@ -13,7 +13,7 @@ import {
   type BuildResult,
   BuildResult as BuildResultSchema,
   type GateReport,
-  HANDOVER_ERROR,
+  HandoverError,
   HiddenTest,
   ImplementerOutput,
   IssueDoc,
@@ -92,14 +92,6 @@ async function supervised<T>(ctx: PhaseContext, phase: Phase, run: (records: Sup
     return await run(records);
   } finally {
     if (records.length) await ctx.store.putJson(keys.supervision(ctx.brief.prefix, phase, ctx.brief.attempt), records);
-  }
-}
-
-/** Thrown when the task should go to a person; reported as the Handover error. */
-export class HandoverError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = HANDOVER_ERROR;
   }
 }
 

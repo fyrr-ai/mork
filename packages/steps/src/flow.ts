@@ -9,6 +9,7 @@ import {
   type Brief,
   GateReport,
   HANDOVER_ERROR,
+  HandoverError,
   ImplementerOutput,
   IssueDoc,
   keys,
@@ -20,7 +21,7 @@ import {
   RunResult,
 } from "@mork/contracts";
 import { type CriterionVerdict, type DecisionPanel, type DecisionTrace, judgeCriteria, type Triage, triage, triageMessage } from "@mork/decision";
-import { executionUrl, findIssueKey, type ReportEvent, type Reporter, type SlackStart, type TrackerIssue } from "@mork/sources";
+import { executionUrl, findIssueKey, REVIEW_LEVEL_TEXT, type ReportEvent, type Reporter, type SlackStart, type TrackerIssue } from "@mork/sources";
 import type { Store } from "@mork/store";
 import { linkPr, recordDecision, recordTakeover, type TimelineStore } from "@mork/timeline";
 import { z } from "zod";
@@ -82,14 +83,6 @@ export type Deps = {
   /** Whether a Step Functions execution is still running (a fix run's claim on its PR). */
   executionRunning: (executionArn: string) => Promise<boolean>;
 };
-
-/** Thrown when the task goes to a person; every state's Catch routes it to Handover. */
-export class HandoverError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = HANDOVER_ERROR;
-  }
-}
 
 /** ECS task group that ties the containers to one Mork task. */
 export function startedBy(short: string): string {
@@ -335,7 +328,7 @@ export async function decide(deps: Deps, state: FlowState): Promise<FlowState> {
     await github.comment(
       task.repo,
       fix.pr,
-      `${MARKER}### Mork pushed a fix (round ${fix.round}): ${fix.trigger}\n\n${impl.summary}\n\n${impl.changes.map((c) => `- \`${c.path}\`: ${c.change}`).join("\n")}\n\n**Recommendation:** ${levelText(rec.level)}\n\n${checksTable(checks)}\n\n<sub>Mork task ${task.id}</sub>`,
+      `${MARKER}### Mork pushed a fix (round ${fix.round}): ${fix.trigger}\n\n${impl.summary}\n\n${impl.changes.map((c) => `- \`${c.path}\`: ${c.change}`).join("\n")}\n\n**Recommendation:** ${REVIEW_LEVEL_TEXT[rec.level]}\n\n${checksTable(checks)}\n\n<sub>Mork task ${task.id}</sub>`,
     );
     await github.removeLabel(task.repo, fix.pr, rec.level === "quick" ? LABELS.careful.name : LABELS.quick.name);
     await github.addLabels(task.repo, fix.pr, [rec.level === "quick" ? LABELS.quick.name : LABELS.careful.name]);
@@ -419,10 +412,6 @@ function taskFromStartInput(input: StartInput): Task {
 /** The task's saved agent sessions in the Mork bucket; opening it needs AWS access, nothing is public. */
 export function transcriptsUrl(bucket: string, prefix: string, region = process.env.AWS_REGION ?? "eu-west-1"): string {
   return `https://${region}.console.aws.amazon.com/s3/buckets/${bucket}?region=${region}&prefix=${encodeURIComponent(`${prefix}/sessions/`)}`;
-}
-
-function levelText(level: Recommendation["level"]): string {
-  return level === "quick" ? "a quick look is enough" : level === "careful" ? "review carefully" : "take over";
 }
 
 /** What the checks table reports beyond the gate after: the gate before, the attempt and the commit Decide verified. */
@@ -509,7 +498,7 @@ export function prBody(
     const cited = quote ? `, \`${quote.where}\`: "${quote.quote.slice(0, 120)}"` : "";
     return v ? `${icon[v.verdict]} decision model: ${v.reason}${cited}` : "⚠️ not judged";
   };
-  return `## Recommendation: ${levelText(rec.level)}
+  return `## Recommendation: ${REVIEW_LEVEL_TEXT[rec.level]}
 
 ${rec.reasons.map((r) => `- ${r}`).join("\n") || "- The gate passed and the reviewer has no concerns."}
 ${review.read_first.length ? `\n**Start reading at:** ${review.read_first.map((p) => `\`${p}\``).join(", ")}\n` : ""}

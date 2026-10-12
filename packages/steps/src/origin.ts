@@ -2,7 +2,7 @@
 // a Jira issue. Everything that differs between the two lives here: how the
 // task is named, which branch it gets, how the PR links back, and where its
 // progress is reported. The flow itself does not branch on the source.
-import type { Reporter, SlackStart } from "@mork/sources";
+import { REVIEW_LEVEL_TEXT, type Reporter, type SlackStart } from "@mork/sources";
 import type { FixRequest } from "./fix.ts";
 import type { GitHub } from "./github.ts";
 
@@ -46,8 +46,6 @@ export const LABELS = {
   careful: { name: "review:careful", color: "fef2c0", description: "Review carefully" },
 } as const;
 
-const LEVEL_TEXT = { quick: "a quick look is enough", careful: "review carefully" } as const;
-
 /** GitHub issues hear about the task through labels and a few comments. */
 export function githubReporter(github: GitHub, repo: string, issue: number, taskId: string): Reporter {
   return {
@@ -70,7 +68,7 @@ export function githubReporter(github: GitHub, repo: string, issue: number, task
         case "pr":
           await github.addLabels(repo, issue, [LABELS.done.name]);
           await github.removeLabel(repo, issue, LABELS.working.name);
-          await github.comment(repo, issue, `Mork opened draft PR ${event.url}. Recommendation: **${LEVEL_TEXT[event.level]}**.`);
+          await github.comment(repo, issue, `Mork opened draft PR ${event.url}. Recommendation: **${REVIEW_LEVEL_TEXT[event.level]}**.`);
           return;
         case "handover":
           await github.addLabels(repo, issue, [LABELS.takeover.name]);
