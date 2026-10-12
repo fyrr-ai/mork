@@ -2,6 +2,7 @@
 // answer. Step Functions holds the run on a task token; the token is kept in
 // the Mork bucket under the thread, so the answer can find its way back.
 import { createHash } from "node:crypto";
+import { StepName } from "@mork/contracts/workflow";
 import { z } from "zod";
 import type { SlackRef } from "./types.ts";
 
@@ -11,7 +12,9 @@ export const Pending = z.object({
   /** Task prefix in the Mork bucket; answers go to `${prefix}/answers.json`. */
   prefix: z.string(),
   /** Phase that runs (again) once the answer is in. */
-  resume: z.enum(["plan", "build", "check"]),
+  resume: StepName,
+  /** Approval accepts only an explicit approve/reject from the requester. */
+  approval: z.boolean().optional(),
   question: z.string(),
   /** Only the requester answers: the answer becomes part of the agent's prompt. */
   asked_by_user: z.string(),
@@ -47,7 +50,7 @@ export const AnswerRecord = z.object({
   question: z.string(),
   answer: z.string(),
   by: z.string(),
-  resume: z.enum(["plan", "build", "check"]),
+  resume: StepName,
   at: z.string(),
   event_id: z.string().optional(),
 });

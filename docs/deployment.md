@@ -14,7 +14,7 @@ AWS_PROFILE = "your-profile"
 AWS_REGION = "your-region"
 MORK_ACCOUNT = "123456789012"
 MORK_NAME = "mork"
-MORK_INFRA_DIR = "infra/aws/examples/basic"
+MORK_INFRA_DIR = "/absolute/path/to/mork-deployment"
 SETTINGS
 mise run check
 ```
@@ -33,16 +33,18 @@ Add `JEV_API` or `OPENAI_API_KEY` for a decision model, and `MORK_SLACK_SIGNING_
 
 ## 3. First deployment
 
-Copy or edit [`infra/aws/examples/basic`](../infra/aws/examples/basic/main.tf) with your actual subnets, repository and LLM configuration. Its provider reads `AWS_REGION` from the environment. If you use another root module, set `MORK_INFRA_DIR` to it and expose the Mork module as `module.mork` for the bootstrap task.
+Create a deployment root outside the source checkout, using [`infra/aws/examples/basic`](../infra/aws/examples/basic/main.tf) as a template. Keep its configuration, provider lockfile and state in your private deployment repository. Editing the tracked example inside Mork makes the image source dirty and deployment correctly refuses it.
+
+Copy `main.tf` and `packages/contracts/src/development.json` into that external directory. In its module block set `source = "/absolute/path/to/mork/infra/aws"` and load development with `jsondecode(file("${path.module}/development.json"))`. Set actual subnets, repository and LLM configuration. The provider reads `AWS_REGION` from the environment. Expose the Mork module as `module.mork` for bootstrap and set `MORK_INFRA_DIR` to the external directory.
 
 ```sh
-mise exec -- tofu -chdir=infra/aws/examples/basic init
+mise exec -- tofu -chdir=/absolute/path/to/mork-deployment init
 mise run infra:bootstrap
 mise run images:push
 mise run infra:apply
 ```
 
-The targeted bootstrap creates only the ECR repositories. `images:push` builds and uploads the three images without trying to update functions. The full apply can then create Lambdas from an existing image. Targeted apply is a first-install operation; ordinary changes use full `infra:apply`.
+The targeted bootstrap creates only the ECR repositories. `images:push` builds and uploads the three images without trying to update functions. Image upload writes `.mork-images.auto.tfvars.json` in the deployment root. Pass its `image_digests` variable into the Mork module as the example does. The full apply can then create Lambdas and task definitions from those immutable digests. Targeted apply is a first-install operation; ordinary changes use full `infra:apply`.
 
 The module's dependency lockfile is committed. A separate deployment root needs its own committed lockfile and protected state backend. The example intentionally does not choose a production state backend for you.
 
@@ -52,9 +54,23 @@ The module's dependency lockfile is committed. A separate deployment root needs 
 mise run deploy
 ```
 
-The script first confirms all configured functions exist, then builds and uploads the `runner`, `egress` and `lambda` images. It pins Lambdas to the uploaded digest. Phase containers resolve `image_tag`, which defaults to `current`, on their next run. It refuses tracked changes unless `ALLOW_DIRTY=1` and rejects a different account when `MORK_ACCOUNT` is set. Names with underscores use hyphens for ECR, matching the module. Use `MORK_ECR_PREFIX` and `MORK_FUNCTIONS` only for existing deployments with different names.
+The script first rejects tracked and untracked changes, confirms all configured functions exist, and uploads the `runner`, `egress` and `lambda` images. It records all three digests in the deployment root and runs a saved Terraform plan through the runner's configuration and JSON schema validators before applying that exact plan. `infra:apply` uses the same validation. These commands apply the saved plan without a second Terraform confirmation; review infrastructure changes before invoking them and run them only when you intend to deploy. To upload without applying, use `images:push`.
 
-Base images are pinned by digest in `Dockerfile`; dependency installs use `bun.lock`. Review base-image updates and rebuild periodically for security patches. Configure infrastructure changes with `mise run infra:apply`.
+Tasks use immutable image digests and pinned task-definition revisions. Step Functions calls a published version of the steps Lambda. Older task definitions remain active so existing executions can continue after an approval wait or retry. `current` is a discovery tag; deployed tasks never resolve it. `ALLOW_DIRTY=1` explicitly permits a local development build and gives it a distinct dirty tag. `MORK_ACCOUNT` rejects a different account. Names with underscores use hyphens for ECR, matching the module.
+
+Keep old task revisions, Lambda versions, referenced images and their IAM roles until their executions end, including any runs you intend to redrive. Renaming/removing a workflow or step, changing its IAM policy, subnet or secret, or destroying the stack can still break existing executions. Drain affected workflows before those changes. The module installs no ECR expiration policy. Delete images only after confirming no retained execution, redrive, task revision or Lambda version needs their digests.
+
+S3 retention must cover the full configured workflow budget, development repair rounds and a 14-day recovery reserve. Long approval waits require increasing `bucket_expiration_days`. Keep needed artifacts longer when extending recovery or leaving a PR open beyond that budget; lifecycle expiration does not inspect active executions.
+
+Base images are pinned by digest in `Dockerfile`; workspace dependencies use `bun.lock` and Pi uses `images/runner/bun.lock`. Review base-image updates and rebuild periodically for security patches. Configure infrastructure changes with `mise run infra:apply`.
+
+Production images contain bundled application code. The runner starts from `scratch`
+with Node, npm, Bash, Git, Python, ripgrep and fd; it has no OS package manager.
+Lambda uses a shell-free distroless base with the AWS runtime client, without the
+redundant AWS SDK or local runtime emulator. The proxy uses its original static
+binary on BusyBox. Build stages retain upstream license files in the final images.
+Run `mise run images:check` to exercise these runtimes and enforce image size limits
+without AWS or external network access.
 
 ## 5. A repository
 
@@ -84,6 +100,22 @@ Slack retry deliveries resume their original question. Answers are durably recor
 
 Removing Secrets Manager values does not revoke the tokens in GitHub. Revoke each token through GitHub settings before replacing it. The removal task recreates the secrets with placeholders and new ARNs, so reapply the stack.
 
+Async Slack failures are retained for 14 days in the encrypted queue exposed by `slack_failure_queue_url`. Alarms cover Slack Lambda errors, visible failure records and failed/timed-out workflow executions. Set `alarm_actions` to your SNS topic ARNs to receive notifications; the empty default provides console alarms only. After fixing the cause, inspect the destination record and replay its `requestPayload` through the Slack worker. Preserve event IDs so the original route and answer receipts remain idempotent. Confirm success before deleting the queue record.
+
 Logs live in `/ecs/<name>/stations`, `/aws/lambda/<name>_*`, the state machine's log group, and your OTLP destination when configured. An exhausted Handover retry fails the execution as `Mork.HandoverFailed`; inspect the execution history for the notification or cleanup error.
 
 Both public webhook URLs need `lambda:InvokeFunctionUrl` and `lambda:InvokeFunction`. The latter is restricted to requests via Function URL. The module supplies both permissions. [AWS Function URL authorization](https://docs.aws.amazon.com/lambda/latest/dg/urls-auth.html).
+
+## Migration from the original configuration
+
+`phase_seconds`, `spot_attempts`, `answer_seconds` and `image_tag` are replaced by `workflows.development` and `image_digests`. Copy the shipped [development JSON](../packages/contracts/src/development.json) and configure each step's timeout, attempts, capacity, Spot retries, prompts and domains. Configure human waits under `questions` and repair rounds under `fixes`.
+
+Expose `variable "image_digests" { type = map(string) }` in your deployment root and pass it as `image_digests = var.image_digests` to `module.mork`. Run `images:push` to record the three digests, review the changes, then `infra:apply`. The built-in development resource addresses stay the same. Existing executions created before pinned versions and retained revisions need to finish before migration; an update cannot retroactively change their captured definitions.
+
+## Recovering a failed run
+
+Inspect execution history first, then the station/Lambda logs and the task's S3 prefix. Runner bootstrap failures send `StationError` immediately. A generic workflow's `status.json` retains the original failure even if ECS cleanup or Slack notification also fails. The native execution remains failed when terminal notification retries are exhausted.
+
+For a PR repair, `pr.json` is the authoritative reservation with its owning execution, round, highest completed attempt and the current owner's reserved attempt ceiling. Retry a failed Start to resume the same round. Once that execution is terminal, a new authorized trigger may reserve the next round above that ceiling, so it cannot overwrite attempts whose final bookkeeping was interrupted. Do not manually delete an active reservation. Old `fix/<round>.json` objects are no longer read. Exhausted repair budgets require a person to finish the PR.
+
+For a timeout during a question, confirm the execution and pending task token before retrying or redriving. A late answer cannot reopen an expired token. For cleanup failure, confirm and stop leftover ECS tasks before removing artifacts or retained versions. Timeouts of generic container steps go through failure cleanup instead of launching an overlapping retry. Confirmed Start notifications are recorded and skipped on retry. A lost Slack response or an interrupted receipt write can still duplicate a message; notification retries preserve the execution's original error.

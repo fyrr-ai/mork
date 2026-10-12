@@ -2,6 +2,7 @@
 // environment of the one git process (GIT_CONFIG_*), never as arguments (any
 // user can read another process's command line) and never into a repository config.
 import { spawn, spawnSync } from "node:child_process";
+import { onShutdown } from "./shutdown.ts";
 
 export type Exec = { code: number; output: string };
 
@@ -52,26 +53,36 @@ export function execAsync(
     };
     child.stdout.on("data", keep);
     child.stderr.on("data", keep);
+    const stop = () => {
+      try {
+        if (child.pid) process.kill(-child.pid, "SIGKILL");
+      } catch {
+        child.kill("SIGKILL");
+      }
+      child.stdout.destroy();
+      child.stderr.destroy();
+    };
+    const offShutdown = onShutdown(async () => {
+      stop();
+      await new Promise<void>((done) => child.once("close", () => done()));
+    });
     const timer = options.timeoutMs
       ? setTimeout(() => {
           // Kill the shell's process group, including children holding output
           // pipes open. A child that starts its own group must not extend the
           // timeout either; the caller cleans up the sandbox uid afterward.
-          try {
-            if (child.pid) process.kill(-child.pid, "SIGKILL");
-          } catch {
-            child.kill("SIGKILL");
-          }
-          child.stdout.destroy();
-          child.stderr.destroy();
+          stop();
+          offShutdown();
           resolve({ code: 124, output: Buffer.concat(chunks).toString("utf8") });
         }, options.timeoutMs)
       : undefined;
     child.on("error", (error) => {
+      offShutdown();
       clearTimeout(timer);
       resolve({ code: 127, output: error.message });
     });
     child.on("close", (code) => {
+      offShutdown();
       clearTimeout(timer);
       resolve({ code: code ?? 1, output: Buffer.concat(chunks).toString("utf8") });
     });
@@ -104,10 +115,10 @@ export function repoUrl(fullName: string): string {
 export const SAFE_GIT = ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "safe.directory=*"];
 
 /** Commit `branch` points to on GitHub, or undefined when it does not exist. */
-export function remoteHead(fullName: string, token: string, branch: string): string | undefined {
-  const out = mustExec("git", [...SAFE_GIT, "ls-remote", "--heads", repoUrl(fullName), `refs/heads/${branch}`], {
+export function remoteHead(fullName: string, token: string, branch: string, localRepo?: string): string | undefined {
+  const out = mustExec("git", [...SAFE_GIT, "ls-remote", "--heads", "--", localRepo ?? repoUrl(fullName), `refs/heads/${branch}`], {
     timeoutMs: 120_000,
-    env: authEnv(token),
+    env: localRepo ? process.env : authEnv(token),
   }).trim();
   return out ? out.split(/\s+/)[0] : undefined;
 }

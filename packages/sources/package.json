@@ -4,11 +4,15 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./intake": "./src/intake.ts"
+    "./intake": "./src/intake.ts",
+    "./threads": "./src/threads.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-lambda": "3.908.0",
     "@aws-sdk/client-secrets-manager": "3.908.0",
     "@aws-sdk/client-sfn": "3.908.0",
+    "@mork/contracts": "workspace:*",
+    "@mork/decision": "workspace:*",
     "@mork/store": "workspace:*",
     "zod": "4.1.12"
   }

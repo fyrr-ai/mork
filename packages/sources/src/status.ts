@@ -7,7 +7,7 @@ import type { ThreadStore } from "./threads.ts";
 import { pendingQuestion } from "./threads.ts";
 import type { SlackRef } from "./types.ts";
 
-export const ThreadTask = z.object({ execution_arn: z.string(), started_at: z.string() });
+export const ThreadTask = z.object({ execution_arn: z.string(), started_at: z.string(), workflow: z.string().optional() });
 export type ThreadTask = z.infer<typeof ThreadTask>;
 
 export const taskKey = (ref: SlackRef) => `threads/${ref.channel}/${ref.thread_ts}.task.json`;
@@ -62,7 +62,7 @@ export async function statusText(deps: StatusDeps, ref: SlackRef, now = new Date
     const pending = await pendingQuestion(deps.store, ref).catch(() => undefined);
     if (pending && !pending.answered_at) return `*Status:* waiting for your answer to the question above\n${link}`;
     const phase = run.current ? (PHASE_TEXT[run.current.name] ?? run.current.name) : "running";
-    const attempt = run.current?.attempt && (run.current.name === "Build" || run.current.name === "Check") ? ` (attempt ${run.current.attempt})` : "";
+    const attempt = run.current?.attempt ? ` (attempt ${run.current.attempt})` : "";
     const forHow = run.current ? ` for ${ago(run.current.entered, now)}` : "";
     return `*Status:* ${phase}${attempt}${forHow}${since}\n${link}`;
   }

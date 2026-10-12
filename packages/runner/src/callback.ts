@@ -26,18 +26,18 @@ export function briefFromEnv(env: NodeJS.ProcessEnv): { phase: Phase; brief: Bri
  * result. A thrown error fails the state: `Handover` carries the reason for
  * the person, anything else is reported as an unexpected StationError.
  */
-export async function reportTo(token: string, work: () => Promise<RunResult>): Promise<RunResult> {
+export async function reportTo<T>(token: string, work: () => Promise<T>, client: SFNClient = sfn): Promise<T | RunResult> {
   const timer = setInterval(() => {
-    void sfn.send(new SendTaskHeartbeatCommand({ taskToken: token })).catch(() => undefined);
+    void client.send(new SendTaskHeartbeatCommand({ taskToken: token })).catch(() => undefined);
   }, HEARTBEAT_MS);
   try {
     const result = await work();
-    await sfn.send(new SendTaskSuccessCommand({ taskToken: token, output: JSON.stringify(result) }));
+    await client.send(new SendTaskSuccessCommand({ taskToken: token, output: JSON.stringify(result) }));
     return result;
   } catch (error) {
     const handover = error instanceof Error && error.name === HANDOVER_ERROR;
     const cause = handover ? error.message : String(error);
-    await sfn.send(
+    await client.send(
       new SendTaskFailureCommand({ taskToken: token, error: handover ? HANDOVER_ERROR : "StationError", cause: cause.slice(0, 32_000) }),
     );
     return { ok: false, error: cause.slice(0, 4000) };
@@ -47,7 +47,7 @@ export async function reportTo(token: string, work: () => Promise<RunResult>): P
 }
 
 /** Fails the phase as interrupted so Step Functions retries it; a token already answered or closed is fine. */
-export async function reportInterrupted(token: string, phase: Phase): Promise<void> {
+export async function reportInterrupted(token: string, phase: string): Promise<void> {
   await sfn
     .send(new SendTaskFailureCommand({ taskToken: token, error: INTERRUPTED_ERROR, cause: `${phase} container stopped before it finished` }))
     .catch(() => undefined);

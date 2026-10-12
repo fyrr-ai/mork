@@ -14,12 +14,17 @@ if [[ -n "$(git ls-files --others --exclude-standard)" ]]; then
   echo "untracked files would be omitted; commit or ignore them before exporting" >&2
   exit 1
 fi
+: "${MORK_RELEASE_AUTHOR:?set the public author name for the export}"
+: "${MORK_RELEASE_EMAIL:?set the public author email for the export}"
+version="$(jq -er '.version' package.json)"
+[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "package.json needs a release version" >&2; exit 2; }
 mkdir -p "$destination"
 git archive HEAD | tar -x -C "$destination"
 git -C "$destination" init -q -b main
-git -C "$destination" config user.name "${MORK_RELEASE_AUTHOR:-Mork contributors}"
-git -C "$destination" config user.email "${MORK_RELEASE_EMAIL:-mork@users.noreply.github.com}"
+git -C "$destination" config user.name "$MORK_RELEASE_AUTHOR"
+git -C "$destination" config user.email "$MORK_RELEASE_EMAIL"
 git -C "$destination" add .
-git -C "$destination" -c commit.gpgsign=false commit -q -m "feat: publish Mork source"
+git -C "$destination" -c commit.gpgsign=false commit -q -m "feat: publish Mork $version source"
+git -C "$destination" -c tag.gpgsign=false tag "v$version"
 gitleaks git --redact "$destination"
 echo "exported committed HEAD to $destination; review before publishing"

@@ -2,7 +2,8 @@
 // that mentions @mork starts a fix run. It continues the task on the same
 // branch and prefix (same plan and hidden tests), runs Build → Check →
 // Decide, and Decide comments on the PR instead of opening a new one.
-import { BRANCH_PREFIX, keys, lastAttempt, MAX_FIX_ATTEMPTS, MAX_FIX_ROUNDS } from "@mork/contracts";
+import { BRANCH_PREFIX, Brief, keys, lastAttempt } from "@mork/contracts";
+import { DEFAULT_DEVELOPMENT_POLICY, DevelopmentPolicy } from "@mork/contracts/development";
 import { prTask } from "@mork/timeline";
 import { z } from "zod";
 import type { Deps, Dismissed, FlowState } from "./flow.ts";
@@ -20,10 +21,12 @@ export const PrRecord = z.object({
   number: z.number().int(),
   url: z.string(),
   /** Task, brief and triage of the run that opened (or last fixed) the PR. */
-  state: z.object({ task: z.any(), brief: z.any(), security: z.boolean().optional() }),
-  fix_rounds: z.number().int().default(0),
+  state: z.object({ task: z.any(), brief: Brief, security: z.boolean().optional(), policy: DevelopmentPolicy.optional() }),
+  fix_rounds: z.number().int().min(0).default(0),
   /** Execution ARN of the fix run working on the PR, while it runs. */
   running: z.string().optional(),
+  /** A terminated owner may have used every attempt, even if its final bookkeeping failed. */
+  running_last_attempt: z.number().int().positive().optional(),
 });
 export type PrRecord = z.infer<typeof PrRecord>;
 
@@ -122,79 +125,108 @@ export async function startFix(deps: Deps, input: { fix: FixRequest; execution: 
   };
   const link = await prTask(deps.timeline, repo, pr);
   if (!link?.prefix) return dismiss("not a Mork PR");
-  const raw = await deps.store.json(keys.pr(link.prefix)).catch(() => undefined);
+  const raw = await deps.store.json(keys.pr(link.prefix)).catch((error) => {
+    if (error.name === "NoSuchKey") return undefined;
+    throw error;
+  });
   const parsed = PrRecord.safeParse(raw);
   if (!parsed.success) return dismiss("the task's data has expired");
   const record = parsed.data;
   // A Lambda retry of this very Start finds its own claim: it continues the round it already owns.
-  const mine = record.running !== undefined && record.running === input.execution_arn;
+  const owner = input.execution_arn;
+  if (!owner) throw new Error("Fix runs require an execution ARN");
+  const mine = record.running === owner;
   if (!mine && record.running && (await deps.executionRunning(record.running))) {
     return dismiss("a fix run is already working on this PR");
   }
   const pull = await deps.github.pull(repo, pr);
   if (pull.state !== "open") return dismiss("the PR is closed");
   if (trigger.kind === "ci" && trigger.sha !== pull.head.sha) return dismiss("CI result for an older commit");
-  const prev = record.state as Pick<FlowState, "task" | "brief" | "security">;
-  if (!mine && record.fix_rounds >= MAX_FIX_ROUNDS) {
+  const prev = record.state as Pick<FlowState, "task" | "brief" | "security" | "policy">;
+  const policy = deps.development ?? prev.policy ?? DEFAULT_DEVELOPMENT_POLICY;
+  if (!mine && record.fix_rounds >= policy.fixes.rounds) {
     await deps.github.comment(
       repo,
       pr,
-      `${MARKER}Mork already made ${MAX_FIX_ROUNDS} fix rounds on this PR (${triggerText(trigger)} again). It is over to you now.`,
+      `${MARKER}Mork already made ${policy.fixes.rounds} fix rounds on this PR (${triggerText(trigger)} again). It is over to you now.`,
     );
     await (await deps.reporter(prev.task)).report({
       kind: "handover",
-      reason: `${triggerText(trigger)} after ${MAX_FIX_ROUNDS} fix rounds on ${pull.html_url}`,
+      reason: `${triggerText(trigger)} after ${policy.fixes.rounds} fix rounds on ${pull.html_url}`,
     });
     return dismiss("fix rounds used up");
   }
   const feedback = await fixFeedback(deps.github, input.fix);
   if (!feedback) return dismiss("no failed checks on the PR head");
-  const round = mine ? record.fix_rounds : record.fix_rounds + 1;
-  // Two triggers can read the same record at once; only one may own the round and its build attempt.
-  const claimKey = keys.fixClaim(prev.brief.prefix, round);
-  if (!(await deps.store.claim(claimKey, { execution: input.execution_arn, trigger }))) {
-    const owner = (await deps.store.json(claimKey).catch(() => undefined)) as { execution?: string } | undefined;
-    if (owner?.execution !== input.execution_arn) return dismiss(`another fix run claimed round ${round}`);
-  }
-  // `prev.brief.attempt` is the highest attempt any earlier run used (Decide and Handover both save it).
-  const attempt = mine ? prev.brief.attempt : prev.brief.attempt + 1;
-  await deps.store.put(keys.feedback(prev.brief.prefix, attempt), feedback, "text/markdown");
-  const brief = { ...prev.brief, attempt, last_attempt: attempt + MAX_FIX_ATTEMPTS - 1, execution: input.execution };
-  await deps.store.putJson(keys.pr(prev.brief.prefix), {
-    ...record,
-    fix_rounds: round,
-    running: input.execution_arn,
-    state: { ...record.state, brief: { ...prev.brief, attempt } },
+  // Ownership and counters commit together. A retry resumes this reservation;
+  // a later execution can replace it only after its owner has terminated.
+  let reserved: PrRecord | undefined;
+  await deps.store.updateJson(keys.pr(link.prefix), (current) => {
+    reserved = undefined;
+    const latest = PrRecord.parse(current);
+    if (latest.running === owner) {
+      reserved = latest;
+      return current;
+    }
+    // The liveness check above applies only to the snapshot we inspected.
+    if (JSON.stringify(current) !== JSON.stringify(raw)) return current;
+    const attempt = Math.max(latest.state.brief.attempt, latest.running_last_attempt ?? 0) + 1;
+    reserved = {
+      ...latest,
+      running: owner,
+      fix_rounds: latest.fix_rounds + 1,
+      running_last_attempt: attempt + policy.fixes.attempts - 1,
+      state: { ...latest.state, brief: { ...latest.state.brief, attempt } },
+    };
+    return reserved;
   });
+  if (!reserved) return dismiss("a fix run is already working on this PR");
+  const round = reserved.fix_rounds;
+  const attempt = reserved.state.brief.attempt;
+  await deps.store.put(keys.feedback(prev.brief.prefix, attempt), feedback, "text/markdown");
+  const brief = { ...reserved.state.brief, last_attempt: attempt + policy.fixes.attempts - 1, execution: input.execution };
   const task = { ...prev.task, ...(input.execution_arn ? { execution_arn: input.execution_arn } : {}) };
   const fix: FixState = { pr, url: pull.html_url, round, trigger: triggerText(trigger) };
-  await (await deps.reporter(task)).report({ kind: "fix", pr_url: pull.html_url, trigger: fix.trigger, round, max: MAX_FIX_ROUNDS });
+  await (await deps.reporter(task)).report({ kind: "fix", pr_url: pull.html_url, trigger: fix.trigger, round, max: policy.fixes.rounds });
   deps.log(task.id, "fix.start", { pr, round, trigger: trigger.kind, attempt, last_attempt: lastAttempt(brief), replay: mine });
-  return { task, brief, security: prev.security, fix, next: "build" };
+  return { task, brief, policy, security: prev.security, fix, next: "build" };
 }
 
 /** Releases a fix run's claim on its PR after a handover, keeping the highest attempt it used. */
 export async function releasePr(deps: Deps, state: FlowState): Promise<void> {
   const key = keys.pr(state.brief.prefix);
-  const record = PrRecord.safeParse(await deps.store.json(key).catch(() => undefined));
-  if (!record.success) return;
-  const used = Math.max(state.brief.attempt, (record.data.state.brief as { attempt?: number })?.attempt ?? 0);
-  await deps.store.putJson(key, {
-    ...record.data,
-    running: undefined,
-    state: { ...record.data.state, brief: { ...record.data.state.brief, attempt: used } },
+  await deps.store.updateJson(key, (current) => {
+    const record = PrRecord.safeParse(current);
+    if (!record.success || !state.fix || record.data.fix_rounds !== state.fix.round || record.data.running !== state.task.execution_arn)
+      return current;
+    const used = Math.max(state.brief.attempt, record.data.state.brief.attempt ?? 0);
+    return {
+      ...record.data,
+      running: undefined,
+      running_last_attempt: undefined,
+      state: { ...record.data.state, brief: { ...record.data.state.brief, attempt: used } },
+    };
   });
 }
 
-/** Saves the PR record after Decide, releasing the fix run's claim. */
+/** Saves the PR record after Decide, releasing only this execution's claim. */
 export async function savePr(deps: Deps, state: FlowState, pr: { number: number; url: string }): Promise<void> {
-  const key = keys.pr(state.brief.prefix);
-  const previous = PrRecord.safeParse(await deps.store.json(key).catch(() => undefined));
-  const record: PrRecord = {
-    number: pr.number,
-    url: pr.url,
-    state: { task: state.task, brief: state.brief, ...(state.security !== undefined ? { security: state.security } : {}) },
-    fix_rounds: previous.success ? previous.data.fix_rounds : 0,
-  };
-  await deps.store.putJson(key, record);
+  await deps.store.updateJson(keys.pr(state.brief.prefix), (current) => {
+    const previous = PrRecord.safeParse(current);
+    const round = state.fix?.round ?? 0;
+    if (!previous.success) {
+      if (current !== undefined || state.fix) throw new Error("Cannot complete a PR fix without its reservation");
+    } else {
+      const record = previous.data;
+      if (record.fix_rounds !== round || state.brief.attempt < record.state.brief.attempt) return current;
+      const owner = record.running ?? record.state.task.execution_arn;
+      if (owner !== state.task.execution_arn) return current;
+    }
+    return {
+      number: pr.number,
+      url: pr.url,
+      state: { task: state.task, brief: state.brief, policy: state.policy, ...(state.security !== undefined ? { security: state.security } : {}) },
+      fix_rounds: previous.success ? previous.data.fix_rounds : 0,
+    } satisfies PrRecord;
+  });
 }

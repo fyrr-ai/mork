@@ -11,8 +11,9 @@ export async function executionRunning(executionArn: string): Promise<boolean> {
   try {
     const { status } = await sfn.send(new DescribeExecutionCommand({ executionArn }));
     return status === "RUNNING";
-  } catch {
-    return false;
+  } catch (error) {
+    if ((error as Error).name === "ExecutionDoesNotExist") return false;
+    throw error;
   }
 }
 

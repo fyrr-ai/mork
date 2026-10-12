@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { type AnalystOutput, type GateReport, keys, MAX_BUILD_ATTEMPTS, MAX_FIX_ROUNDS, type ReviewerOutput } from "@mork/contracts";
+import { type AnalystOutput, type GateReport, keys, MAX_BUILD_ATTEMPTS, type ReviewerOutput } from "@mork/contracts";
+import { DEFAULT_DEVELOPMENT_POLICY } from "@mork/contracts/development";
 import { type Answer, type Decider, DecisionPanel } from "@mork/decision";
 import type { ReportEvent } from "@mork/sources";
 import type { Store } from "@mork/store";
 import { linkPr, MemoryStore as TimelineMemory } from "@mork/timeline";
-import { type FixTrigger, fixTrigger, MARKER } from "./fix.ts";
+import { type FixTrigger, fixTrigger, MARKER, releasePr, savePr } from "./fix.ts";
 import { ask, checksTable, type Deps, decide, type FlowState, handover, handoverReason, start, startedBy } from "./flow.ts";
 import { prOutcome, signatureValid } from "./intake.ts";
 import { githubReporter } from "./origin.ts";
@@ -100,6 +101,12 @@ class MemoryStore {
   putJson(key: string, value: unknown) {
     return this.put(key, JSON.stringify(value));
   }
+  async updateJson(key: string, update: (current: unknown | undefined) => unknown) {
+    const body = this.objects.get(key);
+    const next = update(body === undefined ? undefined : JSON.parse(body));
+    this.objects.set(key, JSON.stringify(next));
+    return key;
+  }
   async claim(key: string, value: unknown) {
     if (this.objects.has(key)) return false;
     this.objects.set(key, JSON.stringify(value));
@@ -177,6 +184,17 @@ const baseState: FlowState = {
   },
 };
 const publicPlan = { ...plan, hidden_tests: plan.hidden_tests.map(({ file, criteria }) => ({ file, criteria })) };
+
+test("configured development limits stop a failed first build instead of using the default three attempts", async () => {
+  const store = memory();
+  const policy = { ...DEFAULT_DEVELOPMENT_POLICY, build_attempts: 1 };
+  const state = await start({ ...makeDeps(store), development: policy }, { repo: "o/r", issue: 1, execution: "configured" });
+  if (!("brief" in state)) throw new Error("Expected a development task");
+  expect(state.brief.last_attempt).toBe(1);
+  expect(state.policy).toEqual(policy);
+  await store.put(keys.feedback(state.brief.prefix, 2), "Acceptance test failed");
+  await expect(decide(makeDeps(store), { ...state, last: { ok: true, passed: false } })).rejects.toThrow("by attempt 1");
+});
 const impl = { summary: "adds add()", changes: [{ path: "math.mjs", change: "add" }], verification: [], deviations: [] };
 
 async function checkedStore(passed: boolean): Promise<MemoryStore> {
@@ -513,7 +531,7 @@ describe("fix runs after the PR", () => {
     await store.putJson(keys.pr(prefix), prRecord({ running: "arn:running" }));
     expect(await start(makeDeps(store), fixInput({ kind: "review", review_id: 5, by: "alice" }))).toMatchObject({ next: "done" });
     calls.length = 0;
-    await store.putJson(keys.pr(prefix), prRecord({ fix_rounds: MAX_FIX_ROUNDS }));
+    await store.putJson(keys.pr(prefix), prRecord({ fix_rounds: DEFAULT_DEVELOPMENT_POLICY.fixes.rounds }));
     expect(await start(makeDeps(store), fixInput({ kind: "review", review_id: 5, by: "alice" }))).toMatchObject({ dismissed: "fix rounds used up" });
     expect(calls).toContain("comment");
     expect(
@@ -530,6 +548,7 @@ describe("fix runs after the PR", () => {
     await store.putJson(keys.pr(prefix), prRecord({ fix_rounds: 1, running: "arn:fix" }));
     const next = await decide(makeDeps(store, live(fixedDecider("quick", 0.9))), {
       ...baseState,
+      task: { ...baseState.task, execution_arn: "arn:fix" },
       fix: { pr: 7, url: "https://github.com/o/r/pull/7", round: 1, trigger: "CI failed" },
       last: { ok: true, passed: true },
     });
@@ -559,7 +578,7 @@ describe("fix run claims", () => {
     });
     const [a, b] = await Promise.all([start(makeDeps(store), input(1)), start(makeDeps(store), input(2))]);
     const outcomes = [a, b].map((r) => ("dismissed" in r ? r.dismissed : r.next));
-    expect(outcomes.sort()).toEqual(["another fix run claimed round 1", "build"]);
+    expect(outcomes.sort()).toEqual(["a fix run is already working on this PR", "build"]);
   });
 });
 
@@ -597,12 +616,101 @@ describe("fix run replays and bookkeeping", () => {
     );
     await handover(makeDeps(store), {
       ...baseState,
+      task: { ...baseState.task, execution_arn: "arn:fix-a" },
       brief: { ...baseState.brief, attempt: 3 },
       fix: { pr: 7, url: "https://github.com/o/r/pull/7", round: 1, trigger: "CI failed" },
       error: { Error: "Handover", Cause: "gate failed twice" },
     });
     const next = (await start(makeDeps(store), { ...input, execution: "fix-b", execution_arn: "arn:fix-b" })) as FlowState;
     expect(next).toMatchObject({ next: "build", brief: { attempt: 4 }, fix: { round: 2 } });
+  });
+
+  test("a failed feedback write resumes the same reservation, and a terminated owner cannot block later triggers", async () => {
+    const store = memory();
+    await linkPr(timeline, baseState.task.id, "o/r", 7, prefix);
+    await store.putJson(keys.pr(prefix), record());
+    const put = store.put.bind(store);
+    let fail = true;
+    store.put = async (key, body) => {
+      if (fail && key === keys.feedback(prefix, 2)) throw new Error("interrupted feedback write");
+      return put(key, body);
+    };
+    await expect(start(makeDeps(store), input)).rejects.toThrow("interrupted feedback write");
+    expect(await store.json(keys.pr(prefix))).toMatchObject({ running: input.execution_arn, fix_rounds: 1, state: { brief: { attempt: 2 } } });
+    fail = false;
+    expect(await start(makeDeps(store), input)).toMatchObject({ next: "build", fix: { round: 1 }, brief: { attempt: 2 } });
+    const deps = makeDeps(store);
+    const inspected: string[] = [];
+    deps.executionRunning = async (arn) => {
+      inspected.push(arn);
+      return false;
+    };
+    const next = await start(deps, { ...input, execution: "fix-b", execution_arn: "arn:fix-b" });
+    expect(next).toMatchObject({ next: "build", fix: { round: 2 }, brief: { attempt: 4 } });
+    expect(inspected).toEqual([input.execution_arn]);
+    // Delayed completion of the first owner must preserve its successor.
+    await handover(deps, {
+      ...baseState,
+      task: { ...baseState.task, execution_arn: input.execution_arn },
+      fix: { pr: 7, url: "https://github.com/o/r/pull/7", round: 1, trigger: "comment" },
+      error: { Error: "Handover", Cause: "late" },
+    });
+    expect(await store.json(keys.pr(prefix))).toMatchObject({ running: "arn:fix-b", fix_rounds: 2, state: { brief: { attempt: 4 } } });
+  });
+
+  test("late completion cannot replace a finished successor or reuse its attempts", async () => {
+    const store = memory();
+    const deps = makeDeps(store);
+    deps.development = { ...DEFAULT_DEVELOPMENT_POLICY, fixes: { rounds: 4, attempts: 2 } };
+    await linkPr(timeline, baseState.task.id, "o/r", 7, prefix);
+    const completed = {
+      ...baseState,
+      task: { ...baseState.task, execution_arn: "arn:fix-b" },
+      brief: { ...baseState.brief, attempt: 5 },
+      fix: { pr: 7, url: "https://github.com/o/r/pull/7", round: 2, trigger: "comment" },
+    };
+    await store.putJson(keys.pr(prefix), record({ fix_rounds: 2, state: { task: completed.task, brief: completed.brief } }));
+    const saved = await store.json(keys.pr(prefix));
+    for (const late of [
+      {
+        ...completed,
+        task: { ...completed.task, execution_arn: "arn:fix-a" },
+        brief: { ...completed.brief, attempt: 2 },
+        fix: { ...completed.fix, round: 1 },
+      },
+      { ...completed, task: { ...completed.task, execution_arn: "arn:fix-a" } },
+      { ...completed, brief: { ...completed.brief, attempt: 4 } },
+      { ...baseState, task: { ...baseState.task, execution_arn: "arn:original" } },
+    ]) {
+      await savePr(deps, late, { number: 7, url: completed.fix.url });
+      await releasePr(deps, late);
+      expect(await store.json(keys.pr(prefix))).toEqual(saved);
+    }
+    await savePr(deps, completed, { number: 7, url: completed.fix.url });
+    expect(await store.json(keys.pr(prefix))).toMatchObject({
+      fix_rounds: 2,
+      state: { task: { execution_arn: "arn:fix-b" }, brief: { attempt: 5 } },
+    });
+    expect(await start(deps, { ...input, execution: "fix-c", execution_arn: "arn:fix-c" })).toMatchObject({
+      fix: { round: 3 },
+      brief: { attempt: 6 },
+    });
+    await expect(savePr(makeDeps(memory()), completed, { number: 7, url: completed.fix.url })).rejects.toThrow("without its reservation");
+  });
+
+  test("storage and execution lookup failures remain retryable", async () => {
+    const store = memory();
+    await linkPr(timeline, baseState.task.id, "o/r", 7, prefix);
+    await store.putJson(keys.pr(prefix), record({ running: "arn:other" }));
+    const deps = makeDeps(store);
+    deps.executionRunning = async () => {
+      throw new Error("SFN unavailable");
+    };
+    await expect(start(deps, input)).rejects.toThrow("SFN unavailable");
+    store.json = async () => {
+      throw new Error("S3 unavailable");
+    };
+    await expect(start(deps, input)).rejects.toThrow("S3 unavailable");
   });
 
   test("Mork's own comments never trigger a fix, even when they quote @mork", () => {

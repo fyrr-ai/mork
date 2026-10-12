@@ -3,7 +3,9 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./workflow": "./src/workflow.ts",
+    "./development": "./src/development.ts"
   },
   "dependencies": {
     "smol-toml": "1.4.2",

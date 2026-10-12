@@ -1,16 +1,10 @@
 // What every source hands Mork, and what Mork tells it back.
 // A source turns its webhook into a StartInput; Start resolves it into a tracker issue
 // and reports progress through the source's Reporter.
+import { SlackRef } from "@mork/contracts/workflow";
 import { z } from "zod";
 
-export const SlackRef = z.object({
-  kind: z.literal("slack"),
-  channel: z.string().regex(/^[CG][A-Z0-9]+$/),
-  /** Thread the task lives in: the mention itself, or the thread it was posted in. */
-  thread_ts: z.string().regex(/^\d+\.\d+$/),
-  user: z.string(),
-});
-export type SlackRef = z.infer<typeof SlackRef>;
+export { SlackRef } from "@mork/contracts/workflow";
 
 /** Execution input for a task that came from Slack. */
 export const SlackStart = z.object({

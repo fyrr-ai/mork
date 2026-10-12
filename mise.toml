@@ -28,7 +28,7 @@ run = "for p in packages/*; do tsc -p \"$p\" --noEmit || exit 1; done"
 
 [tasks.lint]
 description = "Biome lint and format check"
-run = "biome check packages scripts"
+run = "biome check packages scripts images"
 
 [tasks.check]
 description = "Everything CI should run"
@@ -44,8 +44,28 @@ depends = ["images:build"]
 run = "scripts/check-images.sh"
 
 [tasks.deploy]
-description = "Build the images, push them to ECR and point the Lambdas at the new image"
+description = "Upload images and apply a validated Terraform plan with pinned runtime versions"
 run = "scripts/deploy.sh"
+
+[tasks."deploy:soci"]
+description = "Deploy SOCI v2 runner and egress images; Lambda stays a plain image (uses AWS)"
+run = "mise exec aqua:awslabs/soci-snapshotter@0.16.1 aqua:google/go-containerregistry@0.22.1 -- scripts/deploy.sh --soci"
+
+[tasks."images:push:soci"]
+description = "Upload initial SOCI v2 phase images and a plain Lambda image (uses AWS)"
+run = "mise exec aqua:awslabs/soci-snapshotter@0.16.1 aqua:google/go-containerregistry@0.22.1 -- scripts/deploy.sh --images-only --soci"
+
+[tasks."soci:publish"]
+description = "Convert and publish an OCI archive/layout as SOCI v2 (writes the supplied registry)"
+run = "mise exec aqua:awslabs/soci-snapshotter@0.16.1 aqua:google/go-containerregistry@0.22.1 -- scripts/soci-publish.sh"
+
+[tasks."test:soci"]
+description = "Prove SOCI v2 conversion and publication against a local registry, without AWS"
+run = "mise exec aqua:awslabs/soci-snapshotter@0.16.1 aqua:google/go-containerregistry@0.22.1 -- bun scripts/soci.runtime.ts"
+
+[tasks."soci:builder"]
+description = "Create a named Buildx builder for OCI exports when the current builder cannot export OCI"
+run = "if ! docker buildx inspect mork-soci >/dev/null 2>&1; then docker buildx create --name mork-soci --driver docker-container; fi"
 
 [tasks."secrets:put"]
 description = "Create or update the Mork secrets in Secrets Manager"
@@ -65,7 +85,7 @@ run = "scripts/rulesets.sh"
 
 [tasks."scripts:check"]
 description = "Check shell syntax, shellcheck and GitHub Actions"
-run = "for file in scripts/*.sh images/egress/entrypoint.sh; do bash -n \"$file\" || exit 1; done; shellcheck scripts/*.sh images/egress/entrypoint.sh && actionlint"
+run = "for file in scripts/*.sh images/*.sh images/egress/entrypoint.sh; do bash -n \"$file\" || exit 1; done; shellcheck scripts/*.sh images/*.sh images/egress/entrypoint.sh && actionlint"
 
 [tasks."infra:init"]
 description = "Initialize the module locally without an AWS backend"
@@ -86,7 +106,7 @@ run = "tofu -chdir=${MORK_INFRA_DIR:-infra/aws/examples/basic} apply -target=mod
 
 [tasks."infra:apply"]
 description = "Apply a configured deployment (uses AWS)"
-run = "tofu -chdir=${MORK_INFRA_DIR:-infra/aws/examples/basic} apply"
+run = "scripts/apply.sh"
 
 [tasks."images:push"]
 description = "Build and upload images before creating Lambda functions (uses AWS)"
@@ -95,6 +115,14 @@ run = "scripts/deploy.sh --images-only"
 [tasks."gate:local"]
 description = "Run the real gate on a local git checkout without AWS"
 run = "bun packages/runner/src/gate-cli.ts"
+
+[tasks."workflow:local"]
+description = "Run the complete workflow against local adapters without AWS"
+run = "bun packages/runner/src/local-cli.ts"
+
+[tasks."workflow:configured"]
+description = "Run a configured workflow locally without AWS"
+run = "bun packages/runner/src/workflow-local-cli.ts"
 
 [tasks."security:scan"]
 description = "Scan committed content and history for secrets"
@@ -107,7 +135,7 @@ run = "scripts/release-export.sh"
 [tasks."infra:test"]
 description = "Plan regression tests with mocked AWS; no account or deployment"
 depends = ["infra:init"]
-run = "tofu -chdir=infra/aws test"
+run = "bun scripts/infra-test.ts"
 
 [tasks."test:sandbox"]
 description = "Build and run privilege-boundary tests in Docker without runtime network"

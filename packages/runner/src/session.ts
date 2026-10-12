@@ -10,9 +10,13 @@ import { exec } from "./git.ts";
 const THROTTLE_MS = 30_000;
 
 /** Replaces every occurrence of a secret value; short values are skipped to avoid mangling text. */
-export function redact(text: string, secrets: string[]): string {
+export function redact(text: string, secrets: string[], minimumLength = 8): string {
   let out = text;
-  for (const secret of secrets) if (secret && secret.length >= 8) out = out.split(secret).join("[redacted]");
+  for (const secret of secrets)
+    if (secret && secret.length >= minimumLength) {
+      out = out.split(JSON.stringify(secret).slice(1, -1)).join("[redacted]");
+      out = out.split(secret).join("[redacted]");
+    }
   return out;
 }
 

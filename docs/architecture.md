@@ -1,5 +1,10 @@
 # Architecture
 
+Mork also supports [workflows defined in Terraform](workflows.md). A shared Slack
+intake queues each mention, then Jev selects an allowed workflow. Each configured
+workflow has its own state machine and shares the runner infrastructure. The
+sections below describe the development profile and its draft-PR behavior.
+
 Mork turns a request into a verified draft pull request. A request is a GitHub issue with the `mork` label or an `@mork` mention in a mapped Slack channel. An LLM agent plans, writes and reviews the change. Tests the implementer never sees decide whether it works. A decision model only recommends how much attention the change needs. A person always merges.
 
 Diagrams: [workflow](diagrams/workflow.html), [verification](diagrams/verification.html), [AWS architecture](diagrams/aws-architecture.html). Terms: [glossary](../CONTEXT.md). Why it is built this way: [decision records](adr/README.md).
@@ -93,14 +98,14 @@ Patterns from [thruwire/foreman](https://github.com/thruwire/foreman), taken as 
 - **Supervision** of every LLM station while it runs (every `supervise_seconds`, default 45 s). It is the only brake: there are no turn, time or token limits inside the containers, so work is never cut off just before it finishes. The decision model scores `worker_stuck`, `work_off_track` and `meaningful_progress`. On a problem the runner sends one steering message (Pi RPC `steer`), waits 30 s, then stops the station: the analyst gets another attempt, the implementer pushes its work in progress and Build continues with the next attempt, a stuck reviewer hands the task over. The steering text comes from templates, not from the model. A 2-hour phase timeout and a 5-minute heartbeat are the backstop.
 - **Bounded evidence.** The decision model gets small typed pieces only (diff stat, test summaries, the end of the agent's output, gate results), within 30 000 bytes of state and 60 000 bytes per request.
 - **Timeline** in DynamoDB: every decision under `task#<task>` with `decision#<point>#<attempt>`: what each model saw, answered, and what happened. PR webhooks add the outcome: merged without changes requested → quick, merged after changes → careful, closed or taken over → takeover. `mise run timeline:export` turns it into jevcal input.
-- **Questions.** For Slack tasks every LLM station has `ask_human`, and triage asks instead of stopping. The station stops, Step Functions goes to **Ask**, which posts the question in the thread and waits up to `answer_seconds` (3 days); **Resume** reruns the phase that asked, and the station continues its own session with the answer. Only the requester may answer; at most 3 questions per task. GitHub tasks hand over instead of asking.
+- **Questions.** For Slack tasks every LLM station has `ask_human`, and triage asks instead of stopping. The station stops, Step Functions goes to **Ask**, which posts the question in the thread and waits up to `questions.timeout_seconds` (default 3 days); **Resume** reruns the phase that asked, and the station continues its own session with the answer. Only the requester may answer; `questions.max` bounds questions, default 3. GitHub tasks hand over instead of asking.
 - **Status.** `@mork status` in a task's thread answers with the phase, how long it has been running, or what it waits for.
 - **Agent history.** Every station has its own Pi session, saved to the bucket while it runs, at the end and on SIGTERM, with the container's secret values redacted, plus an HTML export. PRs link the transcripts through the AWS console; nothing is public.
 - **Work in progress.** When Build stops early (question, supervision stop, error, Spot reclaim), the runner first stops the agent, then commits and pushes its work; the next attempt continues from it.
 
 ## Fargate Spot
 
-Phases run on Fargate Spot. A reclaimed container gets SIGTERM two minutes ahead: the runner saves the session and the work in progress and reports `Mork.Interrupted`, and Step Functions reruns the phase, which continues its session. After four interruptions or capacity failures in a row (`AmazonECS.Unknown`, `ECS.AmazonECSException`), the phase moves to on-demand Fargate (`SpotFallback`).
+Phases run on Fargate Spot. A reclaimed container gets SIGTERM two minutes ahead: the runner saves the session and the work in progress and reports `Mork.Interrupted`, and Step Functions reruns the phase, which continues its session. Each step configures its capacity and Spot retry budget. After that budget is exhausted for interruptions or capacity failures (`AmazonECS.Unknown`, `ECS.AmazonECSException`), its own fallback state starts the same step on on-demand Fargate. Later steps use their own capacity configuration.
 
 ## Principles
 
@@ -114,7 +119,7 @@ See [../SECURITY.md](../SECURITY.md) for the trust boundaries and the known gaps
 
 ## Not implemented yet
 
-- Enforced network allowlist (the sidecar logs hosts outside it; the agent can still bypass the proxy, but gets no keys).
+- Network enforcement outside the proxy. `egress_enforce` blocks disallowed hosts through the proxy; the agent can still bypass it and receives no proxy-held keys.
 - More repository checks in `.mork/checks/*.toml`, read from the default branch.
 - Reviewer assignment from CODEOWNERS; learning review rules from PR feedback.
 - Detecting at Plan time that a task requires changing existing tests.

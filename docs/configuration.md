@@ -16,22 +16,20 @@ Required: `vpc_id`, `vpc_cidr_block`, `vpc_private_subnet_ids`, `repo_allowlist`
 | `environment` | `dev` | Environment label on logs |
 | `llm_base_url`, `model` | — | The OpenAI-compatible LLM |
 | `secret_prefix` | `mork` | Secrets Manager names are `<prefix>/<name>` |
-| `decision_providers` | `[]` | Ordered `{ name, base_url, model }` with name `jev` or `openai`; the first decides, the others are recorded; empty means no decision model |
+| `decision_providers` | `[]` | Development decision panel; Jev is required for Slack routing and is its sole provider |
 | `repo_allowlist` | — | Repositories Mork may work on |
-| `slack_channels` | `{}` | Channel ID → `{ repo, jira_project, jira_components }` |
+| `slack_channels` | `{}` | Channel ID → allowed workflows and default hint; development also needs repo and Jira project |
+| `workflows` | `{}` | [Development and generic steps, prompts, domains, capacity, retry policy and delivery](workflows.md) |
+| `routing_confidence` | `0.85` | Minimum Jev confidence before starting a workflow |
 | `jira_base_url`, `jira_email` | `""` | Jira Cloud site and service account for Slack tasks |
-| `phase_seconds` | 7200 each | Backstop timeout per phase; whole seconds greater than the 300-second heartbeat |
 | `station_size` | 2048 CPU, 8192 MiB, 40 GiB | Fargate size of a phase container |
-| `spot_attempts` | 4 | Spot retries before a phase moves to on-demand Fargate |
 | `supervise_seconds` | 45 | How often the supervisor checks a running station |
-| `answer_seconds` | 259200 | How long a question waits for an answer |
-| `egress_allow` | `[]` | Extra hosts for the egress sidecar's allowlist |
 | `egress_enforce` | `false` | Block instead of log requests outside the allowlist |
 | `otlp_endpoint`, `otlp_cidr_block` | `null` | Live log over OTLP/HTTP |
 | `otel_resource_attributes` | `""` | Extra attributes on the live log |
 | `grafana_url`, `grafana_loki_uid` | `null`, `loki` | Link to the live log in Grafana and its Loki data source |
 | `bucket_expiration_days` | 90 | Retention of task outputs and sessions |
-| `image_tag` | `current` | Tag the deploy script moves |
+| `image_digests` | `{}` for ECR bootstrap only | Required runner, egress and lambda sha256 digests for full apply |
 | `tags` | `{}` | Extra resource tags, merged with Service and Environment |
 
 ## Secrets
@@ -45,7 +43,7 @@ All secrets are `<secret_prefix>/<name>`. `scripts/aws-secrets.sh` reads each va
 | `github-read-token` | `MORK_GITHUB_READ_TOKEN` | runner in the containers | read-only contents; must differ from `github-token` |
 | `github-push-token` | `MORK_GITHUB_PUSH_TOKEN` | egress sidecar in Build | Contents read/write on the allowlisted repositories, no Workflows |
 | `webhook-secret` | generated | GitHub intake | webhook signatures |
-| `jev-api-key`, `openai-api-key` | `JEV_API`, `OPENAI_API_KEY` | steps Lambda, runner | decision models (optional) |
+| `jev-api-key`, `openai-api-key` | `JEV_API`, `OPENAI_API_KEY` | steps Lambda, runner; Jev also in the Slack worker | decision models; Jev required for Slack |
 | `slack-signing-secret`, `slack-bot-token` | `MORK_SLACK_SIGNING_SECRET`, `MORK_SLACK_BOT_TOKEN` | Slack Lambda, steps, runner | Slack source (optional) |
 | `jira-api-token` | `MORK_JIRA_API_TOKEN` | Slack Lambda, steps | Jira tracker (optional) |
 
@@ -112,7 +110,7 @@ The Terraform module sets these; they are listed for running the code elsewhere.
 | --- | --- |
 | `MORK_LLM_HOST`, `LLM_API_KEY` | Host the LLM key is injected for |
 | `GITHUB_PUSH_TOKEN`, `MORK_REPO` | Build only: the push token, injected for this repository only |
-| `MORK_EGRESS_ALLOW` | Extra allowlisted hosts, comma separated |
+| `MORK_EGRESS_ALLOW` | This step’s allowed domains, comma separated; the LLM host is added automatically |
 | `MORK_EGRESS_WARN` | `true` logs requests outside the allowlist, `false` blocks them |
 
 **Scripts**

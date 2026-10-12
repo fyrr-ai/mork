@@ -8,6 +8,13 @@ Please report vulnerabilities privately to the maintainers through GitHub's priv
 
 ## Boundaries
 
+The table describes the development workflow. [Configured workflows](docs/workflows.md)
+use separate roles per step and expose only the named predecessor artifacts.
+Their agents and commands receive no runner AWS credentials. An administrator
+can explicitly grant other service credentials to a step through Secrets Manager;
+that step can use and disclose those credentials. Tool allowlists control which Pi
+tools are exposed, while a bash tool can still run programs and write files.
+
 | Boundary | Enforced by | Against |
 | --- | --- | --- |
 | The agent holds no credential | Egress sidecar (iron-proxy) adds the LLM key and the push token on the way out; the agent's environment is clean | Credential theft through prompt injection |
@@ -24,8 +31,8 @@ Please report vulnerabilities privately to the maintainers through GitHub's priv
 - **Repository commands can manipulate test execution.** The gate protects tracked source and metadata, but dependencies, interpreters, generated outputs and test exit codes still execute repository-controlled code. A malicious test runner can falsely report success. Filesystem protection proves that commands could not rewrite the checked source; it does not prove the test runner itself is honest.
 - **Local gate privileges.** `gate:local` runs commands as your current non-root user and detects tracked-file changes. It has no separate sandbox identity, network isolation or protection for your home directory. Run it only on trusted repositories. The fd-based file helpers and production sandbox require Linux with `/proc`.
 - **Network egress is not enforced.** The sidecar logs hosts outside its allowlist; the agent can bypass the proxy and reach the internet directly (Fargate allows no iptables inside a task). It cannot get the keys this way, but it can exfiltrate the repository's source. Enforce egress with AWS Network Firewall or a dedicated VPC with Route 53 Resolver DNS Firewall.
-- **IAM is per phase, not per task.** A compromised runner could read or write other tasks' outputs in the bucket, and every phase role can read the Slack bot token.
+- **IAM is per phase or configured step.** A compromised development runner could access other tasks' phase outputs; generic step roles reach their workflow's permitted artifacts across executions. Development phase roles can read the Slack bot token. Per-execution isolation is not wired into these roles.
 - **Other `mork/*` branches.** Inside the task's repository the push token can update other Mork branches; the proxy cannot see refs inside the git protocol.
 - **Failing hidden tests reveal expectations.** Their output is fed back to the implementer so it can fix the code.
 - **Slack has no user allowlist.** Anyone who can post in a mapped channel can start a task.
-- **Redaction is best effort.** Session transcripts have the container's secret values removed; encoded forms are not.
+- **Redaction is best effort.** Raw secret values and their JSON-escaped forms are removed. Other encodings can remain.

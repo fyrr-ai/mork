@@ -6,7 +6,7 @@
 #           ask   → Ask
 #           done  → Done
 #   After each phase, <Phase>Asked → Ask when the station asked the requester.
-#   Ask waits (up to answer_seconds) for the Slack answer, then Resume reruns
+#   Ask waits (up to the configured question timeout) for the Slack answer, then Resume reruns
 #   the phase that asked (or Plan after a triage question).
 #
 # Plan, Build and Check are Fargate containers started with
@@ -89,41 +89,32 @@ locals {
 
   catch = [{ ErrorEquals = ["States.ALL"], ResultPath = "$.error", Next = "Handover" }]
 
-  # Phases start on Fargate Spot. When spot_attempts retries after
-  # interruptions or capacity shortages run out, the task moves to on-demand
-  # Fargate (SpotFallback); a failure there goes to a person.
   spot        = [{ CapacityProvider = "FARGATE_SPOT", Weight = 1 }]
   on_demand   = [{ CapacityProvider = "FARGATE", Weight = 1 }]
   spot_errors = ["Mork.Interrupted", "ECS.AmazonECSException", "AmazonECS.Unknown"]
 
-  # A phase is one state: Step Functions starts the container with the task
-  # token and the brief and waits until it reports back. Missing heartbeats
-  # (crash, hang) fail the state within five minutes.
-  phase = { for name, next in { Plan = "Build", Build = "Check", Check = "Decide" } : name => {
+  # Configuration names the operations; the compiler preserves their gate and
+  # hidden-test boundaries. Each step has its own capacity choice and fallback.
+  phase = { for index, step in local.development.steps : title(step.name) => {
     Type             = "Task"
     Resource         = "arn:aws:states:::ecs:runTask.waitForTaskToken"
-    TimeoutSeconds   = var.phase_seconds[lower(name)]
+    TimeoutSeconds   = step.timeout_seconds
     HeartbeatSeconds = 300
     ResultPath       = "$.last"
-    # Spot reclaim (the runner reports Mork.Interrupted) and Fargate capacity
-    # shortages rerun the phase. A RunTask call that fails raises
-    # ECS.AmazonECSException; one that returns Failures (no capacity) raises
-    # AmazonECS.Unknown.
-    Retry = [
-      { ErrorEquals = ["Mork.Interrupted"], MaxAttempts = var.spot_attempts, IntervalSeconds = 10, BackoffRate = 2 },
-      { ErrorEquals = ["ECS.AmazonECSException", "AmazonECS.Unknown"], MaxAttempts = var.spot_attempts, IntervalSeconds = 30, BackoffRate = 2 },
-    ]
-    Catch = concat(
-      [{ ErrorEquals = local.spot_errors, ResultPath = "$.error", Next = "SpotFallback", Assign = { failed_phase = name } }],
-      local.catch,
-    )
-    Next = "${name}Asked"
+    Retry = step.capacity == "spot" ? [
+      { ErrorEquals = ["Mork.Interrupted"], MaxAttempts = step.spot_retries, IntervalSeconds = 10, BackoffRate = 2 },
+      { ErrorEquals = ["ECS.AmazonECSException", "AmazonECS.Unknown"], MaxAttempts = step.spot_retries, IntervalSeconds = 30, BackoffRate = 2 },
+    ] : []
+    Catch = concat(step.capacity == "spot" ? [
+      { ErrorEquals = local.spot_errors, ResultPath = "$.error", Next = "${title(step.name)}OnDemand" }
+    ] : [], local.catch)
+    Next = "${title(step.name)}Asked"
     Parameters = {
-      Cluster                      = aws_ecs_cluster.this.arn
-      TaskDefinition               = aws_ecs_task_definition.phase[lower(name)].arn_without_revision
-      "CapacityProviderStrategy.$" = "$capacity"
-      NetworkConfiguration         = local.network
-      "Group.$"                    = "$.task.started_by"
+      Cluster                  = aws_ecs_cluster.this.arn
+      TaskDefinition           = aws_ecs_task_definition.phase[step.kind].arn
+      CapacityProviderStrategy = step.capacity == "spot" ? local.spot : local.on_demand
+      NetworkConfiguration     = local.network
+      "Group.$"                = "$.task.started_by"
       Overrides = {
         ContainerOverrides = [{
           Name = "station"
@@ -132,19 +123,20 @@ locals {
             { Name = "MORK_BRIEF", "Value.$" = "States.JsonToString($.brief)" },
           ]
           }, {
-          # The sidecar injects the push token only for this task's repository.
           Name        = "egress"
           Environment = [{ Name = "MORK_REPO", "Value.$" = "$.brief.repo.full_name" }]
         }]
       }
     }
   } }
-
-  # A station that asked the requester ends with `question` in its result.
-  asked = { for name, next in { Plan = "Build", Build = "Check", Check = "Decide" } : "${name}Asked" => {
+  phase_fallback = { for step in local.development.steps : "${title(step.name)}OnDemand" => merge(local.phase[title(step.name)], {
+    Retry      = [], Catch = local.catch,
+    Parameters = merge(local.phase[title(step.name)].Parameters, { CapacityProviderStrategy = local.on_demand })
+  }) if step.capacity == "spot" }
+  asked = { for index, step in local.development.steps : "${title(step.name)}Asked" => {
     Type    = "Choice"
     Choices = [{ Variable = "$.last.question", IsPresent = true, Next = "Ask" }]
-    Default = next
+    Default = index + 1 < length(local.development.steps) ? title(local.development.steps[index + 1].name) : "Decide"
   } }
 
   lambda_retry = [{ ErrorEquals = ["Lambda.ServiceException", "Lambda.TooManyRequestsException", "Lambda.SdkClientException"], MaxAttempts = 3, IntervalSeconds = 5, BackoffRate = 2 }]
@@ -153,7 +145,7 @@ locals {
   step = { for name, action in { Decide = "decide" } : name => {
     Type       = "Task"
     Resource   = "arn:aws:states:::lambda:invoke"
-    Parameters = { FunctionName = aws_lambda_function.steps.arn, Payload = { action = action, "state.$" = "$" } }
+    Parameters = { FunctionName = aws_lambda_function.steps.qualified_arn, Payload = { action = action, "state.$" = "$" } }
     OutputPath = "$.Payload"
     Retry      = local.lambda_retry
     Catch      = local.catch
@@ -162,43 +154,28 @@ locals {
 
   definition = {
     Comment = "Mork: a GitHub issue or Slack request to a reviewed draft PR, and fixes on that PR"
-    # Contract bounds: two analyst attempts, three build/check attempts and three answered questions.
-    # Each question can rerun a phase. Include both retry categories on Spot and on-demand.
-    TimeoutSeconds = var.answer_seconds * 3 + (2 * var.phase_seconds.plan + 3 * (var.phase_seconds.build + var.phase_seconds.check) + 3 * max(var.phase_seconds.plan, var.phase_seconds.build, var.phase_seconds.check)) * (2 * (2 * var.spot_attempts + 1)) + 880 * (pow(2, var.spot_attempts) - 1) + 3600
+    # Budget configured work attempts, questions and both Spot retry categories plus on-demand fallback.
+    TimeoutSeconds = local.development_seconds
     StartAt        = "Start"
-    States = merge(local.phase, local.asked, local.step, {
+    States = merge(local.phase, local.phase_fallback, local.asked, local.step, {
       Start = {
         Type     = "Task"
         Resource = "arn:aws:states:::lambda:invoke"
         Parameters = {
-          FunctionName = aws_lambda_function.steps.arn
+          FunctionName = aws_lambda_function.steps.qualified_arn
           # The whole execution input goes on: { repo, issue } from GitHub or SlackStart from Slack.
-          Payload = { action = "start", "input.$" = "$", "execution.$" = "$$.Execution.Name", "execution_arn.$" = "$$.Execution.Id" }
+          Payload = { action = "start", "input.$" = "$", "execution.$" = "$$.Execution.Name", "execution_arn.$" = "$$.Execution.Id", policy = local.development_policy }
         }
         OutputPath = "$.Payload"
-        Assign     = { capacity = local.spot, on_demand = false }
         Retry      = local.lambda_retry
         Catch      = local.catch
         Next       = "Route"
       }
-      SpotFallback = {
-        Type = "Choice"
-        Choices = concat(
-          [{ Variable = "$on_demand", BooleanEquals = true, Next = "Handover" }],
-          [for name in ["Plan", "Build", "Check"] : {
-            Variable     = "$failed_phase"
-            StringEquals = name
-            Next         = name
-            Assign       = { capacity = local.on_demand, on_demand = true }
-          }],
-        )
-        Default = "Handover"
-      }
       Route = {
         Type = "Choice"
         Choices = [
-          { Variable = "$.next", StringEquals = "plan", Next = "Plan" },
-          { Variable = "$.next", StringEquals = "build", Next = "Build" },
+          { Variable = "$.next", StringEquals = "plan", Next = local.development_names.plan },
+          { Variable = "$.next", StringEquals = "build", Next = local.development_names.build },
           { Variable = "$.next", StringEquals = "ask", Next = "Ask" },
         ]
         Default = "Done"
@@ -209,10 +186,10 @@ locals {
         Type     = "Task"
         Resource = "arn:aws:states:::lambda:invoke.waitForTaskToken"
         Parameters = {
-          FunctionName = aws_lambda_function.steps.arn
+          FunctionName = aws_lambda_function.steps.qualified_arn
           Payload      = { action = "ask", "state.$" = "$", "task_token.$" = "$$.Task.Token" }
         }
-        TimeoutSeconds = var.answer_seconds
+        TimeoutSeconds = local.development.questions.timeout_seconds
         ResultPath     = "$.last"
         Retry          = local.lambda_retry
         Catch          = local.catch
@@ -221,16 +198,16 @@ locals {
       Resume = {
         Type = "Choice"
         Choices = [
-          { Variable = "$.last.resume", StringEquals = "plan", Next = "Plan" },
-          { Variable = "$.last.resume", StringEquals = "build", Next = "Build" },
-          { Variable = "$.last.resume", StringEquals = "check", Next = "Check" },
+          { Variable = "$.last.resume", StringEquals = "plan", Next = local.development_names.plan },
+          { Variable = "$.last.resume", StringEquals = "build", Next = local.development_names.build },
+          { Variable = "$.last.resume", StringEquals = "check", Next = local.development_names.check },
         ]
         Default = "Handover"
       }
       Handover = {
         Type       = "Task"
         Resource   = "arn:aws:states:::lambda:invoke"
-        Parameters = { FunctionName = aws_lambda_function.steps.arn, Payload = { action = "handover", "state.$" = "$" } }
+        Parameters = { FunctionName = aws_lambda_function.steps.qualified_arn, Payload = { action = "handover", "state.$" = "$" } }
         OutputPath = "$.Payload"
         Retry      = [{ ErrorEquals = ["States.ALL"], MaxAttempts = 2, IntervalSeconds = 10, BackoffRate = 2 }]
         Catch      = [{ ErrorEquals = ["States.ALL"], ResultPath = "$.handover_error", Next = "HandoverFailed" }]

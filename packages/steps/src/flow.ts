@@ -14,12 +14,12 @@ import {
   IssueDoc,
   keys,
   lastAttempt,
-  MAX_QUESTIONS,
   type Phase,
   PublicPlan,
   ReviewerOutput,
   RunResult,
 } from "@mork/contracts";
+import { DEFAULT_DEVELOPMENT_POLICY, type DevelopmentPolicy } from "@mork/contracts/development";
 import { type CriterionVerdict, type DecisionPanel, type DecisionTrace, judgeCriteria, type Triage, triage, triageMessage } from "@mork/decision";
 import { executionUrl, findIssueKey, REVIEW_LEVEL_TEXT, type ReportEvent, type Reporter, type SlackStart, type TrackerIssue } from "@mork/sources";
 import type { Store } from "@mork/store";
@@ -42,6 +42,7 @@ export type Task = { id: string; repo: string; started_by: string; origin: Origi
 
 export type FlowState = {
   task: Task;
+  policy?: DevelopmentPolicy;
   /** Brief for the next container; Step Functions hands it over as an override. */
   brief: Brief;
   /** Triage classified the issue as a security change; raises the recommendation. */
@@ -63,6 +64,7 @@ export type Dismissed = { next: "done"; dismissed: string };
 
 export type Deps = {
   github: GitHub;
+  development?: DevelopmentPolicy;
   store: Store;
   panel: DecisionPanel;
   timeline: TimelineStore;
@@ -181,6 +183,7 @@ export async function start(deps: Deps, input: StartInput): Promise<FlowState | 
   deps.log(task.id, "triage", triaged.triage);
   const brief: Brief = {
     attempt: 1,
+    last_attempt: (deps.development ?? DEFAULT_DEVELOPMENT_POLICY).build_attempts,
     prefix: names.prefix,
     repo: { full_name: repo, default_branch: info.default_branch, base_sha: baseSha },
     branch: names.branch,
@@ -194,14 +197,21 @@ export async function start(deps: Deps, input: StartInput): Promise<FlowState | 
     if (origin.kind === "slack") {
       // The requester is in the thread: ask, wait, then plan with the answer.
       deps.log(task.id, "task.ask", { resume: "plan" });
-      return { task, brief, security: triaged.triage.security, next: "ask", ask: { question: questions, resume: "plan" } };
+      return {
+        task,
+        brief,
+        policy: deps.development ?? DEFAULT_DEVELOPMENT_POLICY,
+        security: triaged.triage.security,
+        next: "ask",
+        ask: { question: questions, resume: "plan" },
+      };
     }
     await reporter.report({ kind: "clarify", questions });
     deps.log(task.id, "task.clarify", {});
-    return { task, brief, next: "done" };
+    return { task, brief, policy: deps.development ?? DEFAULT_DEVELOPMENT_POLICY, next: "done" };
   }
   deps.log(task.id, "task.start", { baseSha, title: work.title, prefix: brief.prefix });
-  return { task, brief, security: triaged.triage.security, next: "plan" };
+  return { task, brief, policy: deps.development ?? DEFAULT_DEVELOPMENT_POLICY, security: triaged.triage.security, next: "plan" };
 }
 
 const SupervisionRecords = z.array(z.object({ at: z.string(), trace: z.any(), action: z.record(z.string(), z.unknown()) }));
@@ -226,8 +236,9 @@ export async function ask(deps: Deps, state: FlowState, taskToken: string): Prom
       throw error;
     }),
   );
-  if (answered.length >= MAX_QUESTIONS) {
-    throw new HandoverError(`Mork already asked ${MAX_QUESTIONS} questions and still needs to know:\n\n${pending.question}`);
+  const maxQuestions = (state.policy ?? DEFAULT_DEVELOPMENT_POLICY).questions.max;
+  if (answered.length >= maxQuestions) {
+    throw new HandoverError(`Mork already asked ${maxQuestions} questions and still needs to know:\n\n${pending.question}`);
   }
   if (task.origin.kind !== "slack") {
     throw new HandoverError(`Mork needs an answer it cannot get on GitHub yet:\n\n${pending.question}`);

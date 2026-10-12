@@ -149,9 +149,14 @@ export function statusOf(event: ReportEvent): Status {
   }
 }
 
-const link = (url: string | undefined, text: string) => (url ? `<${url}|${text}>` : text);
+/** Literal task/model text must not become Slack mentions or labeled links. */
+export function escapeSlack(text: string): string {
+  return text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+}
+
+const link = (url: string | undefined, text: string) => (url ? `<${url}|${escapeSlack(text)}>` : escapeSlack(text));
 const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
-const bullets = (items: string[]) => items.map((item) => `• ${item}`).join("\n");
+const bullets = (items: string[]) => items.map((item) => `• ${escapeSlack(item)}`).join("\n");
 
 /** `https://github.com/owner/repo/pull/27` → `owner/repo#27`. */
 function prLabel(url: string): string {
@@ -166,7 +171,7 @@ function prLabel(url: string): string {
 export function slackText(event: ReportEvent): string {
   switch (event.kind) {
     case "started": {
-      const head = `*${event.work.created ? "Created" : "Taking"} ${link(event.work.url, event.work.key)}:* ${event.work.title}`;
+      const head = `*${event.work.created ? "Created" : "Taking"} ${link(event.work.url, event.work.key)}:* ${escapeSlack(event.work.title)}`;
       const links = [
         event.live_url ? link(event.live_url, "Live log in Grafana") : undefined,
         event.execution_url ? link(event.execution_url, "View the workflow run") : undefined,
@@ -174,12 +179,12 @@ export function slackText(event: ReportEvent): string {
       return links.length ? `${head}\n${links.join(" · ")}` : head;
     }
     case "clarify":
-      return `*Before I start, I need a few answers:*\n${event.questions}`;
+      return `*Before I start, I need a few answers:*\n${escapeSlack(event.questions)}`;
     case "not_a_request":
       return "*Nothing to do:* this does not look like a request for a change. Tell me what to build or fix, for example `add a padLeft helper to src/strings.mjs` or `implement PROJ-123`.";
     case "question":
       // A list of questions starts on its own line; a single question stays inline.
-      return `*Question:*${/^\s*[-*•]/.test(event.text) ? "\n" : " "}${event.text.trim()}\nReply in this thread and mention me with your answer.`;
+      return `*Question:*${/^\s*[-*•]/.test(event.text) ? "\n" : " "}${escapeSlack(event.text.trim())}\nReply in this thread and mention me with your answer.`;
     case "answered":
       return "";
     case "plan":
@@ -194,11 +199,11 @@ export function slackText(event: ReportEvent): string {
     case "pr":
       return `*Draft PR ready:* ${link(event.url, prLabel(event.url))}\n*Recommendation:* ${REVIEW_LEVEL_TEXT[event.level]}${event.reasons.length ? `\n${bullets(event.reasons)}` : ""}${event.transcripts_url ? `\n${link(event.transcripts_url, "Agent transcripts")}` : ""}`;
     case "handover":
-      return `*Handed over to a person:* ${event.reason.split("\n")[0]?.slice(0, 300)}`;
+      return `*Handed over to a person:* ${escapeSlack(event.reason.split("\n")[0]?.slice(0, 300) ?? "")}`;
     case "fix":
-      return `*Fixing ${link(event.pr_url, prLabel(event.pr_url))}:* ${event.trigger} (round ${event.round} of ${event.max})`;
+      return `*Fixing ${link(event.pr_url, prLabel(event.pr_url))}:* ${escapeSlack(event.trigger)} (round ${event.round} of ${event.max})`;
     case "fixed":
-      return `*Fix pushed to ${link(event.pr_url, prLabel(event.pr_url))}:* ${event.summary.split("\n")[0]?.slice(0, 300)}`;
+      return `*Fix pushed to ${link(event.pr_url, prLabel(event.pr_url))}:* ${escapeSlack(event.summary.split("\n")[0]?.slice(0, 300) ?? "")}`;
   }
 }
 

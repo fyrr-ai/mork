@@ -23,13 +23,6 @@ transforms:
       warn: @ALLOW_WARN@
       domains:
         - "@LLM_HOST@"
-        - "github.com"
-        - "*.github.com"
-        - "*.githubusercontent.com"
-        - "registry.npmjs.org"
-        - "registry.yarnpkg.com"
-        - "pypi.org"
-        - "files.pythonhosted.org"
         # @EXTRA_DOMAINS@ (MORK_EGRESS_ALLOW)
   - name: secrets
     config:

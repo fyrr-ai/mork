@@ -13,6 +13,10 @@ describe("session redaction", () => {
   test("short or empty values are not treated as secrets", () => {
     expect(redact("abc def", ["", "abc"])).toBe("abc def");
   });
+  test("JSON-escaped credentials remain redacted without breaking the JSON", () => {
+    const secret = 'password"with\\quotes';
+    expect(JSON.parse(redact(JSON.stringify({ token: secret }), [secret]))).toEqual({ token: "[redacted]" });
+  });
 });
 
 function memoryStore() {

@@ -28,14 +28,37 @@ resource "aws_iam_role_policy_attachment" "slack_logs" {
 
 data "aws_iam_policy_document" "slack" {
   statement {
+    sid       = "RetainFailedSlackRequests"
+    actions   = ["sqs:SendMessage"]
+    resources = [aws_sqs_queue.slack_failures.arn]
+  }
+  statement {
+    sid       = "EnqueueSlackWorker"
+    actions   = ["lambda:InvokeFunction"]
+    resources = ["arn:aws:lambda:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:function:${local.name}_slack"]
+  }
+  statement {
     sid       = "StartTasks"
     actions   = ["states:StartExecution"]
-    resources = [aws_sfn_state_machine.this.arn]
+    resources = concat([aws_sfn_state_machine.this.arn], [for machine in aws_sfn_state_machine.workflow : machine.arn])
+  }
+  statement {
+    sid       = "ReadRoutingConfig"
+    actions   = ["s3:GetObject"]
+    resources = ["${aws_s3_bucket.mork.arn}/config/slack.json"]
   }
   statement {
     sid       = "ReadSlackSecrets"
     actions   = ["secretsmanager:GetSecretValue"]
     resources = [local.source_secret_arns.slack_signing_secret, local.source_secret_arns.slack_bot_token, local.source_secret_arns.jira_api_token]
+  }
+  dynamic "statement" {
+    for_each = contains(keys(data.aws_secretsmanager_secret.decision), "jev") ? [1] : []
+    content {
+      sid       = "ReadJevRoutingKey"
+      actions   = ["secretsmanager:GetSecretValue"]
+      resources = [data.aws_secretsmanager_secret.decision["jev"].arn]
+    }
   }
   # A mention in a task's thread: the thread → run link, a parked question,
   # the answer recorded with the task, and the run's state for status.
@@ -57,9 +80,10 @@ data "aws_iam_policy_document" "slack" {
     resources = ["${aws_s3_bucket.mork.arn}/threads/*", "${aws_s3_bucket.mork.arn}/tasks/*/answers.json"]
   }
   statement {
-    sid       = "ReportStatus"
-    actions   = ["states:DescribeExecution", "states:GetExecutionHistory"]
-    resources = ["arn:aws:states:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:execution:${aws_sfn_state_machine.this.name}:*"]
+    sid     = "ReportStatus"
+    actions = ["states:DescribeExecution", "states:GetExecutionHistory"]
+    resources = concat(["arn:aws:states:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:execution:${aws_sfn_state_machine.this.name}:*"],
+    [for machine in aws_sfn_state_machine.workflow : "${replace(machine.arn, ":stateMachine:", ":execution:")}:*"])
   }
   statement {
     # Task-token APIs have no resource type; the token is the authorization.
@@ -101,7 +125,7 @@ resource "aws_lambda_function" "slack" {
   package_type  = "Image"
   image_uri     = local.lambda_image
   architectures = ["x86_64"]
-  timeout       = 10
+  timeout       = 90
   memory_size   = 512
 
   image_config {
@@ -109,23 +133,38 @@ resource "aws_lambda_function" "slack" {
   }
 
   environment {
-    variables = {
+    variables = merge({
       STATE_MACHINE_ARN              = aws_sfn_state_machine.this.arn
       MORK_BUCKET                    = aws_s3_bucket.mork.bucket
-      SLACK_CHANNELS                 = jsonencode(var.slack_channels)
+      SLACK_CONFIG_KEY               = aws_s3_object.slack_config.key
+      MORK_SLACK_FUNCTION_NAME       = "${local.name}_slack"
       SLACK_SIGNING_SECRET_SECRET_ID = local.source_secret_names.slack_signing_secret
       SLACK_BOT_TOKEN_SECRET_ID      = local.source_secret_names.slack_bot_token
       JIRA_API_TOKEN_SECRET_ID       = local.source_secret_names.jira_api_token
       JIRA_BASE_URL                  = var.jira_base_url
       JIRA_EMAIL                     = var.jira_email
-    }
+      }, contains(keys(data.aws_secretsmanager_secret.decision), "jev") ? { JEV_API_SECRET_ID = data.aws_secretsmanager_secret.decision["jev"].arn } : {},
+    { for key, value in local.decision_settings : key => value if contains(["TYPESAFE_BASE_URL", "TYPESAFE_MODEL"], key) })
   }
 
   lifecycle {
-    ignore_changes = [image_uri]
+    precondition {
+      condition     = length(var.image_digests) == 3
+      error_message = "Upload images and supply all three image_digests before a full apply."
+    }
   }
 
   depends_on = [aws_cloudwatch_log_group.slack]
+}
+
+resource "aws_lambda_function_event_invoke_config" "slack" {
+  function_name                = aws_lambda_function.slack.function_name
+  maximum_event_age_in_seconds = 3600
+  maximum_retry_attempts       = 2
+  destination_config {
+    on_failure { destination = aws_sqs_queue.slack_failures.arn }
+  }
+  depends_on = [aws_iam_role_policy.slack]
 }
 
 # Public by design: Slack cannot sign AWS requests. The function checks the

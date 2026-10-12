@@ -30,6 +30,7 @@ test("release export contains committed public content and no inherited history 
   git("init", "-q", "-b", "main");
   writeFileSync(join(source, "README.md"), "private-history-only\n");
   writeFileSync(join(source, ".gitignore"), ".env\n");
+  writeFileSync(join(source, "package.json"), JSON.stringify({ version: "0.1.0" }));
   git("add", ".");
   git("commit", "-qm", "private import");
   git("branch", "internal");
@@ -37,7 +38,16 @@ test("release export contains committed public content and no inherited history 
   writeFileSync(join(source, ".env"), "ignored-local-settings\n");
   git("add", "README.md");
   git("commit", "-qm", "public tree");
-  const result = spawnSync("bash", [join(source, "scripts", "release-export.sh"), destination], { encoding: "utf8" });
+  const missingIdentity = spawnSync("bash", [join(source, "scripts", "release-export.sh"), destination], {
+    encoding: "utf8",
+    env: { ...process.env, MORK_RELEASE_AUTHOR: "", MORK_RELEASE_EMAIL: "" },
+  });
+  expect(missingIdentity.status).not.toBe(0);
+  expect(existsSync(destination)).toBe(false);
+  const result = spawnSync("bash", [join(source, "scripts", "release-export.sh"), destination], {
+    encoding: "utf8",
+    env: { ...process.env, MORK_RELEASE_AUTHOR: "Public fixture", MORK_RELEASE_EMAIL: "fixture@example.invalid" },
+  });
   expect(result.status).toBe(0);
   expect(readFileSync(join(destination, "README.md"), "utf8")).toBe("public-source\n");
   expect(existsSync(join(destination, ".env"))).toBe(false);
@@ -45,6 +55,8 @@ test("release export contains committed public content and no inherited history 
   expect(exportedGit("rev-list", "--all", "--count")).toBe("1");
   expect(exportedGit("branch", "--format=%(refname:short)")).toBe("main");
   expect(exportedGit("remote")).toBe("");
+  expect(exportedGit("tag", "--list")).toBe("v0.1.0");
+  expect(exportedGit("log", "--format=%ae")).toBe("fixture@example.invalid");
   expect(exportedGit("log", "--format=%ae")).not.toContain("private@example.test");
   const repeat = spawnSync("bash", [join(source, "scripts", "release-export.sh"), destination], { encoding: "utf8" });
   expect(repeat.status).toBe(1);

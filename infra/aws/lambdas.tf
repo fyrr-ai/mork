@@ -33,6 +33,11 @@ resource "aws_iam_role_policy_attachment" "lambda_logs" {
 
 data "aws_iam_policy_document" "steps" {
   statement {
+    sid       = "WriteWorkflowArtifacts"
+    actions   = ["s3:PutObject"]
+    resources = ["${aws_s3_bucket.mork.arn}/tasks/workflows/*/steps/*", "${aws_s3_bucket.mork.arn}/tasks/workflows/*/run.json", "${aws_s3_bucket.mork.arn}/tasks/workflows/*/status.json"]
+  }
+  statement {
     sid       = "ReadTaskOutputs"
     actions   = ["s3:GetObject"]
     resources = ["${aws_s3_bucket.mork.arn}/tasks/*"]
@@ -64,7 +69,7 @@ data "aws_iam_policy_document" "steps" {
     # Fix runs after the PR: the feedback for Build and the PR record that lets them continue the task.
     sid       = "WriteFixRuns"
     actions   = ["s3:PutObject"]
-    resources = ["${aws_s3_bucket.mork.arn}/tasks/*/pr.json", "${aws_s3_bucket.mork.arn}/tasks/*/fix/*", "${aws_s3_bucket.mork.arn}/tasks/*/build/*/feedback.md"]
+    resources = ["${aws_s3_bucket.mork.arn}/tasks/*/pr.json", "${aws_s3_bucket.mork.arn}/tasks/*/build/*/feedback.md"]
   }
   statement {
     # A fix run's claim on its PR expires with its execution.
@@ -131,10 +136,11 @@ resource "aws_iam_role_policy" "intake" {
 }
 
 locals {
-  lambda_image = "${aws_ecr_repository.this["lambda"].repository_url}:${var.image_tag}"
+  lambda_image = "${aws_ecr_repository.this["lambda"].repository_url}@${lookup(var.image_digests, "lambda", "sha256:missing")}"
 }
 
 resource "aws_lambda_function" "steps" {
+  publish       = true
   tags          = local.tags
   function_name = "${local.name}_steps"
   role          = aws_iam_role.lambda["steps"].arn
@@ -170,9 +176,12 @@ resource "aws_lambda_function" "steps" {
     { for p, s in data.aws_secretsmanager_secret.decision : "${local.decision_env[p]}_SECRET_ID" => s.arn })
   }
 
-  # scripts/deploy.sh pins the function to the freshly pushed image digest.
+  # Terraform deploys the uploaded digest and publishes a version for workflows.
   lifecycle {
-    ignore_changes = [image_uri]
+    precondition {
+      condition     = length(var.image_digests) == 3
+      error_message = "Upload images and supply all three image_digests before a full apply."
+    }
   }
 
   depends_on = [aws_cloudwatch_log_group.lambda]
@@ -203,7 +212,10 @@ resource "aws_lambda_function" "intake" {
   }
 
   lifecycle {
-    ignore_changes = [image_uri]
+    precondition {
+      condition     = length(var.image_digests) == 3
+      error_message = "Upload images and supply all three image_digests before a full apply."
+    }
   }
 
   depends_on = [aws_cloudwatch_log_group.lambda]

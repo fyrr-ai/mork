@@ -9,3 +9,5 @@ mise.local.toml
 .terraform/
 
 .claude/
+
+.mork-images.auto.tfvars.json

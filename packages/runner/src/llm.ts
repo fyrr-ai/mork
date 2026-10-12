@@ -22,8 +22,6 @@ import { type VerifyResult, type VerifySpec, verifyText } from "./verify.ts";
 
 export type RunnerEnv = {
   llmBaseUrl: string;
-  /** The egress sidecar (iron-proxy) on the task network and the CA it signs with. */
-  egress: { proxy: string; caFile: string };
   piBin: string;
   extensionsDir: string;
   workDir: string;
@@ -31,16 +29,17 @@ export type RunnerEnv = {
   /** Present when the runner can drop privileges (root in the container). */
   agentUid?: number;
   agentGid?: number;
-};
+} & ({ egress: { proxy: string; caFile: string }; trustedLocal?: never } | { egress?: never; trustedLocal: { apiKey: string } });
 
 /** One LLM station run, fully assembled by the caller. */
 export type LlmJob = {
-  station: LlmStation;
   instructions: string;
   message: string;
   output_schema: Record<string, unknown>;
   model: string;
-  repo: RepoRef;
+  tools?: string[];
+  extensions?: string[];
+  environment?: Record<string, string>;
   /** Implementer only: the agent commits and pushes `branch` itself. */
   push?: { branch: string; remoteHead: () => string | undefined };
   /**
@@ -59,7 +58,10 @@ export type LlmJob = {
   resumed?: boolean;
   /** Live log of what the agent does (Grafana); carries the station's attributes. */
   log?: Logger;
-};
+} & (
+  | { station: LlmStation; repo: RepoRef; parseOutput?: never }
+  | { station: "agent"; repo?: never; push?: never; verify?: never; ask?: never; parseOutput: (value: unknown) => unknown }
+);
 
 export type LlmOutcome = {
   ok: boolean;
@@ -109,8 +111,9 @@ export async function runLlmStation(spec: LlmJob, env: RunnerEnv, repoDir: strin
     GIT_COMMITTER_NAME: "mork",
     GIT_COMMITTER_EMAIL: "mork@users.noreply.github.com",
     GIT_TERMINAL_PROMPT: "0",
-    MORK_BASE_SHA: spec.repo.base_sha,
-    ...egressEnv(env.egress.proxy, caBundle(env)),
+    ...(spec.repo ? { MORK_BASE_SHA: spec.repo.base_sha } : {}),
+    ...spec.environment,
+    ...(env.egress ? egressEnv(env.egress.proxy, caBundle(env)) : {}),
     ...(spec.push ? { MORK_WORK_BRANCH: spec.push.branch } : {}),
   };
 
@@ -122,15 +125,20 @@ export async function runLlmStation(spec: LlmJob, env: RunnerEnv, repoDir: strin
     join(env.extensionsDir, "guard.ts"),
     "-e",
     join(env.extensionsDir, "submit.ts"),
-    "-e",
-    join(env.extensionsDir, "dir-rules.ts"),
+    ...(spec.repo ? ["-e", join(env.extensionsDir, "dir-rules.ts")] : []),
+    ...(spec.extensions ?? []).flatMap((extension) => ["-e", extension]),
     ...(spec.ask ? ["-e", join(env.extensionsDir, "ask.ts")] : []),
     ...(spec.verify ? ["-e", join(env.extensionsDir, "verify.ts")] : []),
     "--model",
     `${PROVIDER}/${spec.model}`,
   ];
   // Analyst and reviewer get read-only tools; ask_human too when the requester can be asked (the allowlist hides every other tool).
-  if (spec.station !== "implementer") args.push("--tools", spec.ask ? `${READ_ONLY_TOOLS},ask_human` : READ_ONLY_TOOLS);
+  if (spec.tools)
+    args.push(
+      "--tools",
+      [...new Set([...spec.tools, "submit_result", ...(spec.verify ? ["verify"] : []), ...(spec.ask ? ["ask_human"] : [])])].join(","),
+    );
+  else if (spec.station !== "implementer") args.push("--tools", spec.ask ? `${READ_ONLY_TOOLS},ask_human` : READ_ONLY_TOOLS);
 
   const pi = new PiRpc({ bin: env.piBin, args, cwd: repoDir, env: agentEnv, ...asAgent });
   let turns = 0;
@@ -148,7 +156,7 @@ export async function runLlmStation(spec: LlmJob, env: RunnerEnv, repoDir: strin
     spec.supervise.panel,
     { station: spec.station, ...spec.supervise.task },
     {
-      diffStat: () => exec("git", ["diff", "--stat", spec.repo.base_sha], opts).output.slice(-3_000),
+      diffStat: () => (spec.repo ? exec("git", ["diff", "--stat", spec.repo.base_sha], opts).output.slice(-3_000) : ""),
       steer: async (message) => {
         log?.log(`supervisor · steer ${spec.station}: ${message}`, { "mork.event": "supervisor" }, "WARN");
         await pi.command({ type: "steer", message });
@@ -163,17 +171,30 @@ export async function runLlmStation(spec: LlmJob, env: RunnerEnv, repoDir: strin
   pi.onEvent((event) => supervisor.observe(event));
   const ticker = setInterval(() => void supervisor.check().catch(() => undefined), spec.supervise.everyMs);
 
-  const schema = StationOutput[spec.station];
+  const parseOutput =
+    spec.parseOutput ??
+    ((value: unknown) => {
+      return StationOutput[spec.station].parse(value);
+    });
   let output: unknown;
   let problem = "";
   // Unfinished work survives the container: the session always, the implementer's commits too
   // (a no-op after a clean, pushed run).
   const opts = { cwd: repoDir, env: agentEnv, ...asAgent };
-  const keepWork = async () => {
-    // Stop the agent first: a snapshot taken while it still edits or commits could be half a change.
-    killUser(env.agentUid);
-    if (spec.push) pushWip(spec.push.branch, spec.repo.base_sha, opts);
-    await spec.session?.finish();
+  let cleanup: Promise<void> | undefined;
+  const keepWork = () => {
+    cleanup ??= (async () => {
+      try {
+        // Stop the agent first: never snapshot work while it still edits or commits.
+        killUser(env.agentUid);
+        await pi.stop();
+        if (spec.push && spec.repo) pushWip(spec.push.branch, spec.repo.base_sha, opts);
+        await spec.session?.finish();
+      } finally {
+        if (env.trustedLocal) rmSync(join(piDir, "models.json"), { force: true });
+      }
+    })();
+    return cleanup;
   };
   const offShutdown = onShutdown(keepWork);
   try {
@@ -182,17 +203,21 @@ export async function runLlmStation(spec: LlmJob, env: RunnerEnv, repoDir: strin
       : `${spec.message}\n\n## Output\n\nWhen you are done, call submit_result with one JSON document matching this JSON Schema:\n\n\`\`\`json\n${JSON.stringify(spec.output_schema)}\n\`\`\``;
     for (let attempt = 0; attempt <= MAX_CORRECTIONS && !aborted; attempt++) {
       const settled = pi.waitSettled();
-      await pi.command({ type: "prompt", message: prompt });
-      await settled;
+      await Promise.all([pi.command({ type: "prompt", message: prompt }), settled]);
       if (existsSync(questionFile)) break;
       const submitted = readAgentFile(outFile);
       if (submitted === undefined) {
         problem = "You finished without calling submit_result.";
       } else {
-        const parsed = schema.safeParse(parseJson(submitted));
+        let parsed: { success: true; data: unknown } | { success: false; error: Error };
+        try {
+          parsed = { success: true, data: parseOutput(parseJson(submitted)) };
+        } catch (error) {
+          parsed = { success: false, error: error instanceof Error ? error : new Error(String(error)) };
+        }
         if (parsed.success) {
           output = parsed.data;
-          problem = spec.push ? (pushProblem(spec.repo.base_sha, spec.push, opts) ?? "") : "";
+          problem = spec.push && spec.repo ? (pushProblem(spec.repo.base_sha, spec.push, opts) ?? "") : "";
           if (!problem && spec.verify) {
             // Pushed and submitted, but does it pass the repository's own checks? Still the agent's turn to fix it.
             const verified = await verifyAsAgent(env, verifyFile, opts);
@@ -239,9 +264,11 @@ export async function runLlmStation(spec: LlmJob, env: RunnerEnv, repoDir: strin
     return { ok: true, output, stats: runStats, headSha, supervision };
   } finally {
     clearInterval(ticker);
-    await pi.stop();
-    offShutdown();
-    await keepWork();
+    try {
+      await keepWork();
+    } finally {
+      offShutdown();
+    }
   }
 }
 
@@ -254,7 +281,7 @@ function writePiConfig(piDir: string, spec: LlmJob, env: RunnerEnv): void {
         baseUrl: env.llmBaseUrl,
         api: "openai-completions",
         // The egress sidecar replaces the Authorization header with the real key.
-        apiKey: "added-by-egress",
+        apiKey: env.trustedLocal?.apiKey ?? "added-by-egress",
         models: [
           {
             id: spec.model,
@@ -353,7 +380,7 @@ function pushProblem(
   const local = git("rev-parse", "HEAD");
   const remote = push.remoteHead();
   if (remote !== local) {
-    return `${push.branch} on GitHub is ${remote ?? "missing"}, your HEAD is ${local}. Push with \`git push origin ${push.branch}\` (no force).`;
+    return `${push.branch} on origin is ${remote ?? "missing"}, your HEAD is ${local}. Push with \`git push origin ${push.branch}\` (no force).`;
   }
   return undefined;
 }
@@ -377,7 +404,8 @@ export function egressEnv(proxy: string, bundle: string): Record<string, string>
 }
 
 /** System CAs plus the sidecar's, for clients that take one bundle file. Written once per container. */
-function caBundle(env: RunnerEnv): string {
+export function caBundle(env: RunnerEnv): string {
+  if (!env.egress) throw new Error("An egress connection is required for its CA bundle");
   const bundle = join(env.workDir, "egress-ca.pem");
   if (!existsSync(bundle)) {
     const system = existsSync(SYSTEM_CAS) ? readFileSync(SYSTEM_CAS, "utf8") : "";

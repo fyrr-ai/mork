@@ -38,3 +38,11 @@ mise run test:sandbox
 ```
 
 This builds the runner test image, then runs the gate and filesystem regression tests as root with commands dropped to the image's `sandbox` user, matching production. The repository is mounted read-only and the test container has `--network none`; fixtures live in temporary directories. Image building can download base images, packages and Pi. It never deploys or calls an AWS account.
+
+## Complete development workflow
+
+`mise run workflow:local -- --help` describes the trusted local Plan/Build/Check runner. It uses a local Git checkout, filesystem artifacts and a real Pi process, with the [same configured development definition](../packages/contracts/src/development.json) as AWS. Supply your OpenAI-compatible endpoint and model through the CLI's documented options and its API key through `MORK_LOCAL_API_KEY`. Keep keys out of committed configuration. It records the workflow manifest so a later invocation can resume after an interruption. Publication remains a local result; it does not create a GitHub PR.
+
+`test:sandbox` also runs its compiled CLI through production Node/Pi with a deterministic loopback model fixture, two Build attempts and a passing Check. `mise run workflow:configured -- --help` describes local generic workflows, including command execution, persisted results and approval resumption. Local runs execute with the host user's permissions and require trusted repositories and commands.
+
+SIGINT and SIGTERM stop the local run's owned subprocesses and release `.run.lock` before exit. Resume uses the saved manifest and completed outputs. SIGKILL or a machine crash cannot run cleanup. Before removing a stale `.run.lock`, confirm that its original runner and descendants have stopped. Never remove the lock of an active run.

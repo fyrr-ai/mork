@@ -3,16 +3,19 @@
   "private": true,
   "license": "Apache-2.0",
   "type": "module",
-  "workspaces": ["packages/*"],
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
-    "typecheck": "tsc -b",
-    "test": "bun test packages",
-    "check": "biome check .",
-    "fix": "biome check --write ."
+    "typecheck": "mise run typecheck",
+    "test": "mise run test",
+    "check": "mise run check",
+    "fix": "mise exec -- biome check --write packages scripts images"
   },
   "devDependencies": {
     "@biomejs/biome": "2.3.8",
     "@types/node": "^24.0.0",
     "typescript": "^5.9.3"
-  }
+  },
+  "version": "0.1.0"
 }

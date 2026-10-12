@@ -98,21 +98,15 @@ variable "decision_providers" {
   }
 }
 
-variable "image_tag" {
-  description = "Mutable tag the images are deployed under; scripts/deploy.sh moves it."
-  type        = string
-  default     = "current"
-}
-
-variable "phase_seconds" {
-  description = "Seconds a phase container may run before Step Functions gives up on it."
-  type        = object({ plan = number, build = number, check = number })
-  # No turn or time limits run inside the containers; this only catches hangs.
-  default = { plan = 7200, build = 7200, check = 7200 }
-
+variable "image_digests" {
+  description = "Uploaded runner, egress and lambda sha256 digests. Required for full apply; image upload writes these into the deployment root."
+  type        = map(string)
+  default     = {}
   validation {
-    condition     = alltrue([for seconds in values(var.phase_seconds) : seconds > 300 && seconds <= 31536000 && seconds == floor(seconds)])
-    error_message = "Phase timeouts must be whole seconds greater than the 300-second heartbeat, at most one year."
+    condition = alltrue([for name, digest in var.image_digests :
+      contains(["runner", "egress", "lambda"], name) && can(regex("^sha256:[0-9a-f]{64}$", digest))
+    ])
+    error_message = "image_digests accepts runner, egress and lambda with sha256:<64 lowercase hex digits>."
   }
 }
 
@@ -140,17 +134,6 @@ variable "station_size" {
   }
 }
 
-variable "spot_attempts" {
-  description = "Retries of a phase on Fargate Spot after an interruption or a capacity shortage before it moves to on-demand Fargate."
-  type        = number
-  default     = 4
-
-  validation {
-    condition     = var.spot_attempts >= 0 && var.spot_attempts <= 8 && var.spot_attempts == floor(var.spot_attempts)
-    error_message = "spot_attempts must be a whole number between 0 and 8."
-  }
-}
-
 variable "supervise_seconds" {
   description = "How often each phase container asks the decision model whether its LLM station is stuck."
   type        = number
@@ -162,21 +145,113 @@ variable "supervise_seconds" {
   }
 }
 
-variable "answer_seconds" {
-  description = "How long a task waits for the requester to answer a question before it goes to a person."
-  type        = number
-  default     = 259200
+variable "slack_channels" {
+  description = "Slack channel routing; development additionally needs a repository and Jira project."
+  type = map(object({
+    repo              = optional(string)
+    jira_project      = optional(string)
+    jira_components   = optional(list(string), [])
+    default_workflow  = optional(string, "development")
+    allowed_workflows = optional(list(string), ["development"])
+  }))
+  default = {}
 
   validation {
-    condition     = var.answer_seconds >= 1 && var.answer_seconds <= 31536000 && var.answer_seconds == floor(var.answer_seconds)
-    error_message = "answer_seconds must be positive whole seconds, at most one year."
+    condition = alltrue([for id, channel in var.slack_channels :
+      can(regex("^[CG][A-Z0-9]+$", id)) &&
+      (channel.repo == null ? true : can(regex("^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$", channel.repo))) &&
+      (channel.jira_project == null ? true : can(regex("^[A-Z][A-Z0-9_]+$", channel.jira_project))) &&
+      alltrue([for component in channel.jira_components : length(component) > 0]) &&
+      contains(channel.allowed_workflows, channel.default_workflow) &&
+      alltrue([for workflow in channel.allowed_workflows : workflow == "development" || contains(keys(var.workflows), workflow)]) &&
+      (!contains(channel.allowed_workflows, "development") || (channel.repo != null && channel.jira_project != null))
+    ])
+    error_message = "Every channel needs an allowed default and existing workflows; development also needs repo and jira_project."
+  }
+  validation {
+    condition     = length(var.slack_channels) == 0 || contains([for provider in var.decision_providers : provider.name], "jev")
+    error_message = "Slack routing requires Jev in decision_providers."
   }
 }
 
-variable "slack_channels" {
-  description = "Slack channel ID → repository (and Jira project) its @mork mentions work on. Empty: no Slack source."
-  type        = map(object({ repo = string, jira_project = string, jira_components = optional(list(string), []) }))
-  default     = {}
+variable "routing_confidence" {
+  description = "Minimum Jev confidence for selecting a workflow. Below it, ask the requester."
+  type        = number
+  default     = 0.85
+  validation {
+    condition     = var.routing_confidence >= 0 && var.routing_confidence <= 1
+    error_message = "routing_confidence must be between zero and one."
+  }
+}
+
+variable "workflows" {
+  description = "Workflow definitions. development uses plan/build/check and draft_pr delivery; other workflows use agent/command/approval and report delivery. Omitted development uses the shipped JSON definition."
+  type = map(object({
+    description  = string
+    runner_image = optional(string)
+    questions    = optional(object({ timeout_seconds = optional(number, 259200), max = optional(number, 3) }), {})
+    fixes        = optional(object({ rounds = optional(number, 2), attempts = optional(number, 2) }), {})
+    steps = list(object({
+      name            = string
+      kind            = string
+      inputs          = optional(list(string), [])
+      instructions    = optional(string)
+      command         = optional(list(string), [])
+      output_schema   = optional(string, "{\"type\":\"object\"}")
+      model           = optional(string)
+      tools           = optional(list(string), ["read", "bash", "edit", "write", "grep", "find", "ls"])
+      extensions      = optional(list(string), [])
+      environment     = optional(map(string), {})
+      secrets         = optional(map(string), {})
+      timeout_seconds = optional(number, 7200)
+      retries         = optional(number, 0)
+      attempts        = optional(number, 1)
+      allowed_domains = optional(list(string), [])
+      capacity        = optional(string, "on_demand")
+      spot_retries    = optional(number, 4)
+    }))
+    delivery = object({ kind = optional(string, "report"), step = string })
+  }))
+  default = {}
+
+  validation {
+    condition = alltrue([for name, workflow in var.workflows :
+      can(regex("^[a-z][a-z0-9_-]{0,39}$", name)) &&
+      length(trimspace(workflow.description)) > 0 && length(workflow.description) <= 2000 && length(workflow.steps) > 0 && length(workflow.steps) <= 30 &&
+      (workflow.runner_image == null ? true : can(regex("@sha256:[0-9a-f]{64}$", workflow.runner_image))) &&
+      length(distinct([for step in workflow.steps : step.name])) == length(workflow.steps) &&
+      (name == "development" ? (
+        join(",", [for step in workflow.steps : step.kind]) == "plan,build,check" &&
+        workflow.delivery.kind == "draft_pr" && try(workflow.delivery.step == workflow.steps[2].name, false) &&
+        alltrue([for step in workflow.steps : length(step.inputs) == 0 && length(step.environment) == 0 && length(step.secrets) == 0 && step.retries == 0]) &&
+        try(workflow.steps[2].attempts == 1, false)
+      ) : workflow.delivery.kind == "report" && contains([for step in workflow.steps : step.name], workflow.delivery.step)) &&
+      workflow.questions.timeout_seconds >= 1 && workflow.questions.timeout_seconds <= 31536000 && workflow.questions.timeout_seconds == floor(workflow.questions.timeout_seconds) &&
+      workflow.questions.max >= 0 && workflow.questions.max <= 8 && workflow.questions.max == floor(workflow.questions.max) &&
+      workflow.fixes.rounds >= 0 && workflow.fixes.rounds <= 8 && workflow.fixes.rounds == floor(workflow.fixes.rounds) &&
+      workflow.fixes.attempts >= 1 && workflow.fixes.attempts <= 8 && workflow.fixes.attempts == floor(workflow.fixes.attempts) &&
+      alltrue([for index, step in workflow.steps :
+        (name != "development" || !contains(["start", "route", "decide", "ask", "resume", "handover", "handoverfailed", "done"], step.name)) &&
+        can(regex("^[a-z][a-z0-9_-]{0,39}$", step.name)) && contains(name == "development" ? ["plan", "build", "check"] : ["agent", "command", "approval"], step.kind) &&
+        (step.kind == "command" ? length(step.command) > 0 : try(length(trimspace(step.instructions)) > 0 && length(base64encode(step.instructions)) <= 32768, false)) &&
+        can(keys(jsondecode(step.output_schema))) &&
+        (step.model == null ? true : length(step.model) > 0) &&
+        alltrue([for tool in step.tools : can(regex("^[a-z][a-z0-9_]*$", tool))]) &&
+        alltrue([for extension in step.extensions : startswith(extension, "/")]) &&
+        (step.kind == "approval" ? step.timeout_seconds >= 1 && step.timeout_seconds <= 31536000 : step.timeout_seconds > 300 && step.timeout_seconds <= 86400) && step.timeout_seconds == floor(step.timeout_seconds) &&
+        contains(["spot", "on_demand"], step.capacity) &&
+        step.spot_retries >= 0 && step.spot_retries <= 8 && step.spot_retries == floor(step.spot_retries) &&
+        step.attempts >= 1 && step.attempts <= 8 && step.attempts == floor(step.attempts) && (name == "development" || step.attempts == 1) &&
+        alltrue([for host in step.allowed_domains : length(host) <= 253 && can(regex("^(\\*\\.)?[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$", host))]) &&
+        step.retries >= 0 && step.retries <= 3 && step.retries == floor(step.retries) &&
+        alltrue([for input in step.inputs : contains([for previous in slice(workflow.steps, 0, index) : previous.name], input)]) &&
+        alltrue([for key in concat(keys(step.environment), keys(step.secrets)) :
+          can(regex("^[A-Z][A-Z0-9_]*$", key)) && !can(regex("^(AWS_|MORK_|PI_|NODE_|BUN_)", key)) && !contains(["HOME", "PATH", "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY"], key)
+        ]) && alltrue([for arn in values(step.secrets) : can(regex("^arn:aws:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:.+$", arn))])
+      ])
+    ])
+    error_message = "Workflow definitions need unique steps, valid domains/schemas/environment, bounded retries/timeouts and matching delivery. development requires Plan, Build, Check in order and draft_pr delivery."
+  }
 }
 
 variable "jira_base_url" {
@@ -189,12 +264,6 @@ variable "jira_email" {
   description = "Account the Jira API token belongs to (a service account)."
   type        = string
   default     = ""
-}
-
-variable "egress_allow" {
-  description = "Extra hosts for the egress sidecar's allowlist (package registries, artifact stores), besides the LLM host, GitHub, npm and PyPI."
-  type        = list(string)
-  default     = []
 }
 
 variable "egress_enforce" {
@@ -254,4 +323,14 @@ variable "tags" {
   description = "Extra tags on supported resources, merged with Service=mork and Environment."
   type        = map(string)
   default     = {}
+}
+
+variable "alarm_actions" {
+  description = "SNS topic ARNs notified by Slack and workflow failure alarms. Empty keeps console alarms without external notifications."
+  type        = list(string)
+  default     = []
+  validation {
+    condition     = alltrue([for arn in var.alarm_actions : can(regex("^arn:aws:sns:[a-z0-9-]+:[0-9]{12}:.+$", arn))])
+    error_message = "alarm_actions must contain SNS topic ARNs."
+  }
 }

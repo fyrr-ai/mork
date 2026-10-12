@@ -9,10 +9,9 @@ import { type Pending, type ThreadStore, threadKey } from "./threads.ts";
 import type { Complete, ReportEvent, Reporter, SlackRef, SlackStart, TrackerIssue } from "./types.ts";
 
 export { deliverAnswer } from "./answers.ts";
-export { channelsFromEnv } from "./channels.ts";
 export { adfToText, draftByRules, findIssueKey, Jira } from "./jira.ts";
 export { loadSecrets } from "./secrets.ts";
-export { executionUrl, grafanaLiveUrl, Slack, STATUS, slackText, statusOf } from "./slack.ts";
+export { escapeSlack, executionUrl, grafanaLiveUrl, Slack, STATUS, slackText, statusOf } from "./slack.ts";
 export { asksForStatus, statusText, taskKey } from "./status.ts";
 export { type AnswerRecord, answersKey, answersSoFar, type Pending, pendingQuestion, threadKey } from "./threads.ts";
 export * from "./types.ts";

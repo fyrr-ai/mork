@@ -15,7 +15,11 @@ config=/run/mork-egress/config.yaml
 extra=""
 old_ifs=$IFS; IFS=,
 for host in ${MORK_EGRESS_ALLOW:-}; do
-  host=$(printf '%s' "$host" | tr -d ' "')
+  # Host-only configuration must not inject YAML or sed replacements.
+  if ! printf '%s\n' "$host" | grep -Eq '^(\*\.)?[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$'; then
+    echo "Invalid allowed domain: $host" >&2
+    exit 1
+  fi
   [ -n "$host" ] && extra="${extra}        - \"${host}\"\n"
 done
 IFS=$old_ifs

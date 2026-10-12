@@ -1,0 +1,8 @@
+{
+  "name": "mork-image-agent",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "1.1.0"
+  }
+}

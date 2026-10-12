@@ -35,13 +35,27 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "mork" {
 
 resource "aws_s3_bucket_lifecycle_configuration" "mork" {
   bucket = aws_s3_bucket.mork.id
+  lifecycle {
+    precondition {
+      condition = var.bucket_expiration_days * 86400 >= max(concat(
+        [local.development_seconds * (local.development.fixes.rounds + 1)], values(local.workflow_seconds)
+      )...) + 14 * 86400
+      error_message = "S3 retention must cover the complete workflow and development repair budgets plus 14 days for recovery. Increase bucket_expiration_days or reduce waits and retries."
+    }
+  }
   rule {
     id     = "expire-task-outputs"
     status = "Enabled"
-    filter {}
+    filter { prefix = "tasks/" }
     expiration {
       days = var.bucket_expiration_days
     }
+  }
+  rule {
+    id     = "expire-slack-threads"
+    status = "Enabled"
+    filter { prefix = "threads/" }
+    expiration { days = var.bucket_expiration_days }
   }
 }
 

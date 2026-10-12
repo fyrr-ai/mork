@@ -122,3 +122,14 @@ test("a 409 on conditional creation is an error, not evidence of an existing cla
     existing.stop();
   }
 });
+
+test("releasing a missing reservation never creates an empty S3 object", async () => {
+  const t = fixture();
+  try {
+    await t.store.updateJson("pr.json", (current) => current);
+    expect(t.writes).toEqual([]);
+    expect(t.value()).toBeUndefined();
+  } finally {
+    t.stop();
+  }
+});

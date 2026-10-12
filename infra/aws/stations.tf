@@ -144,6 +144,8 @@ resource "aws_iam_role_policy" "phase" {
 # the agent's requests for those hosts. The station trusts the sidecar's
 # per-task CA through the shared egress-ca volume.
 resource "aws_ecs_task_definition" "phase" {
+  # Executions retain the pinned revision across deployments and approval waits.
+  skip_destroy             = true
   tags                     = local.tags
   for_each                 = local.phases
   family                   = "${local.name}_${each.key}"
@@ -154,6 +156,12 @@ resource "aws_ecs_task_definition" "phase" {
   execution_role_arn       = aws_iam_role.station_exec.arn
   task_role_arn            = aws_iam_role.phase[each.key].arn
 
+  lifecycle {
+    precondition {
+      condition     = length(var.image_digests) == 3
+      error_message = "Supply immutable image digests for all three images."
+    }
+  }
   runtime_platform {
     cpu_architecture        = "X86_64"
     operating_system_family = "LINUX"
@@ -169,7 +177,7 @@ resource "aws_ecs_task_definition" "phase" {
 
   container_definitions = jsonencode([{
     name      = "station"
-    image     = "${aws_ecr_repository.this["runner"].repository_url}:${var.image_tag}"
+    image     = coalesce(try(local.development.runner_image, null), "${aws_ecr_repository.this["runner"].repository_url}@${lookup(var.image_digests, "runner", "sha256:missing")}")
     essential = true
     # SIGTERM → SIGKILL grace: the runner saves the session and the implementer's work.
     # ECS stops the station before the sidecar it depends on, so the last push still goes out.
@@ -178,6 +186,7 @@ resource "aws_ecs_task_definition" "phase" {
     mountPoints = [{ sourceVolume = "egress-ca", containerPath = "/mork-egress", readOnly = true }]
     environment = concat([
       { name = "MORK_PHASE", value = each.key },
+      { name = "MORK_DEVELOPMENT_STEP", value = jsonencode(local.development_steps[each.key]) },
       { name = "MORK_BUCKET", value = aws_s3_bucket.mork.bucket },
       { name = "MORK_MODEL", value = var.model },
       { name = "LLM_BASE_URL", value = var.llm_base_url },
@@ -206,11 +215,11 @@ resource "aws_ecs_task_definition" "phase" {
     }
     }, {
     name      = "egress"
-    image     = "${aws_ecr_repository.this["egress"].repository_url}:${var.image_tag}"
+    image     = "${aws_ecr_repository.this["egress"].repository_url}@${lookup(var.image_digests, "egress", "sha256:missing")}"
     essential = true
     environment = [
       { name = "MORK_LLM_HOST", value = regex("^https?://([^/:]+)", var.llm_base_url)[0] },
-      { name = "MORK_EGRESS_ALLOW", value = join(",", var.egress_allow) },
+      { name = "MORK_EGRESS_ALLOW", value = join(",", local.development_steps[each.key].allowed_domains) },
       # "false" blocks hosts outside the allowlist; "true" only logs them.
       { name = "MORK_EGRESS_WARN", value = tostring(!var.egress_enforce) },
     ]

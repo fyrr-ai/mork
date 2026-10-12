@@ -29,7 +29,7 @@ export type AnswerDeps = {
   resume: (taskToken: string, output: AnswerOutput, executionArn: string) => Promise<void>;
 };
 
-export type AnswerOutput = { answered: true; resume: string; answer: string; answer_event: string };
+export type AnswerOutput = { answered: true; resume: string; answer: string; answer_event: string; approved?: boolean };
 
 const Claim = z.object({
   event_id: z.string(),
@@ -38,10 +38,18 @@ const Claim = z.object({
 const Receipt = z.object({
   pending: Pending.optional(),
   completed: z.boolean().default(false),
-  outcome: z.enum(["duplicate", "already_answered", "nothing_pending", "not_requester", "empty", "expired"]).optional(),
+  outcome: z.enum(["duplicate", "already_answered", "nothing_pending", "not_requester", "empty", "expired", "invalid_approval"]).optional(),
 });
 
-export type AnswerOutcome = "resumed" | "duplicate" | "already_answered" | "nothing_pending" | "not_requester" | "empty" | "expired";
+export type AnswerOutcome =
+  | "resumed"
+  | "duplicate"
+  | "already_answered"
+  | "nothing_pending"
+  | "not_requester"
+  | "empty"
+  | "expired"
+  | "invalid_approval";
 
 export async function deliverAnswer(deps: AnswerDeps, answer: Answer): Promise<AnswerOutcome> {
   const { store, slack } = deps;
@@ -80,6 +88,8 @@ export async function deliverAnswer(deps: AnswerDeps, answer: Answer): Promise<A
   if (!answer.text) {
     return finish("empty", "Mention me together with your answer, in this thread.");
   }
+  if (pending.approval && !/^(approve|reject)$/i.test(answer.text.trim()))
+    return finish("invalid_approval", "Reply with `@mork approve` or `@mork reject` in this thread.");
 
   // Two deliveries (a Slack retry, or two quick replies) may both get here: one claim per question decides.
   const claimKey = answerClaimKey(answer.ref, pending.task_token);
@@ -133,7 +143,13 @@ export async function deliverAnswer(deps: AnswerDeps, answer: Answer): Promise<A
   try {
     await deps.resume(
       pending.task_token,
-      { answered: true, resume: pending.resume, answer: record.answer, answer_event: answer.event_id },
+      {
+        answered: true,
+        resume: pending.resume,
+        answer: record.answer,
+        answer_event: answer.event_id,
+        ...(pending.approval ? { approved: record.answer.trim().toLowerCase() === "approve" } : {}),
+      },
       pending.execution_arn,
     );
   } catch (error) {

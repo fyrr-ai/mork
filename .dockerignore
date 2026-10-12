@@ -9,3 +9,4 @@ mise.local.toml
 infra
 scripts
 .github
+dist

@@ -15,10 +15,12 @@ export type PiProcessOptions = {
 
 export class PiRpc {
   readonly #child: ChildProcessWithoutNullStreams;
-  readonly #pending = new Map<string, (response: Json) => void>();
+  readonly #pending = new Map<string, { resolve: (response: Json) => void; reject: (error: Error) => void }>();
   readonly #listeners = new Set<(event: Json) => void>();
   #nextId = 0;
   #exited: Promise<number | null>;
+  #failure?: Error;
+  #stopped?: Promise<void>;
   stderrTail = "";
 
   constructor(options: PiProcessOptions) {
@@ -28,8 +30,19 @@ export class PiRpc {
       uid: options.uid,
       gid: options.gid,
       stdio: ["pipe", "pipe", "pipe"],
+      detached: true,
     });
-    this.#exited = new Promise((resolve) => this.#child.on("exit", (code) => resolve(code)));
+    this.#exited = new Promise((resolve) => {
+      this.#child.on("error", (error) => {
+        this.#fail(error);
+        resolve(null);
+      });
+      this.#child.on("exit", (code) => {
+        this.#fail(new Error(`pi exited with code ${code}: ${this.stderrTail.slice(-500)}`));
+        resolve(code);
+      });
+    });
+    this.#child.stdin.on("error", (error) => this.#fail(error));
     this.#child.stderr.on("data", (chunk: Buffer) => {
       this.stderrTail = (this.stderrTail + chunk.toString()).slice(-4000);
     });
@@ -41,12 +54,18 @@ export class PiRpc {
         return;
       }
       if (message.type === "response" && typeof message.id === "string") {
-        this.#pending.get(message.id)?.(message);
+        this.#pending.get(message.id)?.resolve(message);
         this.#pending.delete(message.id);
         return;
       }
       for (const listener of this.#listeners) listener(message);
     });
+  }
+
+  #fail(error: Error): void {
+    this.#failure ??= error;
+    for (const pending of this.#pending.values()) pending.reject(this.#failure);
+    this.#pending.clear();
   }
 
   onEvent(listener: (event: Json) => void): () => void {
@@ -55,15 +74,22 @@ export class PiRpc {
   }
 
   async command(command: Json, timeoutMs = 30_000): Promise<Json> {
+    if (this.#failure) throw this.#failure;
     const id = `req-${this.#nextId++}`;
     const response = new Promise<Json>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.#pending.delete(id);
         reject(new Error(`pi rpc ${String(command.type)} timed out`));
       }, timeoutMs);
-      this.#pending.set(id, (value) => {
-        clearTimeout(timer);
-        resolve(value);
+      this.#pending.set(id, {
+        resolve: (value) => {
+          clearTimeout(timer);
+          resolve(value);
+        },
+        reject: (error) => {
+          clearTimeout(timer);
+          reject(error);
+        },
       });
     });
     this.#child.stdin.write(`${JSON.stringify({ ...command, id })}\n`);
@@ -83,15 +109,28 @@ export class PiRpc {
       });
       void this.#exited.then((code) => {
         off();
-        reject(new Error(`pi exited with code ${code}: ${this.stderrTail.slice(-500)}`));
+        reject(this.#failure ?? new Error(`pi exited with code ${code}`));
       });
     });
   }
 
-  async stop(): Promise<void> {
-    this.#child.stdin.end();
-    const timer = setTimeout(() => this.#child.kill("SIGKILL"), 5_000);
+  stop(): Promise<void> {
+    this.#stopped ??= this.#stop();
+    return this.#stopped;
+  }
+
+  async #stop(): Promise<void> {
+    if (!this.#failure) this.#child.stdin.end();
+    const killGroup = () => {
+      try {
+        if (this.#child.pid) process.kill(-this.#child.pid, "SIGKILL");
+      } catch {
+        this.#child.kill("SIGKILL");
+      }
+    };
+    const timer = setTimeout(killGroup, 5_000);
     await this.#exited;
     clearTimeout(timer);
+    killGroup();
   }
 }

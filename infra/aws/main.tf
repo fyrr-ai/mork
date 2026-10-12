@@ -58,9 +58,7 @@ data "aws_secretsmanager_secret" "decision" {
   name     = "${var.secret_prefix}/${each.key}-api-key"
 }
 
-# Deploys move the `current` tag; commit tags are never overwritten. Phase
-# containers resolve `current` at launch, so a deploy needs no Terraform run.
-# trivy:ignore:AWS-0031
+# Tags aid discovery; task definitions and Lambda deployments use immutable digests.
 resource "aws_ecr_repository" "this" {
   tags                 = local.tags
   for_each             = toset(["runner", "egress", "lambda"])
@@ -73,18 +71,8 @@ resource "aws_ecr_repository" "this" {
   }
 }
 
-resource "aws_ecr_lifecycle_policy" "this" {
-  for_each   = aws_ecr_repository.this
-  repository = each.value.name
-  policy = jsonencode({
-    rules = [{
-      rulePriority = 1
-      description  = "Keep the last 20 images"
-      selection    = { tagStatus = "any", countType = "imageCountMoreThan", countNumber = 20 }
-      action       = { type = "expire" }
-    }]
-  })
-}
+# Delete unreferenced image digests only after executions and redrives have drained.
+# A count-based lifecycle rule cannot tell which retained revisions still need an image.
 
 resource "aws_ecs_cluster" "this" {
   tags = local.tags

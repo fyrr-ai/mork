@@ -8,6 +8,11 @@ output "state_machine_arn" {
   value       = aws_sfn_state_machine.this.arn
 }
 
+output "workflow_arns" {
+  description = "Workflow name to state machine ARN, including the built-in development workflow."
+  value       = merge({ development = aws_sfn_state_machine.this.arn }, { for name, machine in aws_sfn_state_machine.workflow : name => machine.arn })
+}
+
 output "ecr_repositories" {
   description = "Image repositories scripts/deploy.sh pushes to."
   value       = { for k, r in aws_ecr_repository.this : k => r.repository_url }
@@ -21,4 +26,9 @@ output "lambda_functions" {
 output "slack_events_url" {
   description = "Request URL for the Slack app's Event Subscriptions."
   value       = aws_lambda_function_url.slack.function_url
+}
+
+output "slack_failure_queue_url" {
+  description = "Failed asynchronous Slack invocation records, retained for 14 days for inspection and explicit replay."
+  value       = aws_sqs_queue.slack_failures.url
 }

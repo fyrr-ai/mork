@@ -46,3 +46,7 @@ code, record its source, revision, affected files and license in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), and retain its copyright and
 license text. An idea or design reference does not establish copied-code
 provenance.
+
+## Maintainer
+
+The initial maintainer is [@tomsej](https://github.com/tomsej), who reviews contributions and prepares releases. Source ownership is listed in [.github/CODEOWNERS](.github/CODEOWNERS). Review dependency and pinned image updates monthly and run the image smoke checks before accepting them.

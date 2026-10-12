@@ -39,7 +39,7 @@ export class Store {
         if ((error as { name?: string }).name !== "NoSuchKey") throw error;
       }
       const next = update(current);
-      if (etag && next === current) return key;
+      if (next === current) return key;
       try {
         await this.#s3.send(
           new PutObjectCommand({

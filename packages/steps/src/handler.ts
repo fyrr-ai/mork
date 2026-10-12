@@ -1,6 +1,7 @@
 // Lambda entry for the steps between containers. Step Functions invokes it
 // with { action, state } and keeps whatever it returns. A step that hands the
 // task to a person throws HandoverError, which the state's Catch routes.
+import { DevelopmentPolicy } from "@mork/contracts/development";
 import { panelFromEnv } from "@mork/decision";
 import { grafanaLiveUrl, loadSecrets, type SlackSource, slackSourceFromEnv } from "@mork/sources";
 import { Store } from "@mork/store";
@@ -10,12 +11,19 @@ import { GitHub } from "./github.ts";
 import { llmFromEnv } from "./llm.ts";
 import { githubReporter, type StartInput } from "./origin.ts";
 import { executionRunning, stopStations } from "./stations.ts";
+import { type WorkflowEvent, workflowAction, workflowSlack } from "./workflow.ts";
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 
 /** Start gets the execution input as is ({ repo, issue } or SlackStart) and the execution name beside it. */
 export type StepEvent =
-  | { action: "start"; input: DistributiveOmit<StartInput, "execution" | "execution_arn">; execution: string; execution_arn: string }
+  | {
+      action: "start";
+      input: DistributiveOmit<StartInput, "execution" | "execution_arn">;
+      execution: string;
+      execution_arn: string;
+      policy?: unknown;
+    }
   | { action: "decide" | "handover"; state: FlowState }
   | { action: "ask"; state: FlowState; task_token: string };
 
@@ -66,11 +74,17 @@ async function getDeps(): Promise<Deps> {
   return deps;
 }
 
-export async function handler(event: StepEvent): Promise<unknown> {
+export async function handler(event: StepEvent | WorkflowEvent): Promise<unknown> {
+  if (event.action.startsWith("workflow."))
+    return workflowAction({ store: Store.fromEnv(process.env), slack: await workflowSlack() }, event as WorkflowEvent);
   const d = await getDeps();
   switch (event.action) {
     case "start":
-      return start(d, { ...event.input, execution: event.execution, execution_arn: event.execution_arn } as StartInput);
+      return start({ ...d, development: event.policy === undefined ? undefined : DevelopmentPolicy.parse(event.policy) }, {
+        ...event.input,
+        execution: event.execution,
+        execution_arn: event.execution_arn,
+      } as StartInput);
     case "decide":
       return decide(d, event.state);
     case "handover":

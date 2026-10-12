@@ -2,7 +2,7 @@ import { afterEach, describe, expect, mock, test } from "bun:test";
 import { createHash, createHmac } from "node:crypto";
 import { DescribeExecutionCommand, GetExecutionHistoryCommand, SendTaskSuccessCommand, type SFNClient } from "@aws-sdk/client-sfn";
 import { type AnswerDeps, deliverAnswer } from "./answers.ts";
-import { channelsFromEnv } from "./channels.ts";
+import { Channels } from "./channels.ts";
 import { allOf, slackSource } from "./index.ts";
 import { handler as slackIntake } from "./intake.ts";
 import { adfToText, draftByRules, draftIssue, findIssueKey, Jira, textToAdf } from "./jira.ts";
@@ -124,9 +124,15 @@ describe("slack intake", () => {
     expect(parseSlackRequest(mention("<@U0AGENT> x", { subtype: "message_changed" })).kind).toBe("ignored");
   });
   test("channels map to a repository and a Jira project", () => {
-    const env = { SLACK_CHANNELS: JSON.stringify({ C0DEMO: { repo: "acme/widgets", jira_project: "DEMO" } }) };
-    expect(channelsFromEnv(env).C0DEMO).toEqual({ repo: "acme/widgets", jira_project: "DEMO", jira_components: [] });
-    expect(() => channelsFromEnv({ SLACK_CHANNELS: JSON.stringify({ C0DEMO: { repo: "no-slash", jira_project: "DEMO" } }) })).toThrow();
+    const channels = { C0DEMO: { repo: "acme/widgets", jira_project: "DEMO" } };
+    expect(Channels.parse(channels).C0DEMO).toEqual({
+      repo: "acme/widgets",
+      jira_project: "DEMO",
+      jira_components: [],
+      default_workflow: "development",
+      allowed_workflows: ["development"],
+    });
+    expect(() => Channels.parse({ C0DEMO: { repo: "no-slash", jira_project: "DEMO" } })).toThrow();
   });
 });
 

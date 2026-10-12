@@ -2,6 +2,8 @@
 // crosses a process boundary is parsed with these schemas at the boundary.
 import { parse as parseToml } from "smol-toml";
 import { z } from "zod";
+import { DEFAULT_DEVELOPMENT } from "./development.ts";
+import { SlackRef } from "./workflow.ts";
 
 export const BRANCH_PREFIX = "mork/";
 
@@ -171,11 +173,8 @@ export type RepoRef = z.infer<typeof RepoRef>;
 export const Phase = z.enum(["plan", "build", "check"]);
 export type Phase = z.infer<typeof Phase>;
 
-export const MAX_ANALYST_ATTEMPTS = 2;
-export const MAX_BUILD_ATTEMPTS = 3;
+export const MAX_BUILD_ATTEMPTS = DEFAULT_DEVELOPMENT.steps[1].attempts;
 /** After the PR: fix runs per PR (red CI, requested changes, @mork), and build attempts inside one. */
-export const MAX_FIX_ROUNDS = 2;
-export const MAX_FIX_ATTEMPTS = 2;
 
 // ---------------------------------------------------------------------------
 // The Mork bucket holds outputs only, at keys fixed by convention, so
@@ -205,21 +204,7 @@ export const keys = {
   answers: (prefix: string) => `${prefix}/answers.json`,
   /** The draft PR of the task and the flow state behind it, so a fix run after CI or review can continue it. */
   pr: (prefix: string) => `${prefix}/pr.json`,
-  /** Created once per fix round with a conditional write: the fix run that creates it owns the round. */
-  fixClaim: (prefix: string, round: number) => `${prefix}/fix/${round}.json`,
 };
-
-/**
- * The small piece of state Step Functions hands a container in its
- * environment. The phase itself comes from the task definition.
- */
-/** Slack thread a task reports into; the same shape as @mork/sources' SlackRef. */
-export const SlackThread = z.object({
-  kind: z.literal("slack"),
-  channel: z.string(),
-  thread_ts: z.string(),
-  user: z.string(),
-});
 
 export const Brief = z.object({
   /** Build attempt this run belongs to (Plan uses 1). */
@@ -229,7 +214,7 @@ export const Brief = z.object({
   repo: RepoRef,
   branch: z.string().regex(BRANCH_PATTERN),
   /** Slack tasks: the containers post their progress into this thread. */
-  report: SlackThread.optional(),
+  report: SlackRef.optional(),
   /** Step Functions execution name and tracker reference (PROJ-123, owner/repo#12), for the live log. */
   execution: z.string().optional(),
   task: z.string().optional(),
@@ -265,9 +250,6 @@ export const Answer = z.object({
 });
 export const Answers = z.array(Answer);
 export type Answers = z.infer<typeof Answers>;
-/** Questions per task; one more hands the task to a person. */
-export const MAX_QUESTIONS = 3;
-
 /** Written by Build, read by Check: the implementer pushes the branch itself. */
 export const BuildResult = z.union([
   z.object({ ok: z.literal(true), head_sha: z.string().regex(/^[0-9a-f]{40}$/) }),
@@ -310,13 +292,3 @@ const LEVEL_ORDER: Record<ReviewLevel, number> = { quick: 0, careful: 1, takeove
 export function raiseLevel(a: ReviewLevel, b: ReviewLevel): ReviewLevel {
   return LEVEL_ORDER[a] >= LEVEL_ORDER[b] ? a : b;
 }
-
-// ---------------------------------------------------------------------------
-// Timeline: append-only events, written as JSON lines to stdout (CloudWatch).
-
-export type TimelineEvent = {
-  ts: string;
-  task: string;
-  kind: string;
-  detail?: Record<string, unknown>;
-};
