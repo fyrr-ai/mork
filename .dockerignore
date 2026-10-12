@@ -2,3 +2,10 @@
 .git
 docs
 **/*.test.ts
+
+.claude
+mise.local.toml
+.env*
+infra
+scripts
+.github

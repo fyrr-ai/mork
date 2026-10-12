@@ -76,7 +76,7 @@ Whether the code works is decided by tests, not by a model.
 - **Build:** implementer. The only phase without access to the hidden tests.
 - **Check:** gate after and, if it passes, the reviewer.
 
-Inside a container the runner (root) holds the task token, AWS credentials, the read token and the decision-model key. Pi runs as the user `agent` with a clean environment and no keys. The gate runs repository commands as the user `sandbox` in its own fresh clone. Root never follows a symlink in a directory the agent or the sandbox owns. Between steps the container kills every process of the previous user.
+Inside a container the runner (root) holds the task token, AWS credentials, the read token and the decision-model key. Pi runs as the user `agent` with a clean environment and no keys. The gate runs repository commands as the user `sandbox` in its own fresh clone. Tracked files, Git metadata and their parent entries remain root-owned; sticky directories allow generated outputs without allowing replacement of tracked entries. After each command the gate checks tracked bytes and Git metadata against its initial snapshot. Root opens every path component with a pinned directory descriptor and never follows an agent-owned symlink. Between steps the container kills every process of the previous user.
 
 **Analyst quality metric:** the share of hidden tests that fail on the base commit and pass after the change, and the share of mutants they catch.
 

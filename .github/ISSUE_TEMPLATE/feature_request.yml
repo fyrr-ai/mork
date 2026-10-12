@@ -1,0 +1,17 @@
+name: Feature request
+description: Propose a change to Mork.
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Describe the behavior you need and a concrete use case.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Include alternatives and how someone could verify the result.
+    validations:
+      required: true

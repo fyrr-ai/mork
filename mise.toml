@@ -2,8 +2,10 @@
 node = "24.21.0"
 bun = "1.4.2"
 opentofu = "1.12.6"
-terragrunt = "1.1.4"
 jq = "1.8.1"
+"aqua:koalaman/shellcheck" = "0.11.0"
+"aqua:rhysd/actionlint" = "1.7.12"
+gitleaks = "8.30.1"
 
 [env]
 _.path = ["{{config_root}}/node_modules/.bin"]
@@ -18,7 +20,7 @@ run = "bun install --frozen-lockfile"
 
 [tasks.test]
 description = "Unit tests"
-run = "bun test packages"
+run = "bun test packages scripts"
 
 [tasks.typecheck]
 description = "Type-check every package"
@@ -26,15 +28,20 @@ run = "for p in packages/*; do tsc -p \"$p\" --noEmit || exit 1; done"
 
 [tasks.lint]
 description = "Biome lint and format check"
-run = "biome check packages"
+run = "biome check packages scripts"
 
 [tasks.check]
 description = "Everything CI should run"
-depends = ["test", "typecheck", "lint"]
+depends = ["test", "typecheck", "lint", "scripts:check", "infra:check", "infra:test"]
 
 [tasks."images:build"]
 description = "Build the runner, egress and lambda images locally"
 run = "for t in runner egress lambda; do docker build --platform linux/amd64 --target $t -t mork-$t:dev . || exit 1; done"
+
+[tasks."images:check"]
+description = "Build and smoke-test production entrypoints and image notices without runtime network"
+depends = ["images:build"]
+run = "scripts/check-images.sh"
 
 [tasks.deploy]
 description = "Build the images, push them to ECR and point the Lambdas at the new image"
@@ -55,3 +62,53 @@ run = "bun packages/timeline/src/cli.ts"
 [tasks."rulesets:apply"]
 description = "Apply the default-branch and agent-branch rulesets to a repository (usage: mise run rulesets:apply -- owner/repo)"
 run = "scripts/rulesets.sh"
+
+[tasks."scripts:check"]
+description = "Check shell syntax, shellcheck and GitHub Actions"
+run = "for file in scripts/*.sh images/egress/entrypoint.sh; do bash -n \"$file\" || exit 1; done; shellcheck scripts/*.sh images/egress/entrypoint.sh && actionlint"
+
+[tasks."infra:init"]
+description = "Initialize the module locally without an AWS backend"
+run = "tofu -chdir=infra/aws init -backend=false -input=false -lockfile=readonly"
+
+[tasks."infra:check"]
+description = "Format and validate the OpenTofu module without AWS calls"
+depends = ["infra:init"]
+run = "tofu -chdir=infra/aws fmt -check -recursive && tofu -chdir=infra/aws validate"
+
+[tasks."infra:fmt"]
+description = "Format the OpenTofu module"
+run = "tofu -chdir=infra/aws fmt -recursive"
+
+[tasks."infra:bootstrap"]
+description = "Create ECR repositories for the first image upload (uses AWS)"
+run = "tofu -chdir=${MORK_INFRA_DIR:-infra/aws/examples/basic} apply -target=module.mork.aws_ecr_repository.this"
+
+[tasks."infra:apply"]
+description = "Apply a configured deployment (uses AWS)"
+run = "tofu -chdir=${MORK_INFRA_DIR:-infra/aws/examples/basic} apply"
+
+[tasks."images:push"]
+description = "Build and upload images before creating Lambda functions (uses AWS)"
+run = "scripts/deploy.sh --images-only"
+
+[tasks."gate:local"]
+description = "Run the real gate on a local git checkout without AWS"
+run = "bun packages/runner/src/gate-cli.ts"
+
+[tasks."security:scan"]
+description = "Scan committed content and history for secrets"
+run = "gitleaks git --redact --log-opts=HEAD ."
+
+[tasks."release:export"]
+description = "Export committed HEAD into a new single-commit repository (no push)"
+run = "scripts/release-export.sh"
+
+[tasks."infra:test"]
+description = "Plan regression tests with mocked AWS; no account or deployment"
+depends = ["infra:init"]
+run = "tofu -chdir=infra/aws test"
+
+[tasks."test:sandbox"]
+description = "Build and run privilege-boundary tests in Docker without runtime network"
+run = "scripts/test-sandbox.sh"

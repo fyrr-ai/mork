@@ -29,26 +29,51 @@ variable "vpc_id" {
 variable "vpc_cidr_block" {
   description = "CIDR of that VPC; the tasks may query its DNS resolver."
   type        = string
+
+  validation {
+    condition     = can(cidrhost(var.vpc_cidr_block, 0))
+    error_message = "vpc_cidr_block must be a valid CIDR."
+  }
 }
 
 variable "vpc_private_subnet_ids" {
   description = "Private subnets for the phase tasks."
   type        = list(string)
+
+  validation {
+    condition     = length(var.vpc_private_subnet_ids) > 0 && alltrue([for id in var.vpc_private_subnet_ids : can(regex("^subnet-[a-f0-9]+$", id))])
+    error_message = "Provide at least one valid private subnet ID."
+  }
 }
 
 variable "repo_allowlist" {
   description = "owner/repo names Mork may work on; every other repository is ignored at intake."
   type        = list(string)
+
+  validation {
+    condition     = length(var.repo_allowlist) > 0 && alltrue([for repo in var.repo_allowlist : can(regex("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", repo))])
+    error_message = "repo_allowlist must contain owner/repo names."
+  }
 }
 
 variable "llm_base_url" {
   description = "Base URL of an OpenAI-compatible chat completions API, e.g. https://api.example.com/v1. Its key is the secret <secret_prefix>/llm-api-key."
   type        = string
+
+  validation {
+    condition     = can(regex("^https://[A-Za-z0-9.-]+(:[0-9]+)?(/[^[:space:]]*)?$", var.llm_base_url))
+    error_message = "llm_base_url must be an HTTPS URL without embedded credentials."
+  }
 }
 
 variable "model" {
   description = "Model id passed to that API for planning, coding and review."
   type        = string
+
+  validation {
+    condition     = length(trimspace(var.model)) > 0
+    error_message = "model must not be empty."
+  }
 }
 
 variable "secret_prefix" {
@@ -84,30 +109,68 @@ variable "phase_seconds" {
   type        = object({ plan = number, build = number, check = number })
   # No turn or time limits run inside the containers; this only catches hangs.
   default = { plan = 7200, build = 7200, check = 7200 }
+
+  validation {
+    condition     = alltrue([for seconds in values(var.phase_seconds) : seconds > 300 && seconds <= 31536000 && seconds == floor(seconds)])
+    error_message = "Phase timeouts must be whole seconds greater than the 300-second heartbeat, at most one year."
+  }
 }
 
 variable "station_size" {
   description = "Fargate size of a phase container: vCPU units, memory MiB and ephemeral storage GiB."
   type        = object({ cpu = optional(number, 2048), memory = optional(number, 8192), storage_gib = optional(number, 40) })
   default     = {}
+
+  validation {
+    condition = contains(flatten([
+      [for memory in [512, 1024, 2048] : "256:${memory}"],
+      [for memory in range(1024, 4097, 1024) : "512:${memory}"],
+      [for memory in range(2048, 8193, 1024) : "1024:${memory}"],
+      [for memory in range(4096, 16385, 1024) : "2048:${memory}"],
+      [for memory in range(8192, 30721, 1024) : "4096:${memory}"],
+      [for memory in range(16384, 61441, 4096) : "8192:${memory}"],
+      [for memory in range(32768, 122881, 8192) : "16384:${memory}"],
+    ]), "${var.station_size.cpu}:${var.station_size.memory}")
+    error_message = "station_size cpu and memory must be a supported Fargate combination."
+  }
+
+  validation {
+    condition     = var.station_size.storage_gib >= 21 && var.station_size.storage_gib <= 200 && var.station_size.storage_gib == floor(var.station_size.storage_gib)
+    error_message = "station_size storage_gib must be a whole number from 21 to 200."
+  }
 }
 
 variable "spot_attempts" {
   description = "Retries of a phase on Fargate Spot after an interruption or a capacity shortage before it moves to on-demand Fargate."
   type        = number
   default     = 4
+
+  validation {
+    condition     = var.spot_attempts >= 0 && var.spot_attempts <= 8 && var.spot_attempts == floor(var.spot_attempts)
+    error_message = "spot_attempts must be a whole number between 0 and 8."
+  }
 }
 
 variable "supervise_seconds" {
   description = "How often each phase container asks the decision model whether its LLM station is stuck."
   type        = number
   default     = 45
+
+  validation {
+    condition     = var.supervise_seconds >= 1 && var.supervise_seconds == floor(var.supervise_seconds)
+    error_message = "supervise_seconds must be positive whole seconds."
+  }
 }
 
 variable "answer_seconds" {
   description = "How long a task waits for the requester to answer a question before it goes to a person."
   type        = number
   default     = 259200
+
+  validation {
+    condition     = var.answer_seconds >= 1 && var.answer_seconds <= 31536000 && var.answer_seconds == floor(var.answer_seconds)
+    error_message = "answer_seconds must be positive whole seconds, at most one year."
+  }
 }
 
 variable "slack_channels" {
@@ -174,10 +237,21 @@ variable "bucket_expiration_days" {
   description = "Days task outputs and agent sessions are kept in the bucket."
   type        = number
   default     = 90
+
+  validation {
+    condition     = var.bucket_expiration_days >= 1 && var.bucket_expiration_days == floor(var.bucket_expiration_days)
+    error_message = "bucket_expiration_days must be a positive whole number."
+  }
 }
 
 variable "force_destroy" {
   description = "Let terraform destroy the bucket with its objects and the timeline table. Keep false outside sandboxes."
   type        = bool
   default     = false
+}
+
+variable "tags" {
+  description = "Extra tags on supported resources, merged with Service=mork and Environment."
+  type        = map(string)
+  default     = {}
 }

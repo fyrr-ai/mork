@@ -38,7 +38,7 @@ Security analysis of Pi: [agent-safehouse](https://agent-safehouse.dev/docs/agen
 
 ## Jev ecosystem ([awesome-jev](https://github.com/yibie/awesome-jev))
 
-The list itself says that inclusion is not an endorsement. The projects are weeks old and mostly single-author. Mork takes patterns and selected MIT code, not dependencies.
+The list itself says that inclusion is not an endorsement. The projects are weeks old and mostly single-author. Mork uses design patterns from these projects; the table does not establish code-level provenance. Third-party licenses and notices are recorded in [THIRD_PARTY_NOTICES.md](../../THIRD_PARTY_NOTICES.md).
 
 | Project | License | What Mork takes |
 | --- | --- | --- |

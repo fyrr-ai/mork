@@ -12,7 +12,7 @@ The implementer pushes its own `mork/…` branch:
 
 - The push token is narrowed: allowlisted repositories, Contents read/write, no Workflows. Since [ADR 8](0008-credentials-live-in-the-egress-sidecar.md) only the egress sidecar holds it, and only for the task's repository.
 - The guard allows only `git push origin <its branch>`, without force; the runner verifies GitHub holds its last commit.
-- Repository rulesets keep the default branch PR-only with a fresh approval and limit new branches to `mork/*`.
+- Repository rulesets keep the default branch PR-only with a fresh approval and limit the Write-role agent to creating, updating and deleting `mork/*` branches, with no tag writes.
 - The gate after tests the pushed commit, and Decide opens the PR only while the branch still points at the commit the gate tested.
 
 ## Considered
@@ -23,4 +23,4 @@ The implementer pushes its own `mork/…` branch:
 
 - Work in progress survives an early stop: the runner pushes it, and the next attempt continues from the branch.
 - The token can still update other `mork/*` branches in the same repository; the proxy cannot see refs inside the git protocol (listed in `SECURITY.md`).
-- Rulesets need an organization repository or GitHub Pro.
+- Rulesets are available for public repositories on GitHub Free. Private repositories need an eligible paid plan. The agent account must have Write access and no bypass.

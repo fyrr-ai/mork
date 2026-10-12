@@ -3,6 +3,7 @@
 # and the brief as overrides.
 
 resource "aws_cloudwatch_log_group" "stations" {
+  tags              = local.tags
   name              = "/ecs/${local.name}/stations"
   retention_in_days = var.log_retention_days
 }
@@ -19,6 +20,7 @@ data "aws_iam_policy_document" "ecs_tasks_assume" {
 
 # Execution role: pulls the image and injects the secrets: the LLM key and push token (sidecar), the read token and decision keys (station).
 resource "aws_iam_role" "station_exec" {
+  tags               = local.tags
   name               = "${local.name}_station_exec"
   assume_role_policy = data.aws_iam_policy_document.ecs_tasks_assume.json
 }
@@ -75,6 +77,7 @@ locals {
 }
 
 resource "aws_iam_role" "phase" {
+  tags               = local.tags
   for_each           = local.phases
   name               = "${local.name}_${each.key}_task"
   assume_role_policy = data.aws_iam_policy_document.ecs_tasks_assume.json
@@ -106,6 +109,15 @@ data "aws_iam_policy_document" "phase" {
     actions   = ["s3:GetObject"]
     resources = [for key in each.value.reads : "${local.tasks_arn}/*/${key}"]
   }
+  dynamic "statement" {
+    for_each = each.key == "build" ? [1] : []
+    content {
+      sid       = "HiddenTestsStayHidden"
+      effect    = "Deny"
+      actions   = ["s3:GetObject", "s3:GetObjectVersion"]
+      resources = ["${local.tasks_arn}/*/hidden/*", "${local.tasks_arn}/*/sessions/plan-*"]
+    }
+  }
   statement {
     sid       = "WriteOwnOutputs"
     actions   = ["s3:PutObject"]
@@ -120,9 +132,9 @@ data "aws_iam_policy_document" "phase" {
 }
 
 resource "aws_iam_role_policy" "phase" {
-  for_each = aws_iam_role.phase
+  for_each = local.phases
   name     = "phase"
-  role     = each.value.id
+  role     = aws_iam_role.phase[each.key].id
   policy   = data.aws_iam_policy_document.phase[each.key].json
 }
 
@@ -132,6 +144,7 @@ resource "aws_iam_role_policy" "phase" {
 # the agent's requests for those hosts. The station trusts the sidecar's
 # per-task CA through the shared egress-ca volume.
 resource "aws_ecs_task_definition" "phase" {
+  tags                     = local.tags
   for_each                 = local.phases
   family                   = "${local.name}_${each.key}"
   requires_compatibilities = ["FARGATE"]
@@ -226,6 +239,7 @@ resource "aws_ecs_task_definition" "phase" {
 }
 
 resource "aws_security_group" "stations" {
+  tags        = local.tags
   name        = "${local.dash}-stations"
   description = "Mork station tasks: no ingress, HTTPS out"
   vpc_id      = var.vpc_id
@@ -235,10 +249,10 @@ resource "aws_security_group" "stations" {
 # AWS APIs, whose addresses are not stable. The agent's traffic goes through
 # the egress sidecar, which logs hosts outside its allowlist; the network
 # itself is not restricted (Fargate allows no iptables inside the task). The
-# agent holds no credentials, and the containers' AWS credentials only reach
-# their own task outputs.
+# agent holds no credentials, and the containers' AWS credentials reach outputs for their phase across tasks.
 # trivy:ignore:AWS-0104
 resource "aws_vpc_security_group_egress_rule" "stations_https" {
+  tags              = local.tags
   security_group_id = aws_security_group.stations.id
   cidr_ipv4         = "0.0.0.0/0"
   ip_protocol       = "tcp"
@@ -248,6 +262,7 @@ resource "aws_vpc_security_group_egress_rule" "stations_https" {
 }
 
 resource "aws_vpc_security_group_egress_rule" "stations_otlp" {
+  tags              = local.tags
   count             = var.otlp_cidr_block == null ? 0 : 1
   security_group_id = aws_security_group.stations.id
   cidr_ipv4         = var.otlp_cidr_block
@@ -258,6 +273,7 @@ resource "aws_vpc_security_group_egress_rule" "stations_otlp" {
 }
 
 resource "aws_vpc_security_group_egress_rule" "stations_dns" {
+  tags              = local.tags
   security_group_id = aws_security_group.stations.id
   cidr_ipv4         = var.vpc_cidr_block
   ip_protocol       = "udp"

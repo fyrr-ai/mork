@@ -10,11 +10,13 @@ locals {
 }
 
 resource "aws_cloudwatch_log_group" "slack" {
+  tags              = local.tags
   name              = "/aws/lambda/${local.name}_slack"
   retention_in_days = var.log_retention_days
 }
 
 resource "aws_iam_role" "slack" {
+  tags               = local.tags
   name               = "${local.name}_slack"
   assume_role_policy = data.aws_iam_policy_document.lambda_assume.json
 }
@@ -93,6 +95,7 @@ resource "aws_iam_role_policy" "steps_sources" {
 }
 
 resource "aws_lambda_function" "slack" {
+  tags          = local.tags
   function_name = "${local.name}_slack"
   role          = aws_iam_role.slack.arn
   package_type  = "Image"
@@ -138,4 +141,13 @@ resource "aws_lambda_permission" "slack_url" {
   function_name          = aws_lambda_function.slack.function_name
   principal              = "*"
   function_url_auth_type = "NONE"
+}
+
+# Function URL requests need both permissions. This does not expose Invoke directly.
+resource "aws_lambda_permission" "slack_url_invoke" {
+  statement_id             = "PublicInvokeViaFunctionUrl"
+  action                   = "lambda:InvokeFunction"
+  function_name            = aws_lambda_function.slack.function_name
+  principal                = "*"
+  invoked_via_function_url = true
 }

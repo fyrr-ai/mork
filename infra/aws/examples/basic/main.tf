@@ -1,8 +1,11 @@
 # Minimal deployment. Create the secrets first (scripts/aws-secrets.sh), then
-# terraform apply, then push the images (scripts/deploy.sh).
+# mise run infra:bootstrap, mise run images:push, then mise run infra:apply.
 
 provider "aws" {
-  region = "eu-west-1"
+  # Set AWS_REGION through mise.local.toml.
+  default_tags {
+    tags = { Service = "mork" }
+  }
 }
 
 module "mork" {

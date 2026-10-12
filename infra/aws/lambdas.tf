@@ -12,20 +12,22 @@ data "aws_iam_policy_document" "lambda_assume" {
 }
 
 resource "aws_cloudwatch_log_group" "lambda" {
+  tags              = local.tags
   for_each          = toset(["steps", "intake"])
   name              = "/aws/lambda/${local.name}_${each.key}"
   retention_in_days = var.log_retention_days
 }
 
 resource "aws_iam_role" "lambda" {
+  tags               = local.tags
   for_each           = toset(["steps", "intake"])
   name               = "${local.name}_${each.key}"
   assume_role_policy = data.aws_iam_policy_document.lambda_assume.json
 }
 
 resource "aws_iam_role_policy_attachment" "lambda_logs" {
-  for_each   = aws_iam_role.lambda
-  role       = each.value.name
+  for_each   = toset(["steps", "intake"])
+  role       = aws_iam_role.lambda[each.key].name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
@@ -133,6 +135,7 @@ locals {
 }
 
 resource "aws_lambda_function" "steps" {
+  tags          = local.tags
   function_name = "${local.name}_steps"
   role          = aws_iam_role.lambda["steps"].arn
   package_type  = "Image"
@@ -176,6 +179,7 @@ resource "aws_lambda_function" "steps" {
 }
 
 resource "aws_lambda_function" "intake" {
+  tags          = local.tags
   function_name = "${local.name}_intake"
   role          = aws_iam_role.lambda["intake"].arn
   package_type  = "Image"
@@ -218,4 +222,13 @@ resource "aws_lambda_permission" "intake_url" {
   function_name          = aws_lambda_function.intake.function_name
   principal              = "*"
   function_url_auth_type = "NONE"
+}
+
+# Function URL requests need both permissions. This does not expose Invoke directly.
+resource "aws_lambda_permission" "intake_url_invoke" {
+  statement_id             = "PublicInvokeViaFunctionUrl"
+  action                   = "lambda:InvokeFunction"
+  function_name            = aws_lambda_function.intake.function_name
+  principal                = "*"
+  invoked_via_function_url = true
 }

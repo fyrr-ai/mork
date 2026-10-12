@@ -1,0 +1,9 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Exact synthetic value used by the session-redaction regression"
+condition = "AND"
+paths = ['''^packages/runner/src/session\.test\.ts$''']
+regexTarget = "secret"
+regexes = ['''^sk-abcdefgh12345$''']

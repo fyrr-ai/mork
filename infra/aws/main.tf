@@ -13,6 +13,7 @@ data "aws_region" "current" {}
 
 locals {
   name = var.name
+  tags = merge({ Service = "mork", Environment = var.environment }, var.tags)
   # Hyphenated variant for resources whose names reject underscores.
   dash = replace(var.name, "_", "-")
 
@@ -61,10 +62,11 @@ data "aws_secretsmanager_secret" "decision" {
 # containers resolve `current` at launch, so a deploy needs no Terraform run.
 # trivy:ignore:AWS-0031
 resource "aws_ecr_repository" "this" {
+  tags                 = local.tags
   for_each             = toset(["runner", "egress", "lambda"])
   name                 = "${local.dash}-${each.key}"
   image_tag_mutability = "MUTABLE"
-  force_delete         = true
+  force_delete         = var.force_destroy
 
   image_scanning_configuration {
     scan_on_push = true
@@ -85,6 +87,7 @@ resource "aws_ecr_lifecycle_policy" "this" {
 }
 
 resource "aws_ecs_cluster" "this" {
+  tags = local.tags
   name = local.name
 
   setting {

@@ -15,6 +15,7 @@
 # reports, labels and stops whatever container still runs.
 
 resource "aws_cloudwatch_log_group" "sfn" {
+  tags              = local.tags
   name              = "/aws/vendedlogs/states/${local.name}"
   retention_in_days = var.log_retention_days
 }
@@ -30,6 +31,7 @@ data "aws_iam_policy_document" "sfn_assume" {
 }
 
 resource "aws_iam_role" "sfn" {
+  tags               = local.tags
   name               = "${local.name}_sfn"
   assume_role_policy = data.aws_iam_policy_document.sfn_assume.json
 }
@@ -160,8 +162,9 @@ locals {
 
   definition = {
     Comment = "Mork: a GitHub issue or Slack request to a reviewed draft PR, and fixes on that PR"
-    # Backstop for the whole task: three phases, retries and a question waiting up to answer_seconds.
-    TimeoutSeconds = var.answer_seconds + 3 * 7200 + 3600
+    # Contract bounds: two analyst attempts, three build/check attempts and three answered questions.
+    # Each question can rerun a phase. Include both retry categories on Spot and on-demand.
+    TimeoutSeconds = var.answer_seconds * 3 + (2 * var.phase_seconds.plan + 3 * (var.phase_seconds.build + var.phase_seconds.check) + 3 * max(var.phase_seconds.plan, var.phase_seconds.build, var.phase_seconds.check)) * (2 * (2 * var.spot_attempts + 1)) + 880 * (pow(2, var.spot_attempts) - 1) + 3600
     StartAt        = "Start"
     States = merge(local.phase, local.asked, local.step, {
       Start = {
@@ -230,18 +233,28 @@ locals {
         Parameters = { FunctionName = aws_lambda_function.steps.arn, Payload = { action = "handover", "state.$" = "$" } }
         OutputPath = "$.Payload"
         Retry      = [{ ErrorEquals = ["States.ALL"], MaxAttempts = 2, IntervalSeconds = 10, BackoffRate = 2 }]
+        Catch      = [{ ErrorEquals = ["States.ALL"], ResultPath = "$.handover_error", Next = "HandoverFailed" }]
         Next       = "Done"
       }
-      Done = { Type = "Succeed" }
+      HandoverFailed = { Type = "Fail", Error = "Mork.HandoverFailed", Cause = "Human notification or container cleanup failed after retries; inspect the execution history." }
+      Done           = { Type = "Succeed" }
     })
   }
 }
 
 resource "aws_sfn_state_machine" "this" {
+  tags       = local.tags
   name       = local.name
   role_arn   = aws_iam_role.sfn.arn
   type       = "STANDARD"
   definition = jsonencode(local.definition)
+
+  lifecycle {
+    precondition {
+      condition     = local.definition.TimeoutSeconds <= 31536000
+      error_message = "The workflow timeout must fit within the one-year Step Functions limit; reduce phase/answer timeouts or retries."
+    }
+  }
 
   logging_configuration {
     log_destination        = "${aws_cloudwatch_log_group.sfn.arn}:*"

@@ -30,7 +30,6 @@ transforms:
         - "registry.yarnpkg.com"
         - "pypi.org"
         - "files.pythonhosted.org"
-        - "hub.getdbt.com"
         # @EXTRA_DOMAINS@ (MORK_EGRESS_ALLOW)
   - name: secrets
     config:

@@ -20,7 +20,7 @@ Required: `vpc_id`, `vpc_cidr_block`, `vpc_private_subnet_ids`, `repo_allowlist`
 | `repo_allowlist` | — | Repositories Mork may work on |
 | `slack_channels` | `{}` | Channel ID → `{ repo, jira_project, jira_components }` |
 | `jira_base_url`, `jira_email` | `""` | Jira Cloud site and service account for Slack tasks |
-| `phase_seconds` | 7200 each | Backstop timeout per phase |
+| `phase_seconds` | 7200 each | Backstop timeout per phase; whole seconds greater than the 300-second heartbeat |
 | `station_size` | 2048 CPU, 8192 MiB, 40 GiB | Fargate size of a phase container |
 | `spot_attempts` | 4 | Spot retries before a phase moves to on-demand Fargate |
 | `supervise_seconds` | 45 | How often the supervisor checks a running station |
@@ -32,6 +32,7 @@ Required: `vpc_id`, `vpc_cidr_block`, `vpc_private_subnet_ids`, `repo_allowlist`
 | `grafana_url`, `grafana_loki_uid` | `null`, `loki` | Link to the live log in Grafana and its Loki data source |
 | `bucket_expiration_days` | 90 | Retention of task outputs and sessions |
 | `image_tag` | `current` | Tag the deploy script moves |
+| `tags` | `{}` | Extra resource tags, merged with Service and Environment |
 
 ## Secrets
 
@@ -48,7 +49,7 @@ All secrets are `<secret_prefix>/<name>`. `scripts/aws-secrets.sh` reads each va
 | `slack-signing-secret`, `slack-bot-token` | `MORK_SLACK_SIGNING_SECRET`, `MORK_SLACK_BOT_TOKEN` | Slack Lambda, steps, runner | Slack source (optional) |
 | `jira-api-token` | `MORK_JIRA_API_TOKEN` | Slack Lambda, steps | Jira tracker (optional) |
 
-Use a GitHub App or fine-grained tokens owned by a machine account, not by a repository admin (an admin token bypasses rulesets).
+Use fine-grained tokens owned by a machine account with Write access. Do not give it Maintain or Admin access or any ruleset bypass. GitHub App installation-token minting and renewal are not implemented; a short-lived token supplied manually will need renewal.
 
 ## Repository configuration
 
@@ -121,6 +122,7 @@ The Terraform module sets these; they are listed for running the code elsewhere.
 | `MORK_NAME` | all | Deployment name (default `mork`) |
 | `MORK_ACCOUNT` | `deploy.sh` | Refuse to deploy into another AWS account |
 | `MORK_ECR_PREFIX`, `MORK_FUNCTIONS` | `deploy.sh` | Override image repository prefix and Lambda names |
+| `MORK_INFRA_DIR` | mise infra tasks | Configured root module, default `infra/aws/examples/basic` |
 | `MORK_STATE_MACHINE` | `watch-execution.sh` | State machine to follow |
 | `MORK_SECRET_PREFIX` | `aws-secrets.sh` | Secret name prefix |
 

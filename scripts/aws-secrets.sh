@@ -45,7 +45,7 @@ if [[ "${1:-}" == "--delete-github" ]]; then
     [[ -n "$created" ]] || { echo "could not recreate $name" >&2; exit 1; }
     echo "recreated $name"
   done
-  echo "GitHub token secrets recreated with a placeholder; re-apply the stack"
+  echo "Stored GitHub secrets removed. The tokens themselves remain valid: revoke each token in GitHub, then re-apply the stack."
   exit 0
 fi
 

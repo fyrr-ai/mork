@@ -25,6 +25,10 @@ Slack @mork / GitHub label → Start (triage) → Plan → Build → Check → D
 | [docs/deployment.md](docs/deployment.md) | Deploying to AWS, adding a repository, Slack |
 | [docs/configuration.md](docs/configuration.md) | Terraform variables, secrets, `.mork/config.toml`, environment |
 | [SECURITY.md](SECURITY.md) | Trust boundaries and known gaps |
+| [docs/local-verification.md](docs/local-verification.md) | Run the real gate without AWS |
+| [docs/releasing.md](docs/releasing.md) | Clean source export and release checks |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Contributor setup and review |
+| [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) | Third-party licenses and provenance |
 | [docs/diagrams/](docs/diagrams/) | Workflow, verification and AWS diagrams (open in a browser) |
 | [docs/research/](docs/research/) | Comparison with other background coding agents, sources |
 
@@ -47,9 +51,10 @@ Slack @mork / GitHub label → Start (triage) → Plan → Build → Check → D
 ## Development
 
 ```sh
+mise trust
 mise install
-bun install --frozen-lockfile
-mise run check    # tests, typecheck, lint
+mise run install
+mise run check    # tests, types, lint, scripts, offline infrastructure plans
 ```
 
 Tests run with Bun; the containers and Lambdas run on Node 24 with TypeScript type stripping, without a build step.
