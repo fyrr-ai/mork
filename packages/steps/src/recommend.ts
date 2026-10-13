@@ -5,6 +5,7 @@ import { type GateReport, type PublicPlan, type ReviewerOutput, type ReviewLevel
 import { boundEvidence, type CriterionVerdict, type DecisionPanel, type DecisionTrace } from "@mork/decision";
 
 export const QUICK_THRESHOLD = 0.8;
+export const LARGE_DIFF_LINES = 1000;
 
 export type Recommendation = { level: ReviewLevel; reasons: string[]; decidedBy: string };
 
@@ -54,7 +55,7 @@ export async function recommend(input: {
   if (p1.length) hit("careful", `The reviewer has ${p1.length}× P1`);
   for (const flag of gate.diff_policy?.flags ?? []) hit("careful", `Gate: ${flag}`);
   const size = (gate.diff_policy?.added_lines ?? 0) + (gate.diff_policy?.removed_lines ?? 0);
-  if (size > 300) hit("careful", `Large diff (${size} lines)`);
+  if (size > LARGE_DIFF_LINES) hit("careful", `Large diff (${size} lines)`);
 
   const floor = state.floor;
   if (floor === "takeover") return { rec: { level: floor, reasons, decidedBy: "rules" } };

@@ -93,6 +93,12 @@ describe("recommendation", () => {
     const flagged = { ...gate, diff_policy: { ...gate.diff_policy, flags: ["test script changed"] } };
     expect(await rec({ panel: q, gate: flagged })).toBe("careful");
   });
+  test("only a diff over 1000 lines forces careful", async () => {
+    const q = live(fixedDecider("quick", 0.99));
+    const sized = (added_lines: number) => ({ ...gate, diff_policy: { ...gate.diff_policy, added_lines, removed_lines: 0 } });
+    expect(await rec({ panel: q, gate: sized(1000) })).toBe("quick");
+    expect(await rec({ panel: q, gate: sized(1001) })).toBe("careful");
+  });
 });
 
 const directories: string[] = [];
