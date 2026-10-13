@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mork development workflow</title>
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;600&amp;family=Geist+Mono&amp;family=Instrument+Serif&amp;display=swap" rel="stylesheet">
+  <style>
+    html, body { margin: 0; background: #000; color: #f5f5f5; }
+    .diagram-container { width: 100%; overflow-x: auto; }
+    svg { width: 100%; min-width: 960px; display: block; }
+    .heading { font: 40px 'Instrument Serif', Georgia, serif; fill: #f5f5f5; }
+    .name { font: 600 22px 'Geist', Arial, sans-serif; fill: #f5f5f5; }
+    .note { font: 16px 'Geist', Arial, sans-serif; fill: #bfc0c0; }
+    .label { font: 12px 'Geist Mono', monospace; fill: #bfc0c0; }
+    .box { fill: #101116; stroke: #41434a; stroke-width: 1; }
+    .focus { fill: #19120f; stroke: #f08a59; stroke-width: 1; }
+    .edge { fill: none; stroke: #949eb2; stroke-width: 1.5; marker-end: url(#development-arrow); }
+    @media print { .diagram-container { overflow-x: visible; } svg { min-width: 0; } }
+  </style>
+</head>
+<body>
+  <!-- Development example. Start/Decide actions and Slack questions are omitted for readability. -->
+  <div class="diagram-container">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 480" role="img" aria-labelledby="development-title development-desc">
+      <title id="development-title">Example: software development</title>
+      <desc id="development-desc">Slack or GitHub requests go through Plan, Build and Check to a draft pull request. Failed checks can trigger another build attempt. CI failures and review feedback can start fix runs on the same branch. A person reviews and merges.</desc>
+      <defs>
+        <marker id="development-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8" fill="#949eb2"/></marker>
+      </defs>
+      <rect width="960" height="480" fill="#000"/>
+      <text class="heading" x="48" y="72">Example: software development</text>
+      <text class="note" x="48" y="108">Mork prepares the change. Your team reviews and merges it.</text>
+      <path class="edge" d="M200 268 H232"/>
+      <path class="edge" d="M384 268 H416"/>
+      <path class="edge" d="M568 268 H600"/>
+      <path class="edge" d="M752 268 H784"/>
+      <path class="edge" d="M652 320 V352 Q652 360 644 360 H536 Q528 360 528 352 V320"/>
+      <path class="edge" d="M848 320 V400 Q848 408 840 408 H472 Q464 408 464 400 V320"/>
+      <rect class="box" x="48" y="216" width="152" height="104" rx="8"/>
+      <text class="name" x="64" y="260">Request</text>
+      <text class="note" x="64" y="296">Slack / GitHub</text>
+      <rect class="box" x="232" y="216" width="152" height="104" rx="8"/>
+      <text class="name" x="248" y="260">Plan</text>
+      <text class="note" x="248" y="296">Hidden tests</text>
+      <rect class="box" x="416" y="216" width="152" height="104" rx="8"/>
+      <text class="name" x="432" y="260">Build</text>
+      <text class="note" x="432" y="296">Code changes</text>
+      <rect class="focus" x="600" y="216" width="152" height="104" rx="8"/>
+      <text class="name" x="616" y="260">Check</text>
+      <text class="note" x="616" y="296">Tests + review</text>
+      <rect class="box" x="784" y="216" width="128" height="104" rx="8"/>
+      <text class="name" x="800" y="260">Draft PR</text>
+      <text class="note" x="800" y="296">You merge</text>
+      <rect x="544" y="324" width="96" height="24" fill="#000"/>
+      <text class="label" x="548" y="340">CHECKS FAIL</text>
+      <rect x="584" y="372" width="160" height="24" fill="#000"/>
+      <text class="label" x="588" y="388">FIX RUN</text>
+      <text class="note" x="48" y="456">CI failures and review feedback can start fix runs on the same branch.</text>
+    </svg>
+  </div>
+</body>
+</html>
