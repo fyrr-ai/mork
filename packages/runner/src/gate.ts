@@ -1,14 +1,11 @@
 // LLM-free gate. Runs the repository's own commands and the hidden tests as an
 // unprivileged user, then applies the diff policy. Nothing here can be talked
 // into a different result: it only reports exit codes and diffs.
-import { chmodSync, cpSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, rmSync } from "node:fs";
+import { chmodSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { type GateReport, type HiddenTest, PLATFORM_PROTECTED_PATHS, type RepoConfig, type RepoRef } from "@mork/contracts";
-import { z } from "zod";
 import { hashAgentFile, killUser, writeFresh } from "./agentfs.ts";
 import { exec, execAsync, fetchRepo, mustExec, SAFE_GIT } from "./git.ts";
-import { type Mutant, type MutationReport, mutantsFrom } from "./mutants.ts";
 
 const OUTPUT_TAIL = 4_000;
 const SKIP_MARKERS = /\.(skip|only|todo)\s*\(|\bx(it|describe|test)\s*\(|@pytest\.mark\.(skip|xfail)|pytest\.skip\(|\bt\.skip\(|\{\s*skip\s*:\s*true/;
@@ -45,7 +42,6 @@ export async function runGate(spec: GateJob, readToken: string, workDir: string,
   const after = spec.mode === "after";
   const diffPolicy = after ? checkDiff(repoDir, spec) : undefined;
   const headSha = after ? mustExec("git", [...SAFE_GIT, "-C", repoDir, "rev-parse", "HEAD"]).trim() : undefined;
-  const addedPatch = after ? mustExec("git", [...SAFE_GIT, "-C", repoDir, "diff", ...NO_DRIVERS, "--unified=0", `${spec.repo.base_sha}..HEAD`]) : "";
   for (const test of spec.hidden_tests) {
     if (!test.file.endsWith(spec.config.hidden_tests.file_suffix) || test.file.includes("/") || test.file.startsWith(".")) {
       throw new Error(`hidden test ${test.file} must be a plain file name ending with ${spec.config.hidden_tests.file_suffix}`);
@@ -109,23 +105,6 @@ export async function runGate(spec: GateJob, readToken: string, workDir: string,
     placeHiddenTests(repoDir, spec.config.hidden_tests.dir, spec.hidden_tests);
     const result = await run(hiddenCommand(test));
     report.hidden.push({ file: test.file, criteria: test.criteria, passed: result.exit_code === 0, output: result.output });
-  }
-  if (after && report.hidden.length && report.hidden.every((h) => h.passed)) {
-    const isTest = (path: string) => [...spec.config.test_paths, spec.config.hidden_tests.dir].some((prefix) => path.startsWith(prefix));
-    const mutants = mutantsFrom(addedPatch, isTest);
-    if (mutants.length) {
-      killUser(sandbox.uid);
-      placeHiddenTests(repoDir, spec.config.hidden_tests.dir, spec.hidden_tests);
-      // Mutants need a writable copy; the checkout that supplied the verdict stays sealed.
-      const mutationDir = join(workDir, "mutation-repo");
-      rmSync(mutationDir, { recursive: true, force: true });
-      cpSync(repoDir, mutationDir, { recursive: true, verbatimSymlinks: true });
-      if (sandbox.uid !== undefined) {
-        mustExec("chown", ["-R", `${sandbox.uid}:${sandbox.gid}`, mutationDir]);
-      }
-      mustExec("chmod", ["-R", "u+rwX", mutationDir]);
-      report.mutation = await runMutantsAsSandbox(workDir, mutationDir, mutants, spec.hidden_tests.map(hiddenCommand), sandbox);
-    }
   }
   killUser(sandbox.uid);
   return report;
@@ -217,41 +196,6 @@ function lstatOrUndefined(path: string) {
     return undefined;
   }
 }
-
-/** Runs the mutants in a separate process as the sandbox user: root never writes into the sandbox's checkout. */
-async function runMutantsAsSandbox(
-  workDir: string,
-  repoDir: string,
-  mutants: Mutant[],
-  commands: string[],
-  sandbox: Sandbox,
-): Promise<MutationReport | undefined> {
-  const specFile = join(workDir, "mutants.json");
-  writeFresh(specFile, JSON.stringify({ mutants, commands }), 0o644);
-  const cli = join(dirname(fileURLToPath(import.meta.url)), "mutate-cli.ts");
-  const result = await execAsync(process.execPath, [cli, specFile], {
-    cwd: repoDir,
-    env: sandbox.env,
-    uid: sandbox.uid,
-    gid: sandbox.gid,
-    timeoutMs: 120_000,
-  });
-  const last = result.output.trim().split("\n").at(-1) ?? "";
-  try {
-    return MutationResult.parse(JSON.parse(last));
-  } catch {
-    console.error(JSON.stringify({ kind: "gate.mutation_failed", code: result.code, output: result.output.slice(-500) }));
-    return undefined;
-  }
-}
-
-const MutationResult = z.object({
-  mutants: z.array(z.object({ where: z.string(), change: z.string(), killed: z.boolean() })),
-  killed: z.number().int(),
-  total: z.number().int(),
-  skipped: z.number().int(),
-  seconds: z.number(),
-});
 
 /**
  * The diff policy against the base commit. The gate judges the pushed commit

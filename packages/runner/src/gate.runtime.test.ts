@@ -131,23 +131,6 @@ local("the local CLI verifies the actual before/after commits without AWS", asyn
     if (mode === "after") expect(result.gate.head_sha).toBe(head);
   }
 });
-privileged("mutants execute on a writable copy while the tested checkout remains protected", async () => {
-  const { job, work, source } = fixture("mkdir generated");
-  writeFileSync(join(source, "number.mjs"), "export const number = 1;\n");
-  mustExec("git", ["-C", source, "add", "number.mjs"]);
-  mustExec("git", ["-c", "user.name=fixture", "-c", "user.email=fixture@example.test", "-C", source, "commit", "-qm", "number"]);
-  job.hidden_tests = [
-    {
-      file: "number.sh",
-      criteria: ["AC1"],
-      content: "node --input-type=module -e 'import {number} from \"./number.mjs\"; if (number !== 1) process.exit(1)'\n",
-    },
-  ];
-  const result = await runGate(job, "", work, { uid: 10002, gid: 10002, env });
-  expect(gatePassed(result)).toBe(true);
-  expect(result.mutation?.killed).toBe(1);
-  expect(result.mutation?.total).toBe(1);
-});
 privileged("a tracked symlink cannot be replaced by the sandbox", async () => {
   const { job, work, source } = fixture("! rm linked && mkdir generated");
   symlinkSync("value", join(source, "linked"));

@@ -1,31 +1,32 @@
-import { expect, test } from "bun:test";
+import { afterEach, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Brief, keys } from "@mork/contracts";
+import { DEFAULT_DEVELOPMENT } from "@mork/contracts/development";
 import { DecisionPanel } from "@mork/decision";
 import type { ReportEvent } from "@mork/sources";
-import { Store } from "@mork/store";
+import { LocalStore } from "@mork/store/local";
 import { noLogger } from "./otlp.ts";
 import { check, type PhaseContext } from "./phases.ts";
 
-class MemoryStore extends Store {
-  readonly objects = new Map<string, string>();
+const directories: string[] = [];
+afterEach(() => {
+  for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true });
+});
+
+class TrackedStore extends LocalStore {
   readonly reads: string[] = [];
-  constructor() {
-    super("unused");
-  }
-  override async put(key: string, body: string | Uint8Array): Promise<string> {
-    this.objects.set(key, Buffer.from(body).toString("utf8"));
-    return key;
-  }
   override async bytes(key: string): Promise<Buffer> {
     this.reads.push(key);
-    const value = this.objects.get(key);
-    if (value === undefined) throw new Error(`Missing artifact ${key}`);
-    return Buffer.from(value);
+    return super.bytes(key);
   }
 }
 
 async function failedBuild() {
-  const store = new MemoryStore();
+  const directory = mkdtempSync(join(tmpdir(), "mork-phases-"));
+  directories.push(directory);
+  const store = new TrackedStore(directory);
   const brief = Brief.parse({
     attempt: 2,
     prefix: "tasks/example/one",
@@ -44,6 +45,7 @@ async function failedBuild() {
   const reported: ReportEvent[] = [];
   const ctx: PhaseContext = {
     brief,
+    step: DEFAULT_DEVELOPMENT.steps[2],
     store,
     env: {
       llmBaseUrl: "unused",
@@ -74,7 +76,7 @@ async function failedBuild() {
 test("Check returns failed feedback after an unpushed Build without reading hidden tests or checking out code", async () => {
   const { ctx, store, reported } = await failedBuild();
   expect(await check(ctx)).toEqual({ ok: true, passed: false });
-  expect(store.objects.get(keys.feedback(ctx.brief.prefix, 3))).toContain("push failed");
+  expect(await store.text(keys.feedback(ctx.brief.prefix, 3))).toContain("push failed");
   expect(store.reads).not.toContain(keys.hidden(ctx.brief.prefix));
   expect(reported).toHaveLength(1);
   expect(reported[0]).toMatchObject({ kind: "check", passed: false });
@@ -85,5 +87,5 @@ test("Check rejects a corrupt Build result rather than reporting green or starti
   await store.putJson(keys.buildResult(ctx.brief.prefix, ctx.brief.attempt), { ok: true });
   await expect(check(ctx)).rejects.toThrow();
   expect(reported).toEqual([]);
-  expect(store.objects.has(keys.feedback(ctx.brief.prefix, 3))).toBe(false);
+  await expect(store.text(keys.feedback(ctx.brief.prefix, 3))).rejects.toMatchObject({ name: "NoSuchKey" });
 });

@@ -88,6 +88,7 @@ export async function runLocalWorkflow(options: LocalOptions): Promise<LocalResu
     mkdirSync(agentHome, { mode: 0o700, recursive: true });
     const ctx: PhaseContext = {
       brief: manifest.brief,
+      step: manifest.definition.steps[0],
       store,
       localRepo: remote,
       readToken: "",

@@ -97,7 +97,7 @@ data "aws_iam_policy_document" "steps" {
   }
   statement {
     sid       = "WriteTimeline"
-    actions   = ["dynamodb:PutItem", "dynamodb:GetItem", "dynamodb:Query"]
+    actions   = ["dynamodb:PutItem", "dynamodb:GetItem"]
     resources = [aws_dynamodb_table.timeline.arn]
   }
 }

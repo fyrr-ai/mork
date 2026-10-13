@@ -8,7 +8,7 @@ const banner = 'import { createRequire as morkCreateRequire } from "node:module"
 for (const target of ["runner", "lambda"] as const) {
   const entrypoints =
     target === "runner"
-      ? ["main", "workflow-main", "verify-cli", "mutate-cli", "rpc", "gate", "dir-rules", "verify"].map((name) => `packages/runner/src/${name}.ts`)
+      ? ["main", "workflow-main", "verify-cli", "rpc", "gate", "dir-rules", "verify"].map((name) => `packages/runner/src/${name}.ts`)
       : ["packages/steps/lambda-steps.mjs", "packages/steps/lambda-intake.mjs", "packages/sources/lambda-slack.mjs"];
   const result = await Bun.build({
     entrypoints,

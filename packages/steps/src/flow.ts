@@ -21,13 +21,14 @@ import {
 } from "@mork/contracts";
 import { DEFAULT_DEVELOPMENT_POLICY, type DevelopmentPolicy } from "@mork/contracts/development";
 import { type CriterionVerdict, type DecisionPanel, type DecisionTrace, judgeCriteria, type Triage, triage, triageMessage } from "@mork/decision";
+import type { Complete } from "@mork/sources";
 import { executionUrl, findIssueKey, REVIEW_LEVEL_TEXT, type ReportEvent, type Reporter, type SlackStart, type TrackerIssue } from "@mork/sources";
 import type { Store } from "@mork/store";
 import { linkPr, recordDecision, recordTakeover, type TimelineStore } from "@mork/timeline";
 import { z } from "zod";
 import { type FixState, MARKER, releasePr, savePr, startFix } from "./fix.ts";
 import type { GitHub } from "./github.ts";
-import { CLARIFY_SYSTEM, type Llm } from "./llm.ts";
+import { CLARIFY_SYSTEM } from "./llm.ts";
 import { LABELS, naming, type Origin, prLink, type StartInput } from "./origin.ts";
 import { type Recommendation, recommend } from "./recommend.ts";
 
@@ -68,7 +69,7 @@ export type Deps = {
   store: Store;
   panel: DecisionPanel;
   timeline: TimelineStore;
-  llm: Llm;
+  llm: Complete;
   /** Link to the run's live agent log, when a log viewer is configured. */
   liveLog: (execution: string) => string | undefined;
   /** Where the task's progress goes: GitHub labels and comments, or the Slack thread and Jira. */
@@ -460,15 +461,6 @@ export function checksTable(c: ChecksEvidence): string {
   for (const check of c.gate.checks ?? []) rows.push(["Repository check", "gate", cmd(check)]);
   const hiddenPassed = c.gate.hidden.filter((h) => h.passed).length;
   rows.push(["Hidden acceptance tests", "gate", `${ok(hiddenPassed === c.gate.hidden.length)} ${hiddenPassed}/${c.gate.hidden.length} passed`]);
-  const mutation = c.gate.mutation;
-  if (mutation?.total) {
-    const survived = mutation.mutants.filter((m) => !m.killed).map((m) => `\`${m.where}\` ${m.change}`);
-    rows.push([
-      "Hidden tests catch deliberate bugs (mutants)",
-      "gate",
-      `${survived.length ? "⚠️" : "✅"} ${mutation.killed}/${mutation.total} caught${survived.length ? `; survived: ${survived.join(", ")}` : ""}`,
-    ]);
-  }
   const violations = c.gate.diff_policy?.violations ?? [];
   const flags = c.gate.diff_policy?.flags ?? [];
   rows.push([

@@ -53,7 +53,7 @@ export class Supervisor {
 
   /** One supervision check; overlapping calls are skipped. */
   async check(now = Date.now()): Promise<void> {
-    if (this.#busy) return;
+    if (!this.#panel.enabled || this.#busy) return;
     this.#busy = true;
     try {
       const evidence = boundEvidence(

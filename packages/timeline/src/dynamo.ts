@@ -1,6 +1,6 @@
 // DynamoDB-backed timeline store (table configured by MORK_TIMELINE_TABLE).
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, ScanCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, GetCommand, PutCommand, ScanCommand } from "@aws-sdk/lib-dynamodb";
 import type { TimelineItem, TimelineStore } from "./index.ts";
 
 export class DynamoStore implements TimelineStore {
@@ -25,24 +25,6 @@ export class DynamoStore implements TimelineStore {
   async get(pk: string, sk: string): Promise<TimelineItem | undefined> {
     const out = await this.#db.send(new GetCommand({ TableName: this.#table, Key: { pk, sk } }));
     return out.Item as TimelineItem | undefined;
-  }
-
-  async query(pk: string): Promise<TimelineItem[]> {
-    const items: TimelineItem[] = [];
-    let start: Record<string, unknown> | undefined;
-    do {
-      const out = await this.#db.send(
-        new QueryCommand({
-          TableName: this.#table,
-          KeyConditionExpression: "pk = :pk",
-          ExpressionAttributeValues: { ":pk": pk },
-          ExclusiveStartKey: start,
-        }),
-      );
-      items.push(...((out.Items ?? []) as TimelineItem[]));
-      start = out.LastEvaluatedKey;
-    } while (start);
-    return items;
   }
 
   async *scan(): AsyncIterable<TimelineItem> {

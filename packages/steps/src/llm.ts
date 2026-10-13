@@ -1,9 +1,9 @@
 // One-shot LLM call for text the steps write themselves (clarifying
 // questions). Stations use the LLM through Pi; this is a plain chat completion
 // against any OpenAI-compatible API.
-export type Llm = (system: string, user: string) => Promise<string>;
+import type { Complete } from "@mork/sources";
 
-export function llmFromEnv(env: NodeJS.ProcessEnv): Llm {
+export function llmFromEnv(env: NodeJS.ProcessEnv): Complete {
   const key = env.LLM_API_KEY;
   const baseUrl = env.LLM_BASE_URL;
   const model = env.MORK_MODEL;
