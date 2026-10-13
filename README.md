@@ -1,5 +1,9 @@
 ![Mork. Serverless dark factory.](docs/assets/mork-banner.png)
 
+[![CI](https://github.com/fyrr-ai/mork/actions/workflows/ci.yml/badge.svg?branch=main&event=push)](https://github.com/fyrr-ai/mork/actions/workflows/ci.yml)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-f08a59?style=flat&labelColor=27292f)](LICENSE)
+[![Deploy: Your AWS account](https://img.shields.io/badge/Deploy-Your_AWS_account-f08a59?style=flat&labelColor=27292f)](docs/deployment.md)
+
 Mork is a serverless dark factory for AI workflows. Give it a task in Slack,
 and it runs the steps you configured and returns the result.
 
