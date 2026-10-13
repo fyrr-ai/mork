@@ -1,6 +1,6 @@
         - source:
             type: env
-            var: GITHUB_PUSH_TOKEN
+            var: GITHUB_TOKEN
           inject:
             header: "Authorization"
             formatter: 'Basic {{ base64 "x-access-token:" .Value }}'

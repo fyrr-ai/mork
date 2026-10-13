@@ -50,7 +50,7 @@ export type PhaseContext = {
   store: Store;
   env: RunnerEnv;
   sandbox: Sandbox;
-  readToken: string;
+  githubToken: string;
   /** Trusted local workflows fetch and push only this task-owned bare repository. */
   localRepo?: string;
   model: string;
@@ -106,7 +106,7 @@ function checkout(ctx: PhaseContext, name: string, withBranch: boolean): string 
   fetchRepo({
     dir,
     fullName: ctx.brief.repo.full_name,
-    token: ctx.readToken,
+    token: ctx.githubToken,
     baseSha: ctx.brief.repo.base_sha,
     branch: withBranch ? ctx.brief.branch : undefined,
     localRepo: ctx.localRepo,
@@ -217,7 +217,7 @@ async function planWith(ctx: PhaseContext, records: SupervisionRecord[]): Promis
     }
     const report = await runGate(
       { mode: "before", repo: brief.repo, config, hidden_tests: full.hidden_tests, allow_test_change: false, localRepo: ctx.localRepo },
-      ctx.readToken,
+      ctx.githubToken,
       join(ctx.env.workDir, `gate-before-${attempt}`),
       ctx.sandbox,
     );
@@ -252,7 +252,7 @@ async function buildWith(ctx: PhaseContext, records: SupervisionRecord[]): Promi
   const issue = IssueDoc.parse(await store.json(keys.issue(brief.prefix)));
   const thePlan = PublicPlan.parse(await store.json(keys.plan(brief.prefix)));
   const feedback = brief.attempt > 1 ? await store.text(keys.feedback(brief.prefix, brief.attempt)).catch(() => undefined) : undefined;
-  const remote = () => remoteHead(brief.repo.full_name, ctx.readToken, brief.branch, ctx.localRepo);
+  const remote = () => remoteHead(brief.repo.full_name, ctx.githubToken, brief.branch, ctx.localRepo);
   // Later attempts continue on what the previous attempt pushed, if it pushed anything.
   const repoDir = checkout(ctx, "implementer", remote() !== undefined);
   const config = baseConfig(repoDir, brief.repo.base_sha);
@@ -326,7 +326,7 @@ async function checkWith(ctx: PhaseContext, records: SupervisionRecord[]): Promi
   const config = baseConfig(configDir, brief.repo.base_sha);
   const report = await runGate(
     { mode: "after", repo: brief.repo, branch: brief.branch, config, hidden_tests: hidden, allow_test_change: false, localRepo: ctx.localRepo },
-    ctx.readToken,
+    ctx.githubToken,
     join(ctx.env.workDir, "gate-after"),
     ctx.sandbox,
   );

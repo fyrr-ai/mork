@@ -25,13 +25,13 @@ export type GateJob = {
   localRepo?: string;
 };
 
-export async function runGate(spec: GateJob, readToken: string, workDir: string, sandbox: Sandbox): Promise<GateReport> {
+export async function runGate(spec: GateJob, githubToken: string, workDir: string, sandbox: Sandbox): Promise<GateReport> {
   const repoDir = join(workDir, "repo");
   rmSync(repoDir, { recursive: true, force: true });
   fetchRepo({
     dir: repoDir,
     fullName: spec.repo.full_name,
-    token: readToken,
+    token: githubToken,
     baseSha: spec.repo.base_sha,
     branch: spec.mode === "after" ? spec.branch : undefined,
     localRepo: spec.localRepo,

@@ -89,6 +89,13 @@ run "webhook_permissions_and_timeout" {
     error_message = "Development must retain pinned task revisions, publish steps Lambda and use image digests."
   }
   assert {
+    condition = alltrue([for phase in ["plan", "build", "check"] :
+      one([for secret in jsondecode(aws_ecs_task_definition.phase[phase].container_definitions)[0].secrets : secret.valueFrom if secret.name == "GITHUB_TOKEN"]) == data.aws_secretsmanager_secret.this["github_token"].arn &&
+      (phase == "build" ? one([for secret in jsondecode(aws_ecs_task_definition.phase[phase].container_definitions)[1].secrets : secret.valueFrom if secret.name == "GITHUB_TOKEN"]) == data.aws_secretsmanager_secret.this["github_token"].arn : alltrue([for secret in jsondecode(aws_ecs_task_definition.phase[phase].container_definitions)[1].secrets : secret.name != "GITHUB_TOKEN"]))
+    ]) && aws_lambda_function.steps.environment[0].variables.GITHUB_TOKEN_SECRET_ID == data.aws_secretsmanager_secret.this["github_token"].arn
+    error_message = "Development uses one GitHub credential; only Build's proxy may authenticate the agent's Git requests."
+  }
+  assert {
     condition     = aws_ecr_repository.this["runner"].force_delete == false
     error_message = "Production image repositories must not be deleted with their contents."
   }

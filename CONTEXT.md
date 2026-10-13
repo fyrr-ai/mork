@@ -170,7 +170,7 @@ An LLM station's saved Pi conversation, redacted, in the Mork bucket. A station 
 _Avoid_: log, history
 
 **Egress sidecar**:
-The proxy container next to each phase container that alone holds the LLM key and, in Build, the push token, and adds them to requests for the LLM host and the task's repository.
+The proxy that authenticates a station's permitted outbound requests without exposing credentials to the agent.
 
 **Guard**:
 The Pi extension that blocks obvious misuse by the agent, such as pushing anything but its own branch. A safety net, not the security boundary.

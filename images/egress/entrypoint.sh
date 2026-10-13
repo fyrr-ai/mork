@@ -27,7 +27,7 @@ sed -e "s|@LLM_HOST@|${MORK_LLM_HOST:?MORK_LLM_HOST is required}|g" \
     -e "s|@ALLOW_WARN@|${MORK_EGRESS_WARN:-true}|g" \
     -e "s|        # @EXTRA_DOMAINS@.*|${extra%\\n}|" /etc/mork-egress/base.yaml > "$config"
 # Build is the only phase that pushes: only its sidecar holds the push token.
-if [ -n "${GITHUB_PUSH_TOKEN:-}" ]; then
+if [ -n "${GITHUB_TOKEN:-}" ]; then
   case "${MORK_REPO:-}" in
     */*) ;;
     *) echo "MORK_REPO (owner/repo) is required when the push token is set" >&2; exit 1 ;;

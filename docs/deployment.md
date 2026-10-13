@@ -1,6 +1,6 @@
 # Deployment
 
-Mork runs in one AWS account. You need a VPC with private subnets and outbound HTTPS through NAT, [mise](https://mise.jdx.dev), Git, Docker with Buildx, AWS CLI v2, GitHub CLI (`gh`), OpenSSL, and an OpenAI-compatible LLM endpoint. Mise installs the project's pinned Bun, Node, OpenTofu, jq and verification tools. Use separate GitHub machine-account tokens as described in [configuration](configuration.md#secrets).
+Mork runs in one AWS account. You need a VPC with private subnets and outbound HTTPS through NAT, [mise](https://mise.jdx.dev), Git, Docker with Buildx, AWS CLI v2, GitHub CLI (`gh`), OpenSSL, and an OpenAI-compatible LLM endpoint. Mise installs the project's pinned Bun, Node, OpenTofu, jq and verification tools. Use one GitHub machine-account token as described in [configuration](configuration.md#secrets).
 
 ## 1. Local settings
 
@@ -25,7 +25,7 @@ The frozen dependency install precedes all tests. `check` runs unit and local ru
 
 ```sh
 MORK_LLM_API_KEY=... \
-MORK_GITHUB_TOKEN=... MORK_GITHUB_READ_TOKEN=... MORK_GITHUB_PUSH_TOKEN=... \
+MORK_GITHUB_TOKEN=... \
 mise run secrets:put
 ```
 
@@ -119,3 +119,7 @@ Inspect execution history first, then the station/Lambda logs and the task's S3 
 For a PR repair, `pr.json` is the authoritative reservation with its owning execution, round, highest completed attempt and the current owner's reserved attempt ceiling. Retry a failed Start to resume the same round. Once that execution is terminal, a new authorized trigger may reserve the next round above that ceiling, so it cannot overwrite attempts whose final bookkeeping was interrupted. Do not manually delete an active reservation. Old `fix/<round>.json` objects are no longer read. Exhausted repair budgets require a person to finish the PR.
 
 For a timeout during a question, confirm the execution and pending task token before retrying or redriving. A late answer cannot reopen an expired token. For cleanup failure, confirm and stop leftover ECS tasks before removing artifacts or retained versions. Timeouts of generic container steps go through failure cleanup instead of launching an overlapping retry. Confirmed Start notifications are recorded and skipped on retry. A lost Slack response or an interrupted receipt write can still duplicate a message; notification retries preserve the execution's original error.
+
+### Migrating GitHub credentials
+
+Mork uses one GitHub token for clone, push and pull requests. Give the existing `github-token` the combined permissions listed in [configuration](configuration.md#secrets), rebuild all images and apply the updated task definitions together. The runner and Build proxy now read `GITHUB_TOKEN`. Retained executions still need their original images and secrets. Remove the old `github-read-token` and `github-push-token` secrets only after those executions and intended redrives have finished.

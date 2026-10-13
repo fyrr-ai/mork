@@ -2,6 +2,8 @@
 
 Date: 2026-10-10 · Status: Accepted
 
+The separate push credential is superseded by [ADR 13](0013-one-github-token.md).
+
 ## Context
 
 At first Build had no push access. The implementer's work left the container as a git bundle in the bucket and a separate Push step applied it to GitHub. That was one more step to retry and one more place where the tested commit and the pushed commit could differ.

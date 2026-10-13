@@ -19,11 +19,9 @@ locals {
 
   # Secrets are created out of band (scripts/aws-secrets.sh); Terraform only references them.
   secret_names = {
-    llm_api_key       = "${var.secret_prefix}/llm-api-key"
-    github_token      = "${var.secret_prefix}/github-token"
-    github_read_token = "${var.secret_prefix}/github-read-token"
-    github_push_token = "${var.secret_prefix}/github-push-token"
-    webhook_secret    = "${var.secret_prefix}/webhook-secret"
+    llm_api_key    = "${var.secret_prefix}/llm-api-key"
+    github_token   = "${var.secret_prefix}/github-token"
+    webhook_secret = "${var.secret_prefix}/webhook-secret"
   }
   source_secret_names = {
     slack_signing_secret = "${var.secret_prefix}/slack-signing-secret"

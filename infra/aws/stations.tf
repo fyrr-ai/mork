@@ -18,7 +18,7 @@ data "aws_iam_policy_document" "ecs_tasks_assume" {
   }
 }
 
-# Execution role: pulls the image and injects the secrets: the LLM key and push token (sidecar), the read token and decision keys (station).
+# The runner and Build proxy share the GitHub credential; agents receive a clean environment.
 resource "aws_iam_role" "station_exec" {
   tags               = local.tags
   name               = "${local.name}_station_exec"
@@ -37,8 +37,7 @@ data "aws_iam_policy_document" "station_exec_secrets" {
     resources = concat(
       [
         data.aws_secretsmanager_secret.this["llm_api_key"].arn,
-        data.aws_secretsmanager_secret.this["github_read_token"].arn,
-        data.aws_secretsmanager_secret.this["github_push_token"].arn,
+        data.aws_secretsmanager_secret.this["github_token"].arn,
       ],
       [for s in data.aws_secretsmanager_secret.decision : s.arn],
     )
@@ -201,7 +200,7 @@ resource "aws_ecs_task_definition" "phase" {
       [for k, v in local.decision_settings : { name = k, value = v }],
     )
     secrets = concat(
-      [{ name = "GITHUB_READ_TOKEN", valueFrom = data.aws_secretsmanager_secret.this["github_read_token"].arn }],
+      [{ name = "GITHUB_TOKEN", valueFrom = data.aws_secretsmanager_secret.this["github_token"].arn }],
       # Every phase supervises its LLM station; the runner, not Pi, holds these keys.
       [for p, s in data.aws_secretsmanager_secret.decision : { name = local.decision_env[p], valueFrom = s.arn }],
     )
@@ -225,8 +224,8 @@ resource "aws_ecs_task_definition" "phase" {
     ]
     secrets = concat(
       [{ name = "LLM_API_KEY", valueFrom = data.aws_secretsmanager_secret.this["llm_api_key"].arn }],
-      # Build only: the implementer's pushes get this narrowed token here, never in its own environment.
-      each.key == "build" ? [{ name = "GITHUB_PUSH_TOKEN", valueFrom = data.aws_secretsmanager_secret.this["github_push_token"].arn }] : [],
+      # Only Build injects GitHub authentication into the agent's proxied requests.
+      each.key == "build" ? [{ name = "GITHUB_TOKEN", valueFrom = data.aws_secretsmanager_secret.this["github_token"].arn }] : [],
     )
     mountPoints = [{ sourceVolume = "egress-ca", containerPath = "/mork-egress" }]
     healthCheck = {

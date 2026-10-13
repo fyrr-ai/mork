@@ -16,3 +16,4 @@ Decisions that are hard to reverse, surprising without their context, or the res
 | 10 | [No scope judge](0010-no-scope-judge.md) |
 | 11 | [Phases run on Fargate Spot](0011-phases-run-on-fargate-spot.md) |
 | 12 | [Fix runs after the PR](0012-fix-runs-after-the-pr.md) |
+| 13 | [One GitHub token](0013-one-github-token.md) |
