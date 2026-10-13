@@ -19,4 +19,4 @@ Whether a change works is decided by tests, run by the gate, which has no LLM:
 
 - A repository needs a test command and a way to run one hidden test file (`hidden_tests` in `.mork/config.toml`) before Mork can work on it.
 - Tasks that are supposed to change existing tests are handed over: the diff policy cannot tell a legitimate test change from a weakened one.
-- Hidden tests are only as good as the analyst; mutants measure them, but do not gate.
+- Hidden tests are only as good as the analyst.

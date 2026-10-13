@@ -27,7 +27,7 @@ mise run gate:local -- --repo /path/to/repo --base BASE_COMMIT --hidden /path/to
 mise run gate:local -- --repo /path/to/repo --base BASE_COMMIT --hidden /path/to/tests.json --branch mork/example --mode after
 ```
 
-Before mode succeeds only when setup succeeds and every supplied hidden test fails on the base commit. After mode runs repository tests, repository checks, hidden tests, diff policy and optional mutants. It succeeds when the gate passes. Output is JSON with `passed` and `gate`; exit status is 0 for a pass and 1 for a failed verdict. Invalid input or command tampering also fails the process.
+Before mode succeeds only when setup succeeds and every supplied hidden test fails on the base commit. After mode runs repository tests, repository checks, hidden tests and the diff policy. It succeeds when the gate passes. Output is JSON with `passed` and `gate`; exit status is 0 for a pass and 1 for a failed verdict. Invalid input or command tampering also fails the process.
 
 Commit the branch before running after mode. Uncommitted edits are not tested. The output includes `head_sha` so you can identify the commit that was checked. Setup may install dependencies and therefore use the network.
 

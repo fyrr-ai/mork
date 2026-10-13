@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mork architecture overview</title>
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;600&amp;family=Geist+Mono&amp;family=Instrument+Serif&amp;display=swap" rel="stylesheet">
+  <style>
+    html, body { margin: 0; background: #000; color: #f5f5f5; }
+    .diagram-container { width: 100%; overflow-x: auto; }
+    svg { width: 100%; min-width: 960px; display: block; }
+    .heading { font: 40px 'Instrument Serif', Georgia, serif; fill: #f5f5f5; }
+    .name { font: 600 22px 'Geist', Arial, sans-serif; fill: #f5f5f5; }
+    .note { font: 16px 'Geist', Arial, sans-serif; fill: #bfc0c0; }
+    .label { font: 12px 'Geist Mono', monospace; fill: #bfc0c0; letter-spacing: 1px; }
+    .box { fill: #101116; stroke: #41434a; stroke-width: 1; }
+    .focus { fill: #19120f; stroke: #f08a59; stroke-width: 1; }
+    .zone { fill: #09090b; stroke: #41434a; stroke-width: 1; }
+    .edge { fill: none; stroke: #949eb2; stroke-width: 1.5; marker-end: url(#architecture-arrow); }
+    @media print { .diagram-container { overflow-x: visible; } svg { min-width: 0; } }
+  </style>
+</head>
+<body>
+  <!-- High-level overview. Detailed IAM, egress, approvals and secret paths are in architecture.md. -->
+  <div class="diagram-container">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 640" role="img" aria-labelledby="architecture-title architecture-desc">
+      <title id="architecture-title">Your workflows, running in your AWS account</title>
+      <desc id="architecture-desc">Slack sends requests to routing and workflow orchestration. The workflow starts fresh execution containers and delivers results to Slack, GitHub or Jira. Containers use the chosen model provider and save outputs and logs. Routing and development decisions also call configured decision providers.</desc>
+      <defs>
+        <marker id="architecture-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8" fill="#949eb2"/></marker>
+      </defs>
+      <rect width="960" height="640" fill="#000"/>
+      <text class="heading" x="48" y="72">Your workflows, in your AWS account</text>
+      <text class="note" x="48" y="108">Compute starts for each step. Your team chooses the tools and models.</text>
+      <rect class="zone" x="280" y="152" width="456" height="408" rx="12"/>
+      <text class="label" x="304" y="180">MORK · YOUR AWS ACCOUNT</text>
+      <path class="edge" d="M232 250 H312"/>
+      <path class="edge" d="M392 288 V320"/>
+      <path class="edge" d="M480 364 H528"/>
+      <path class="edge" d="M616 408 V440"/>
+      <path class="edge" d="M352 408 V468 Q352 476 344 476 H232"/>
+      <path class="edge" d="M704 364 H776"/>
+      <path class="edge" d="M480 248 H752 Q760 248 760 256 V316 Q760 324 768 324 H776"/>
+      <rect class="box" x="48" y="208" width="184" height="84" rx="8"/>
+      <text class="name" x="64" y="248">Slack</text>
+      <text class="note" x="64" y="276">Team requests</text>
+      <rect class="box" x="312" y="208" width="168" height="80" rx="8"/>
+      <text class="name" x="336" y="244">Routing</text>
+      <text class="note" x="336" y="272">Lambda + Jev</text>
+      <rect class="focus" x="312" y="320" width="168" height="88" rx="8"/>
+      <text class="name" x="336" y="356">Workflow</text>
+      <text class="note" x="336" y="388">Step Functions</text>
+      <rect class="box" x="528" y="320" width="176" height="88" rx="8"/>
+      <text class="name" x="544" y="356">Run a step</text>
+      <text class="note" x="544" y="388">Fargate task</text>
+      <rect class="box" x="528" y="440" width="176" height="88" rx="8"/>
+      <text class="name" x="544" y="476">Outputs</text>
+      <text class="note" x="544" y="508">S3 + DynamoDB</text>
+      <rect class="box" x="776" y="296" width="136" height="112" rx="8"/>
+      <text class="name" x="796" y="336">Models</text>
+      <text class="note" x="796" y="368">Your chosen</text>
+      <text class="note" x="796" y="390">providers</text>
+      <rect class="box" x="48" y="432" width="184" height="100" rx="8"/>
+      <text class="name" x="64" y="470">Results</text>
+      <text class="note" x="64" y="502">Slack, GitHub, Jira</text>
+      <text class="note" x="48" y="608">Human approvals pause the workflow. Draft pull requests stay under human review.</text>
+    </svg>
+  </div>
+</body>
+</html>

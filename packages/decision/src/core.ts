@@ -120,6 +120,10 @@ export class DecisionPanel {
     this.#primary = primary ?? providers[0]?.name;
   }
 
+  get enabled(): boolean {
+    return this.#providers.length > 0;
+  }
+
   async decide(state: unknown, questions: Record<string, Question>): Promise<Verdict> {
     const results = await Promise.all(
       this.#providers.map(async (provider) => {

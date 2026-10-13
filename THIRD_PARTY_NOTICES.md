@@ -21,9 +21,9 @@ covers SDK packages whose npm archive omits its own license text.
 
 ## Research acknowledgements
 
-[docs/research/sources.md](docs/research/sources.md) records the projects consulted
-for the design. Mork's code names the Foreman supervision pattern and the
-jev-proof evidence pattern. The available history does not identify exact
+The table below records projects consulted for the design. Mork's code names
+the Foreman supervision pattern and the jev-proof evidence pattern. The available
+history does not identify exact
 copied portions. These acknowledgements and retained texts do not assert that
 any particular Mork file was copied from those projects.
 

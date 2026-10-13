@@ -30,9 +30,20 @@ describe("supervisor", () => {
     expect(state.recent_tool_calls[0]).toContain("npm test");
     expect(state.diff_stat).toContain("a.mjs");
   });
-  test("an undecided model never touches the run", async () => {
+  test("without a model supervision does not collect evidence or write records", async () => {
     const { done, hooks: h } = hooks();
+    h.diffStat = () => {
+      throw new Error("No model must not spawn git");
+    };
     const s = new Supervisor(new DecisionPanel([]), { title: "t" }, h);
+    await s.check(0);
+    expect(done).toEqual([]);
+    expect(s.records).toEqual([]);
+  });
+  test("a configured model that cannot decide still records its safe default", async () => {
+    const { done, hooks: h } = hooks();
+    const unavailable: Decider = { name: "fixed", decide: async () => ({ worker_stuck: { type: "undecided", reason: "offline" } }) };
+    const s = new Supervisor(new DecisionPanel([unavailable]), { title: "t" }, h);
     await s.check(0);
     expect(done).toEqual([]);
     expect(s.records[0]?.action).toEqual({ action: "continue" });

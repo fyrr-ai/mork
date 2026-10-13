@@ -2,6 +2,7 @@
 // answer. Step Functions holds the run on a task token; the token is kept in
 // the Mork bucket under the thread, so the answer can find its way back.
 import { createHash } from "node:crypto";
+import { Answer } from "@mork/contracts";
 import { StepName } from "@mork/contracts/workflow";
 import { z } from "zod";
 import type { SlackRef } from "./types.ts";
@@ -46,9 +47,7 @@ export const answerCompletionKey = (ref: SlackRef, taskToken: string) => answerC
 export const AnswerCompletion = z.object({ event_id: z.string(), at: z.string(), by: z.string() });
 
 /** One entry of `${prefix}/answers.json`, which every later prompt includes. */
-export const AnswerRecord = z.object({
-  question: z.string(),
-  answer: z.string(),
+export const AnswerRecord = Answer.extend({
   by: z.string(),
   resume: StepName,
   at: z.string(),

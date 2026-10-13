@@ -272,7 +272,7 @@ if (process.argv[2] === "lambda") {
     ["fd", ["--version"]],
   ])
     assert.equal(exec(command, args, { uid: 10001, gid: 10001 }).code, 0, command);
-  // Exercise the bundled gate and its separate mutation CLI under the real sandbox uid.
+  // Exercise the bundled gate under the real sandbox uid.
   const source = "/work/image-source";
   const work = "/work/image-gate";
   mkdirSync(source);
@@ -315,8 +315,7 @@ if (process.argv[2] === "lambda") {
   assert.equal(result.setup.exit_code, 0);
   assert.equal(result.repo_tests.exit_code, 0);
   assert.equal(result.hidden[0].passed, true);
-  assert.equal(result.mutation.killed, 1);
-  console.log("Bundled gate, checkout protection and mutation CLI passed as sandbox");
+  console.log("Bundled gate and checkout protection passed as sandbox");
   assert.equal(existsSync("/usr/bin/apt"), false);
   assert.equal(existsSync("/usr/bin/dpkg"), false);
   assert.equal(existsSync("/root/.npm"), false);

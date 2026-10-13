@@ -40,7 +40,6 @@ export type TimelineItem = DecisionItem | OutcomeItem | LinkItem;
 export interface TimelineStore {
   put(item: TimelineItem): Promise<void>;
   get(pk: string, sk: string): Promise<TimelineItem | undefined>;
-  query(pk: string): Promise<TimelineItem[]>;
   scan(): AsyncIterable<TimelineItem>;
 }
 
@@ -142,9 +141,6 @@ export class MemoryStore implements TimelineStore {
   }
   async get(pk: string, sk: string): Promise<TimelineItem | undefined> {
     return this.items.get(`${pk}\u0000${sk}`);
-  }
-  async query(pk: string): Promise<TimelineItem[]> {
-    return [...this.items.values()].filter((i) => i.pk === pk).sort((a, b) => a.sk.localeCompare(b.sk));
   }
   async *scan(): AsyncIterable<TimelineItem> {
     yield* this.items.values();

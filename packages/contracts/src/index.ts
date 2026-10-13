@@ -145,16 +145,6 @@ export const GateReport = z.object({
       removed_lines: z.number().int(),
     })
     .optional(),
-  /** After mode, when the hidden tests pass: how many deliberate bugs on the added lines they catch. A metric, not a gate. */
-  mutation: z
-    .object({
-      mutants: z.array(z.object({ where: z.string(), change: z.string(), killed: z.boolean() })),
-      killed: z.number().int(),
-      total: z.number().int(),
-      skipped: z.number().int(),
-      seconds: z.number(),
-    })
-    .optional(),
 });
 export type GateReport = z.infer<typeof GateReport>;
 

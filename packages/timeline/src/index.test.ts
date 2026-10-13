@@ -18,7 +18,7 @@ describe("timeline", () => {
     expect(await recordOutcome(store, { repo: "acme/widgets", pr: 6, delivery: "d1", outcome: "merged" })).toBe(true);
     await recordOutcome(store, { repo: "acme/widgets", pr: 6, delivery: "d1", outcome: "merged" });
     expect(await recordOutcome(store, { repo: "acme/widgets", pr: 99, delivery: "d2", outcome: "merged" })).toBe(false);
-    const items = await store.query(`task#${task}`);
+    const items = [...store.items.values()].filter((item) => item.pk === `task#${task}`);
     expect(items.filter((i) => i.kind === "outcome")).toHaveLength(1);
   });
 

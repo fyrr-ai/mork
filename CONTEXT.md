@@ -74,7 +74,7 @@ A test the analyst writes for a testable acceptance criterion. It must fail on t
 _Avoid_: acceptance test, secret test
 
 **Gate before / Gate after**:
-The gate in Plan, which proves the hidden tests fail on the base commit, and in Check, which clones the pushed branch and runs setup, tests, repository checks, hidden tests, the diff policy and mutants.
+The gate in Plan, which proves the hidden tests fail on the base commit, and in Check, which clones the pushed branch and runs setup, tests, repository checks, hidden tests and the diff policy.
 
 **Diff policy**:
 Rules over the diff against the base commit: changing existing tests, adding skip markers or touching platform paths rejects the attempt; some changes only raise the recommendation.
@@ -84,9 +84,6 @@ A path whose change raises the recommendation to takeover; set per repository in
 
 **Test path**:
 A path prefix whose existing files count as tests for the diff policy (`test_paths`, default `test/`, `tests/`).
-
-**Mutant**:
-A deliberate small bug in a line the change added, run against the hidden tests only. The share caught is a metric of the hidden tests, not a gate.
 
 **Repository checks**:
 The `checks` commands in `.mork/config.toml` (lint, typecheck…), run by `verify` and by the gate after `test`. Always say "repository checks", never "checks" alone.

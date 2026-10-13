@@ -1,9 +1,12 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { type AnalystOutput, type GateReport, keys, MAX_BUILD_ATTEMPTS, type ReviewerOutput } from "@mork/contracts";
 import { DEFAULT_DEVELOPMENT_POLICY } from "@mork/contracts/development";
 import { type Answer, type Decider, DecisionPanel } from "@mork/decision";
 import type { ReportEvent } from "@mork/sources";
-import type { Store } from "@mork/store";
+import { LocalStore } from "@mork/store/local";
 import { linkPr, MemoryStore as TimelineMemory } from "@mork/timeline";
 import { type FixTrigger, fixTrigger, MARKER, releasePr, savePr } from "./fix.ts";
 import { ask, checksTable, type Deps, decide, type FlowState, handover, handoverReason, start, startedBy } from "./flow.ts";
@@ -92,40 +95,15 @@ describe("recommendation", () => {
   });
 });
 
-class MemoryStore {
-  readonly objects = new Map<string, string>();
-  async put(key: string, body: string | Uint8Array): Promise<string> {
-    this.objects.set(key, typeof body === "string" ? body : Buffer.from(body).toString());
-    return key;
-  }
-  putJson(key: string, value: unknown) {
-    return this.put(key, JSON.stringify(value));
-  }
-  async updateJson(key: string, update: (current: unknown | undefined) => unknown) {
-    const body = this.objects.get(key);
-    const next = update(body === undefined ? undefined : JSON.parse(body));
-    this.objects.set(key, JSON.stringify(next));
-    return key;
-  }
-  async claim(key: string, value: unknown) {
-    if (this.objects.has(key)) return false;
-    this.objects.set(key, JSON.stringify(value));
-    return true;
-  }
-  async text(key: string) {
-    const value = this.objects.get(key);
-    if (value === undefined) throw Object.assign(new Error(`no ${key}`), { name: "NoSuchKey" });
-    return value;
-  }
-  async json(key: string) {
-    return JSON.parse(await this.text(key));
-  }
-  async bytes(key: string) {
-    return Buffer.from(await this.text(key));
-  }
-}
-
-const memory = () => new MemoryStore();
+const directories: string[] = [];
+afterEach(() => {
+  for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true });
+});
+const memory = () => {
+  const directory = mkdtempSync(join(tmpdir(), "mork-steps-"));
+  directories.push(directory);
+  return new LocalStore(directory);
+};
 const calls: string[] = [];
 const github = {
   createDraftPr: async () => {
@@ -155,9 +133,9 @@ const headOf = new Map<string, string>();
 const events: ReportEvent[] = [];
 const asked: { question: string; resume: string; prefix: string; taskToken: string }[] = [];
 const told: ReportEvent[] = [];
-const makeDeps = (store: MemoryStore, panel: DecisionPanel = none): Deps => ({
+const makeDeps = (store: LocalStore, panel: DecisionPanel = none): Deps => ({
   github,
-  store: store as unknown as Store,
+  store,
   panel,
   timeline,
   llm: async () => "- What exactly should get better?",
@@ -197,7 +175,7 @@ test("configured development limits stop a failed first build instead of using t
 });
 const impl = { summary: "adds add()", changes: [{ path: "math.mjs", change: "add" }], verification: [], deviations: [] };
 
-async function checkedStore(passed: boolean): Promise<MemoryStore> {
+async function checkedStore(passed: boolean): Promise<LocalStore> {
   const store = memory();
   await store.putJson(keys.issue(prefix), { ref: "#1", title: "Add add()", body: null });
   await store.putJson(keys.plan(prefix), publicPlan);
@@ -245,7 +223,7 @@ describe("flow", () => {
     });
     expect(next).toMatchObject({ next: "done", outcome: { level: "quick", url: "https://github.com/o/r/pull/7" } });
     expect(calls).toEqual(["pr", "label:review:quick", "label:mork:done", "unlabel:mork:working", "comment"]);
-    const items = await timeline.query("task#o/r#1/abc");
+    const items = [...timeline.items.values()].filter((item) => item.pk === "task#o/r#1/abc").sort((a, b) => a.sk.localeCompare(b.sk));
     expect(items.map((i) => i.sk)).toEqual(["decision#criteria#check-1", "decision#recommendation#check-1", "pr"]);
     expect(await timeline.get("pr#o/r#7", "task")).toMatchObject({ task: "o/r#1/abc" });
   });
@@ -414,7 +392,7 @@ describe("questions", () => {
     const store = memory();
     const next = await start(makeDeps(store, unclear), { ...slackTask.origin.start, execution: "slack-Ev0QUESTION1" });
     expect(next).toMatchObject({ next: "ask", ask: { resume: "plan" } });
-    expect(store.objects.has(keys.issue(next.brief.prefix))).toBe(true);
+    expect(await store.json(keys.issue(next.brief.prefix))).toMatchObject({ title: "Add add()" });
   });
 });
 

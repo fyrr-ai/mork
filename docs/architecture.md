@@ -54,8 +54,7 @@ Whether the code works is decided by tests, not by a model.
 4. **Gate after** (no LLM) clones the pushed branch fresh and runs, as an unprivileged user:
    - the repository's setup, tests and repository checks (`checks`),
    - the hidden tests, written by root only after the repository's own commands ran, read-only, before each run,
-   - the **diff policy**,
-   - **mutants**: up to five deterministic mutations of the added code lines (`===` ↔ `!==`, `<` ↔ `>=`, `&&` ↔ `||`, `true` ↔ `false`, `n` → `n+1`), each run against the hidden tests only (30 s each, 60 s in total). The result is a metric in the PR, not a gate.
+   - the **diff policy**.
 
    **Why a diff policy when there are hidden tests.** Hidden tests check only the criteria the analyst wrote. They do not notice an implementer that breaks something else and then "fixes" the repository's own tests. Agents do this. The diff policy compares the branch with the base commit and:
    - **rejects an attempt** that changes or deletes a file under `test_paths` (default `test/`, `tests/`); new test files are fine,
@@ -83,7 +82,7 @@ Whether the code works is decided by tests, not by a model.
 
 Inside a container the runner (root) holds the task token, AWS credentials, the read token and the decision-model key. Pi runs as the user `agent` with a clean environment and no keys. The gate runs repository commands as the user `sandbox` in its own fresh clone. Tracked files, Git metadata and their parent entries remain root-owned; sticky directories allow generated outputs without allowing replacement of tracked entries. After each command the gate checks tracked bytes and Git metadata against its initial snapshot. Root opens every path component with a pinned directory descriptor and never follows an agent-owned symlink. Between steps the container kills every process of the previous user.
 
-**Analyst quality metric:** the share of hidden tests that fail on the base commit and pass after the change, and the share of mutants they catch.
+**Analyst quality metric:** the share of hidden tests that fail on the base commit and pass after the change.
 
 ## After the PR
 

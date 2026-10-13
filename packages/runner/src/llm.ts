@@ -169,7 +169,7 @@ export async function runLlmStation(spec: LlmJob, env: RunnerEnv, repoDir: strin
     },
   );
   pi.onEvent((event) => supervisor.observe(event));
-  const ticker = setInterval(() => void supervisor.check().catch(() => undefined), spec.supervise.everyMs);
+  const ticker = spec.supervise.panel.enabled ? setInterval(() => void supervisor.check().catch(() => undefined), spec.supervise.everyMs) : undefined;
 
   const parseOutput =
     spec.parseOutput ??

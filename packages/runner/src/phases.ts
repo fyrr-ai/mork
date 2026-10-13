@@ -27,7 +27,7 @@ import {
   type RunResult,
   StationOutput,
 } from "@mork/contracts";
-import { DEFAULT_DEVELOPMENT, type DevelopmentStep } from "@mork/contracts/development";
+import type { DevelopmentStep } from "@mork/contracts/development";
 import type { DecisionPanel } from "@mork/decision";
 import type { Reporter } from "@mork/sources";
 import type { Store } from "@mork/store";
@@ -46,7 +46,7 @@ import type { SupervisionRecord } from "./supervisor.ts";
 export type PhaseContext = {
   brief: Brief;
   /** Trusted step configuration; local/default callers use the same shipped definition. */
-  step?: DevelopmentStep;
+  step: DevelopmentStep;
   store: Store;
   env: RunnerEnv;
   sandbox: Sandbox;
@@ -124,7 +124,6 @@ async function llm(
   label: string,
   station: LlmStation,
   repoDir: string,
-  instructions: string,
   message: string,
   stats: Stats,
   records: SupervisionRecord[],
@@ -156,9 +155,9 @@ async function llm(
   const outcome = await runLlmStation(
     {
       station,
-      instructions: ctx.step?.instructions ?? instructions,
-      tools: ctx.step?.tools,
-      extensions: ctx.step?.extensions,
+      instructions: ctx.step.instructions,
+      tools: ctx.step.tools,
+      extensions: ctx.step.extensions,
       message: !resumed
         ? message + prompts.clarifications(answers)
         : pending.interrupted
@@ -169,7 +168,7 @@ async function llm(
       log: ctx.logger.with({ "mork.station": station }),
       ask: ctx.brief.report !== undefined,
       output_schema: z.toJSONSchema(StationOutput[station]) as Record<string, unknown>,
-      model: ctx.step?.model ?? ctx.model,
+      model: ctx.step.model ?? ctx.model,
       repo: ctx.brief.repo,
       push,
       verify,
@@ -196,23 +195,13 @@ async function planWith(ctx: PhaseContext, records: SupervisionRecord[]): Promis
   const issue = IssueDoc.parse(await store.json(keys.issue(brief.prefix)));
   const stats: Stats = [];
   let feedback: string | undefined;
-  for (let attempt = 1; attempt <= (ctx.step ?? DEFAULT_DEVELOPMENT.steps[0]).attempts; attempt++) {
+  for (let attempt = 1; attempt <= ctx.step.attempts; attempt++) {
     const repoDir = checkout(ctx, `analyst-${attempt}`, false);
     const config = baseConfig(repoDir, brief.repo.base_sha);
-    const outcome = await llm(
-      ctx,
-      `plan-${attempt}-analyst`,
-      "analyst",
-      repoDir,
-      DEFAULT_DEVELOPMENT.steps[0].instructions,
-      prompts.analystMessage(issue, config, feedback),
-      stats,
-      records,
-      {
-        title: issue.title,
-        analyst_attempt: attempt,
-      },
-    );
+    const outcome = await llm(ctx, `plan-${attempt}-analyst`, "analyst", repoDir, prompts.analystMessage(issue, config, feedback), stats, records, {
+      title: issue.title,
+      analyst_attempt: attempt,
+    });
     if (outcome.question) return { ok: true, question: outcome.question, resume: "plan", stats };
     const parsed = outcome.ok ? AnalystOutput.safeParse(outcome.output) : undefined;
     if (!parsed?.success) {
@@ -279,7 +268,6 @@ async function buildWith(ctx: PhaseContext, records: SupervisionRecord[]): Promi
     `build-${brief.attempt}-implementer`,
     "implementer",
     repoDir,
-    DEFAULT_DEVELOPMENT.steps[1].instructions,
     prompts.implementerMessage(issue, thePlan, config, brief.branch, feedback),
     stats,
     records,
@@ -367,7 +355,6 @@ async function checkWith(ctx: PhaseContext, records: SupervisionRecord[]): Promi
     `check-${brief.attempt}-reviewer`,
     "reviewer",
     repoDir,
-    DEFAULT_DEVELOPMENT.steps[2].instructions,
     prompts.reviewerMessage(issue, thePlan, brief.repo.base_sha, report, impl),
     stats,
     records,

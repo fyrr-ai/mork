@@ -1,7 +1,7 @@
 // Entry point of the station image: runs the phase its task definition names
 // (plan, build or check) for the brief Step Functions passed in, then reports
 // back with the task token.
-import { DevelopmentStep } from "@mork/contracts/development";
+import { DEFAULT_DEVELOPMENT, DevelopmentStep } from "@mork/contracts/development";
 import { panelFromEnv } from "@mork/decision";
 import { type Reporter, slackThreadReporterFromEnv } from "@mork/sources";
 import { Store } from "@mork/store";
@@ -82,7 +82,9 @@ await reportTo(token, async () => {
 
   const ctx: PhaseContext = {
     brief,
-    step: env.MORK_DEVELOPMENT_STEP ? DevelopmentStep.parse(JSON.parse(env.MORK_DEVELOPMENT_STEP)) : undefined,
+    step: env.MORK_DEVELOPMENT_STEP
+      ? DevelopmentStep.parse(JSON.parse(env.MORK_DEVELOPMENT_STEP))
+      : { plan: DEFAULT_DEVELOPMENT.steps[0], build: DEFAULT_DEVELOPMENT.steps[1], check: DEFAULT_DEVELOPMENT.steps[2] }[phase],
     store: Store.fromEnv(env),
     readToken: requiredEnv(env, "GITHUB_READ_TOKEN"),
     model: requiredEnv(env, "MORK_MODEL"),
@@ -108,7 +110,7 @@ await reportTo(token, async () => {
     },
   };
 
-  if (ctx.step && ctx.step.kind !== phase) throw new Error("Configured development step does not match the task phase");
+  if (ctx.step.kind !== phase) throw new Error("Configured development step does not match the task phase");
   if (ctx.env.egress) Object.assign(ctx.sandbox.env, egressEnv(ctx.env.egress.proxy, caBundle(ctx.env)));
 
   const phases = { plan, build, check };
