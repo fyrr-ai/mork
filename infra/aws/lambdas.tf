@@ -91,7 +91,7 @@ data "aws_iam_policy_document" "steps" {
     sid     = "ReadStepSecrets"
     actions = ["secretsmanager:GetSecretValue"]
     resources = concat(
-      [data.aws_secretsmanager_secret.this["github_token"].arn, data.aws_secretsmanager_secret.this["llm_api_key"].arn],
+      [data.aws_secretsmanager_secret.this[local.github_secret_key].arn, data.aws_secretsmanager_secret.this["llm_api_key"].arn],
       [for s in data.aws_secretsmanager_secret.decision : s.arn],
     )
   }
@@ -114,7 +114,7 @@ data "aws_iam_policy_document" "intake" {
     actions = ["secretsmanager:GetSecretValue"]
     resources = [
       data.aws_secretsmanager_secret.this["webhook_secret"].arn,
-      data.aws_secretsmanager_secret.this["github_token"].arn,
+      data.aws_secretsmanager_secret.this[local.github_secret_key].arn,
     ]
   }
   statement {
@@ -160,17 +160,17 @@ resource "aws_lambda_function" "steps" {
 
   environment {
     variables = merge({
-      MORK_BUCKET               = aws_s3_bucket.mork.bucket
-      MORK_TIMELINE_TABLE       = aws_dynamodb_table.timeline.name
-      SLACK_BOT_TOKEN_SECRET_ID = local.source_secret_names.slack_bot_token
-      JIRA_API_TOKEN_SECRET_ID  = local.source_secret_names.jira_api_token
-      JIRA_BASE_URL             = var.jira_base_url
-      JIRA_EMAIL                = var.jira_email
-      MORK_MODEL                = var.model
-      LLM_BASE_URL              = var.llm_base_url
-      ECS_CLUSTER               = aws_ecs_cluster.this.name
-      GITHUB_TOKEN_SECRET_ID    = data.aws_secretsmanager_secret.this["github_token"].arn
-      LLM_API_KEY_SECRET_ID     = data.aws_secretsmanager_secret.this["llm_api_key"].arn
+      MORK_BUCKET                     = aws_s3_bucket.mork.bucket
+      MORK_TIMELINE_TABLE             = aws_dynamodb_table.timeline.name
+      SLACK_BOT_TOKEN_SECRET_ID       = local.source_secret_names.slack_bot_token
+      JIRA_API_TOKEN_SECRET_ID        = local.source_secret_names.jira_api_token
+      JIRA_BASE_URL                   = var.jira_base_url
+      JIRA_EMAIL                      = var.jira_email
+      MORK_MODEL                      = var.model
+      LLM_BASE_URL                    = var.llm_base_url
+      ECS_CLUSTER                     = aws_ecs_cluster.this.name
+      "${local.github_env}_SECRET_ID" = data.aws_secretsmanager_secret.this[local.github_secret_key].arn
+      LLM_API_KEY_SECRET_ID           = data.aws_secretsmanager_secret.this["llm_api_key"].arn
       }, var.grafana_url == null ? {} : { MORK_GRAFANA_URL = var.grafana_url, MORK_GRAFANA_LOKI_UID = var.grafana_loki_uid },
       local.decision_settings,
     { for p, s in data.aws_secretsmanager_secret.decision : "${local.decision_env[p]}_SECRET_ID" => s.arn })
@@ -203,11 +203,11 @@ resource "aws_lambda_function" "intake" {
 
   environment {
     variables = {
-      STATE_MACHINE_ARN        = aws_sfn_state_machine.this.arn
-      MORK_TIMELINE_TABLE      = aws_dynamodb_table.timeline.name
-      REPO_ALLOWLIST           = join(",", var.repo_allowlist)
-      GITHUB_TOKEN_SECRET_ID   = data.aws_secretsmanager_secret.this["github_token"].arn
-      WEBHOOK_SECRET_SECRET_ID = data.aws_secretsmanager_secret.this["webhook_secret"].arn
+      STATE_MACHINE_ARN               = aws_sfn_state_machine.this.arn
+      MORK_TIMELINE_TABLE             = aws_dynamodb_table.timeline.name
+      REPO_ALLOWLIST                  = join(",", var.repo_allowlist)
+      "${local.github_env}_SECRET_ID" = data.aws_secretsmanager_secret.this[local.github_secret_key].arn
+      WEBHOOK_SECRET_SECRET_ID        = data.aws_secretsmanager_secret.this["webhook_secret"].arn
     }
   }
 

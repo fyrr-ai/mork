@@ -2,7 +2,7 @@
 // issues and pull requests; the runner shares the GitHub token, and Build pushes its
 // branch through the egress sidecar.
 
-export type TokenSource = () => Promise<string>;
+import type { GitHubTokenSource } from "@mork/sources";
 
 export class GitHubError extends Error {
   readonly status: number;
@@ -14,9 +14,9 @@ export class GitHubError extends Error {
 }
 
 export class GitHub {
-  readonly #token: TokenSource;
+  readonly #token: GitHubTokenSource;
 
-  constructor(token: TokenSource) {
+  constructor(token: GitHubTokenSource) {
     this.#token = token;
   }
 
@@ -24,7 +24,7 @@ export class GitHub {
     const response = await fetch(`https://api.github.com${path}`, {
       method,
       headers: {
-        authorization: `Bearer ${await this.#token()}`,
+        authorization: `Bearer ${await this.#token(this.#repo(path))}`,
         accept: "application/vnd.github+json",
         "x-github-api-version": "2022-11-28",
         "user-agent": "mork",
@@ -34,6 +34,12 @@ export class GitHub {
     });
     if (!response.ok) throw new GitHubError(response.status, `GitHub ${method} ${path}: ${response.status} ${(await response.text()).slice(0, 500)}`);
     return (response.status === 204 ? undefined : await response.json()) as T;
+  }
+
+  #repo(path: string): string {
+    const repo = /^\/repos\/([^/]+\/[^/?]+)/.exec(path)?.[1];
+    if (!repo) throw new Error("GitHub API requests must name a repository");
+    return repo;
   }
 
   repo(full: string) {
@@ -132,7 +138,7 @@ export class GitHub {
   /** Last lines of a GitHub Actions job log (the API redirects to a short-lived URL). */
   async jobLogTail(full: string, jobId: number, lines = 120): Promise<string> {
     const response = await fetch(`https://api.github.com/repos/${full}/actions/jobs/${jobId}/logs`, {
-      headers: { authorization: `Bearer ${await this.#token()}`, accept: "application/vnd.github+json", "user-agent": "mork" },
+      headers: { authorization: `Bearer ${await this.#token(full)}`, accept: "application/vnd.github+json", "user-agent": "mork" },
     });
     if (!response.ok) return "";
     return (await response.text()).split("\n").slice(-lines).join("\n");

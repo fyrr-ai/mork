@@ -37,6 +37,43 @@ test ! -e /sbin/apk
 test -s /usr/share/licenses/mork/NOTICE
 test -s /usr/share/licenses/mork/licenses/iron-proxy.LICENSE'
 echo "egress entrypoint, CA, config and health endpoint passed"
+# The final proxy must pick up a renewed token without restarting. Loopback is
+# enabled only in this isolated test image; production retains the deny list.
+docker run --rm --network none --add-host github.com:127.0.0.1 \
+  -e MORK_LLM_HOST=llm.example.test -e MORK_REPO=cgi-bin/repo \
+  -e GITHUB_TOKEN_FILE=/mork-egress/github-token \
+  --entrypoint sh mork-egress:dev -c '
+set -eu
+sed -i "/^proxy:$/a\\  upstream_deny_cidrs: []" /etc/mork-egress/base.yaml
+mkdir -p /tmp/www/cgi-bin /mork-egress
+printf first-token > /mork-egress/github-token
+chmod 600 /mork-egress/github-token
+printf "/cgi-bin:x-access-token:first-token\\n" > /tmp/www/httpd.conf
+printf "#!/bin/sh\\nprintf '\''Content-Type: text/plain\\n\\n'\''\\nprintf authenticated\\n" > /tmp/www/cgi-bin/repo.git
+chmod 755 /tmp/www/cgi-bin/repo.git
+cp /tmp/www/cgi-bin/repo.git /tmp/www/cgi-bin/other.git
+httpd -p 8081 -h /tmp/www
+/usr/local/bin/mork-egress >/tmp/proxy.log 2>&1 & pid=$!
+trap '\''kill "$pid" 2>/dev/null || true'\'' EXIT
+attempt=0
+until wget -qO- http://127.0.0.1:9090/healthz >/dev/null 2>&1; do
+  if ! kill -0 "$pid" 2>/dev/null || [ "$attempt" -ge 50 ]; then cat /tmp/proxy.log; exit 1; fi
+  attempt=$((attempt + 1)); sleep 0.1
+done
+fetch() { http_proxy=http://127.0.0.1:18080 wget -qO- "http://github.com:8081/cgi-bin/$1.git/test"; }
+test "$(fetch repo)" = authenticated
+if fetch other >/dev/null 2>&1; then echo "Proxy authenticated another repository" >&2; exit 1; fi
+printf renewed-token > /mork-egress/github-token.tmp
+chmod 600 /mork-egress/github-token.tmp
+mv /mork-egress/github-token.tmp /mork-egress/github-token
+printf "/cgi-bin:x-access-token:renewed-token\\n" > /tmp/www/httpd.conf
+killall httpd
+httpd -p 8081 -h /tmp/www
+sleep 31
+test "$(fetch repo)" = authenticated
+kill -0 "$pid"
+test "$(stat -c %a /mork-egress/github-token)" = 600'
+echo "running egress proxy accepted rotated credentials and rejected another repository"
 # Reject host configuration that could alter the generated proxy YAML.
 if docker run --rm --network none -e MORK_LLM_HOST=llm.example.test \
   -e MORK_EGRESS_ALLOW=https://invalid.example.test mork-egress:dev >/dev/null 2>&1; then

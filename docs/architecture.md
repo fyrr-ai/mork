@@ -109,7 +109,7 @@ Phases run on Fargate Spot. A reclaimed container gets SIGTERM two minutes ahead
 ## Principles
 
 - **Authorization lives in code, not in the model.** The decision model can only send a task to a person, never allow more. A draft PR is the ceiling; merging is not among the agent's tools.
-- **The agent holds no key.** Each phase container runs next to an egress sidecar ([iron-proxy](https://github.com/ironsh/iron-proxy), Apache-2.0). The sidecar holds the LLM key and, in Build, the shared GitHub token. It adds them as the `Authorization` header to requests for the LLM host and for the task's repository on `github.com`. The agent's processes go through it (`HTTPS_PROXY`, `NODE_USE_ENV_PROXY` for Pi) and trust its CA, which the sidecar creates per task.
+- **The agent holds no key.** Each phase container runs next to an egress sidecar ([iron-proxy](https://github.com/ironsh/iron-proxy), Apache-2.0). The sidecar holds the LLM key and, in Build, a GitHub token. It adds them as the `Authorization` header to requests for the LLM host and for the task's repository on `github.com`. The agent's processes go through it (`HTTPS_PROXY`, `NODE_USE_ENV_PROXY` for Pi) and trust its CA, which the sidecar creates per task. In GitHub App mode, trusted runners and Lambdas hold the App private key and mint tokens scoped to the task repository. Build maintains a root-only token file that the proxy refreshes while the phase runs; the proxy never holds the App private key.
 - **The agent pushes only its own branch.** The shared GitHub token is restricted to allowlisted repositories and has no Workflows write permission. The guard extension blocks obvious misuse; repository rulesets keep the default branch PR-only with a fresh approval and limit new branches to `mork/*`. The gate tests the pushed commit, and Decide opens the PR only for the commit the gate checked.
 - **Trust is decided at intake.** Who may start a task is decided on the signed webhook, never derived from text a model can influence.
 - **Independent verification.** With one LLM, independence comes from the LLM-free gate, the hidden tests, the reviewer's clean context and a different model for decisions.
@@ -123,5 +123,4 @@ See [../SECURITY.md](../SECURITY.md) for the trust boundaries and the known gaps
 - Reviewer assignment from CODEOWNERS; learning review rules from PR feedback.
 - Detecting at Plan time that a task requires changing existing tests.
 - Dependency caches or prebuilt images for faster starts.
-- GitHub App authentication (today: fine-grained tokens).
 - One Slack app routing to several deployments (teams).

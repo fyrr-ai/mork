@@ -106,6 +106,30 @@ run "webhook_permissions_and_timeout" {
 }
 
 
+run "github_app_credentials_and_rotating_build_proxy" {
+  command = plan
+  variables { github_auth_mode = "app" }
+  assert {
+    condition = alltrue([for phase in ["plan", "build", "check"] :
+      one([for secret in jsondecode(aws_ecs_task_definition.phase[phase].container_definitions)[0].secrets : secret.valueFrom if secret.name == "GITHUB_APP"]) == data.aws_secretsmanager_secret.this["github_app"].arn &&
+      alltrue([for secret in jsondecode(aws_ecs_task_definition.phase[phase].container_definitions)[1].secrets : !contains(["GITHUB_APP", "GITHUB_TOKEN"], secret.name)]) &&
+      jsondecode(aws_ecs_task_definition.phase[phase].container_definitions)[0].mountPoints[0].readOnly == (phase != "build")
+    ]) && !contains(keys(data.aws_secretsmanager_secret.this), "github_token")
+    error_message = "Only trusted runners receive the App key; only Build can write the proxy token file."
+  }
+  assert {
+    condition     = aws_lambda_function.steps.environment[0].variables.GITHUB_APP_SECRET_ID == data.aws_secretsmanager_secret.this["github_app"].arn && aws_lambda_function.intake.environment[0].variables.GITHUB_APP_SECRET_ID == data.aws_secretsmanager_secret.this["github_app"].arn && !contains(keys(aws_lambda_function.steps.environment[0].variables), "GITHUB_TOKEN_SECRET_ID")
+    error_message = "Both GitHub consumers must use App authentication, with no static-token dependency."
+  }
+  assert {
+    condition = alltrue([for phase in ["plan", "build", "check"] :
+      length([for env in jsondecode(aws_ecs_task_definition.phase[phase].container_definitions)[0].environment : env if env.name == "GITHUB_TOKEN_FILE" && env.value == "/mork-egress/github-token"]) == (phase == "build" ? 1 : 0) &&
+      length([for env in jsondecode(aws_ecs_task_definition.phase[phase].container_definitions)[1].environment : env if env.name == "GITHUB_TOKEN_FILE" && env.value == "/mork-egress/github-token"]) == (phase == "build" ? 1 : 0)
+    ])
+    error_message = "Only Build authenticates the agent's Git requests with a renewable token file."
+  }
+}
+
 run "reject_fractional_timeout" {
   command = plan
   variables { workflows = { development = {

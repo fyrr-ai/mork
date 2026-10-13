@@ -77,9 +77,20 @@ variable "model" {
 }
 
 variable "secret_prefix" {
-  description = "Secrets Manager names are <secret_prefix>/<name> (llm-api-key, github-token, webhook-secret, slack-*, jira-api-token, <provider>-api-key). Create them with scripts/aws-secrets.sh before applying."
+  description = "Secrets Manager names are <secret_prefix>/<name> (llm-api-key, github-token or github-app, webhook-secret, slack-*, jira-api-token, <provider>-api-key)."
   type        = string
   default     = "mork"
+}
+
+variable "github_auth_mode" {
+  description = "GitHub credential type: app uses a JSON installation credential; token uses a static token."
+  type        = string
+  default     = "token"
+
+  validation {
+    condition     = contains(["app", "token"], var.github_auth_mode)
+    error_message = "github_auth_mode must be app or token."
+  }
 }
 
 variable "decision_providers" {

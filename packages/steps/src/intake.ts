@@ -3,7 +3,7 @@
 // PR events only feed the decision timeline with what the human did.
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { ExecutionAlreadyExists, SFNClient, StartExecutionCommand } from "@aws-sdk/client-sfn";
-import { loadSecrets } from "@mork/sources";
+import { type GitHubAuth, githubAuthFromEnv, loadSecrets } from "@mork/sources";
 import { type Outcome, prTask, recordOutcome, type TimelineStore } from "@mork/timeline";
 import { DynamoStore } from "@mork/timeline/dynamo";
 import { fixTrigger } from "./fix.ts";
@@ -51,11 +51,12 @@ export function prOutcome(event: string | undefined, payload: PrPayload): Outcom
 }
 
 let timeline: TimelineStore | undefined;
+let githubAuth: GitHubAuth | undefined;
 
 export async function handler(event: UrlEvent): Promise<UrlResult> {
   if (event.requestContext?.http?.path === "/health") return { statusCode: 200, body: "ok" };
   if (event.requestContext?.http?.method !== "POST") return { statusCode: 404 };
-  await loadSecrets(process.env, ["WEBHOOK_SECRET", "GITHUB_TOKEN"]);
+  await loadSecrets(process.env, ["WEBHOOK_SECRET"]);
   const body = Buffer.from(event.body ?? "", event.isBase64Encoded ? "base64" : "utf8");
   const headers = Object.fromEntries(Object.entries(event.headers ?? {}).map(([k, v]) => [k.toLowerCase(), v]));
   // An empty secret would accept any signature computed with an empty key.
@@ -94,7 +95,8 @@ export async function handler(event: UrlEvent): Promise<UrlResult> {
     return { statusCode: 202 };
   }
   // Labels attached when an issue is created also fire `labeled`; check who labeled it.
-  const github = new GitHub(async () => process.env.GITHUB_TOKEN ?? "");
+  githubAuth ??= await githubAuthFromEnv(process.env);
+  const github = new GitHub(githubAuth.token);
   const role = await github.permission(repo, payload.sender.login);
   if (!role || !TRUSTED_ROLES.has(role)) {
     log("intake.rejected", { repo, issue: payload.issue.number, sender: payload.sender.login, role });
@@ -127,7 +129,8 @@ async function startFix(repo: string, fix: NonNullable<ReturnType<typeof fixTrig
     return;
   }
   if (fix.sender) {
-    const role = await new GitHub(async () => process.env.GITHUB_TOKEN ?? "").permission(repo, fix.sender);
+    githubAuth ??= await githubAuthFromEnv(process.env);
+    const role = await new GitHub(githubAuth.token).permission(repo, fix.sender);
     if (!role || !WRITE_ROLES.has(role)) {
       log("fix.rejected", { repo, pr: fix.pr, sender: fix.sender, role });
       return;
