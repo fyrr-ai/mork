@@ -39,15 +39,13 @@ All secrets are `<secret_prefix>/<name>`. `scripts/aws-secrets.sh` reads each va
 | Secret | Variable for the script | Held by | Scope |
 | --- | --- | --- | --- |
 | `llm-api-key` | `MORK_LLM_API_KEY` | egress sidecar, steps Lambda | the LLM API |
-| `github-token` | `MORK_GITHUB_TOKEN` | Lambdas | issues, pull requests, labels, comments, checks |
-| `github-read-token` | `MORK_GITHUB_READ_TOKEN` | runner in the containers | read-only contents; must differ from `github-token` |
-| `github-push-token` | `MORK_GITHUB_PUSH_TOKEN` | egress sidecar in Build | Contents read/write on the allowlisted repositories, no Workflows |
+| `github-token` | `MORK_GITHUB_TOKEN` | Lambdas, runner and Build egress sidecar | Contents read/write, issues and pull requests read/write, checks and Actions read; no Workflows write |
 | `webhook-secret` | generated | GitHub intake | webhook signatures |
 | `jev-api-key`, `openai-api-key` | `JEV_API`, `OPENAI_API_KEY` | steps Lambda, runner; Jev also in the Slack worker | decision models; Jev required for Slack |
 | `slack-signing-secret`, `slack-bot-token` | `MORK_SLACK_SIGNING_SECRET`, `MORK_SLACK_BOT_TOKEN` | Slack Lambda, steps, runner | Slack source (optional) |
 | `jira-api-token` | `MORK_JIRA_API_TOKEN` | Slack Lambda, steps | Jira tracker (optional) |
 
-Use fine-grained tokens owned by a machine account with Write access. Do not give it Maintain or Admin access or any ruleset bypass. GitHub App installation-token minting and renewal are not implemented; a short-lived token supplied manually will need renewal.
+Use one fine-grained token owned by a machine account with Write access, restricted to the repositories in repo_allowlist. All consumers share its permissions. The runner holds it outside the agent's environment; only Build's proxy injects it into requests for the task repository. Do not give it Maintain or Admin access or any ruleset bypass. GitHub App installation-token minting and renewal are not implemented; a short-lived token supplied manually will need renewal.
 
 ## Repository configuration
 
@@ -98,7 +96,7 @@ The Terraform module sets these; they are listed for running the code elsewhere.
 | Variable | Purpose |
 | --- | --- |
 | `MORK_PHASE`, `MORK_BRIEF`, `MORK_TASK_TOKEN` | Set per run by Step Functions |
-| `MORK_BUCKET`, `GITHUB_READ_TOKEN`, `MORK_MODEL`, `LLM_BASE_URL` | Inputs, clone, LLM |
+| `MORK_BUCKET`, `GITHUB_TOKEN`, `MORK_MODEL`, `LLM_BASE_URL` | Inputs, clone, LLM |
 | `MORK_SUPERVISE_SECONDS` | Supervision interval |
 | `MORK_EGRESS_PROXY`, `MORK_EGRESS_CA` | Sidecar address and CA (defaults `http://127.0.0.1:3128`, `/mork-egress/ca.crt`) |
 | `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_RESOURCE_ATTRIBUTES`, `MORK_ENV` | Live log (optional) |
@@ -109,7 +107,7 @@ The Terraform module sets these; they are listed for running the code elsewhere.
 | Variable | Purpose |
 | --- | --- |
 | `MORK_LLM_HOST`, `LLM_API_KEY` | Host the LLM key is injected for |
-| `GITHUB_PUSH_TOKEN`, `MORK_REPO` | Build only: the push token, injected for this repository only |
+| `GITHUB_TOKEN`, `MORK_REPO` | Build only: the shared GitHub token, injected for this repository only |
 | `MORK_EGRESS_ALLOW` | This step’s allowed domains, comma separated; the LLM host is added automatically |
 | `MORK_EGRESS_WARN` | `true` logs requests outside the allowlist, `false` blocks them |
 

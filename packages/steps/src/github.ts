@@ -1,5 +1,5 @@
 // Small GitHub REST client for the Lambdas, the only part of Mork that writes
-// issues and pull requests; containers get a read token, and Build pushes its
+// issues and pull requests; the runner shares the GitHub token, and Build pushes its
 // branch through the egress sidecar.
 
 export type TokenSource = () => Promise<string>;

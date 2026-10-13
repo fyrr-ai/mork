@@ -58,7 +58,7 @@ async function failedBuild() {
       agentHome: "unused",
     },
     sandbox: { env: {} },
-    readToken: "unused",
+    githubToken: "unused",
     model: "unused",
     panel: new DecisionPanel([]),
     superviseEveryMs: 45_000,

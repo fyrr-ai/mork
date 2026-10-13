@@ -2,6 +2,8 @@
 
 Date: 2026-10-11 · Status: Accepted
 
+The separate push credential is superseded by [ADR 13](0013-one-github-token.md).
+
 ## Context
 
 The agent held the LLM key and, in Build, the push token in its environment. A prompt injection in an issue, a file or a dependency could read them and send them anywhere.

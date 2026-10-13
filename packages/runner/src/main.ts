@@ -50,7 +50,7 @@ await reportTo(token, async () => {
   }
 
   const secrets = () =>
-    [env.GITHUB_READ_TOKEN, env.JEV_API, env.OPENAI_API_KEY, env.SLACK_BOT_TOKEN].filter((v): v is string => typeof v === "string" && v.length > 0);
+    [env.GITHUB_TOKEN, env.JEV_API, env.OPENAI_API_KEY, env.SLACK_BOT_TOKEN].filter((v): v is string => typeof v === "string" && v.length > 0);
 
   const deployment = env.MORK_ENV ?? "dev";
 
@@ -86,7 +86,7 @@ await reportTo(token, async () => {
       ? DevelopmentStep.parse(JSON.parse(env.MORK_DEVELOPMENT_STEP))
       : { plan: DEFAULT_DEVELOPMENT.steps[0], build: DEFAULT_DEVELOPMENT.steps[1], check: DEFAULT_DEVELOPMENT.steps[2] }[phase],
     store: Store.fromEnv(env),
-    readToken: requiredEnv(env, "GITHUB_READ_TOKEN"),
+    githubToken: requiredEnv(env, "GITHUB_TOKEN"),
     model: requiredEnv(env, "MORK_MODEL"),
     panel: panelFromEnv(env),
     superviseEveryMs: Number(env.MORK_SUPERVISE_SECONDS ?? 45) * 1000,

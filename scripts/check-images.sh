@@ -15,7 +15,7 @@ docker run --rm --network none \
 # Use the real proxy entrypoint, including per-task CA creation and both config templates.
 docker run --rm --network none \
   -e MORK_LLM_HOST=llm.example.test -e MORK_EGRESS_ALLOW=registry.example.test,packages.example.test \
-  -e MORK_REPO=example/repo -e GITHUB_PUSH_TOKEN=image-test-token \
+  -e MORK_REPO=example/repo -e GITHUB_TOKEN=image-test-token \
   --entrypoint sh mork-egress:dev -c '
 set -eu
 : >/tmp/proxy.log
@@ -31,6 +31,7 @@ grep -q "registry.example.test" /run/mork-egress/config.yaml
 ! grep -q "registry.npmjs.org" /run/mork-egress/config.yaml
 ! grep -q "pypi.org" /run/mork-egress/config.yaml
 grep -q "example/repo" /run/mork-egress/config.yaml
+grep -q "var: GITHUB_TOKEN" /run/mork-egress/config.yaml
 test "$(wget -qO- http://127.0.0.1:9090/healthz)" = OK
 test ! -e /sbin/apk
 test -s /usr/share/licenses/mork/NOTICE

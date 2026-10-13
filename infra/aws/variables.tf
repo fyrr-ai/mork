@@ -77,7 +77,7 @@ variable "model" {
 }
 
 variable "secret_prefix" {
-  description = "Secrets Manager names are <secret_prefix>/<name> (llm-api-key, github-token, github-read-token, github-push-token, webhook-secret, slack-*, jira-api-token, <provider>-api-key). Create them with scripts/aws-secrets.sh before applying."
+  description = "Secrets Manager names are <secret_prefix>/<name> (llm-api-key, github-token, webhook-secret, slack-*, jira-api-token, <provider>-api-key). Create them with scripts/aws-secrets.sh before applying."
   type        = string
   default     = "mork"
 }

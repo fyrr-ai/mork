@@ -1,11 +1,11 @@
 // Runs one LLM station (analyst, implementer, reviewer) with Pi and an OpenAI-compatible LLM.
 //
 // Privilege split inside the container: this process (root in the image)
-// holds the task token, AWS credentials, the read token and the decision-API
+// holds the task token, AWS credentials, the GitHub token and the decision-API
 // keys; Pi runs as the unprivileged `agent` user with a clean environment, so
 // the model can read none of them. The agent holds no key at all: its HTTPS
 // goes through the task's egress sidecar, which adds the LLM key, and in Build
-// the push token, to requests for those hosts only. The implementer pushes its
+// the GitHub token, to requests for those hosts only. The implementer pushes its
 // own branch; the guard extension only lets it push that branch, without force.
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
