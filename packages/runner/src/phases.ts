@@ -50,7 +50,7 @@ export type PhaseContext = {
   store: Store;
   env: RunnerEnv;
   sandbox: Sandbox;
-  githubToken: string;
+  githubToken: () => Promise<string>;
   /** Trusted local workflows fetch and push only this task-owned bare repository. */
   localRepo?: string;
   model: string;
@@ -100,13 +100,13 @@ async function supervised<T>(ctx: PhaseContext, phase: Phase, run: (records: Sup
 
 type Stats = NonNullable<RunResult["stats"]>;
 
-function checkout(ctx: PhaseContext, name: string, withBranch: boolean): string {
+async function checkout(ctx: PhaseContext, name: string, withBranch: boolean): Promise<string> {
   const dir = join(ctx.env.workDir, name);
   mustExec("rm", ["-rf", dir]);
   fetchRepo({
     dir,
     fullName: ctx.brief.repo.full_name,
-    token: ctx.githubToken,
+    token: await ctx.githubToken(),
     baseSha: ctx.brief.repo.base_sha,
     branch: withBranch ? ctx.brief.branch : undefined,
     localRepo: ctx.localRepo,
@@ -137,7 +137,7 @@ async function llm(
     file: join(ctx.env.agentHome, "sessions", `${label}.jsonl`),
     key: keys.session(prefix, label),
     store: ctx.store,
-    secrets: ctx.secrets(),
+    secrets: ctx.secrets,
     piBin: ctx.env.piBin,
     piEnv: { HOME: ctx.env.workDir, PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin", PI_OFFLINE: "1", PI_TELEMETRY: "0" },
     staging: join(ctx.env.workDir, "session-export"),
@@ -196,7 +196,7 @@ async function planWith(ctx: PhaseContext, records: SupervisionRecord[]): Promis
   const stats: Stats = [];
   let feedback: string | undefined;
   for (let attempt = 1; attempt <= ctx.step.attempts; attempt++) {
-    const repoDir = checkout(ctx, `analyst-${attempt}`, false);
+    const repoDir = await checkout(ctx, `analyst-${attempt}`, false);
     const config = baseConfig(repoDir, brief.repo.base_sha);
     const outcome = await llm(ctx, `plan-${attempt}-analyst`, "analyst", repoDir, prompts.analystMessage(issue, config, feedback), stats, records, {
       title: issue.title,
@@ -217,7 +217,7 @@ async function planWith(ctx: PhaseContext, records: SupervisionRecord[]): Promis
     }
     const report = await runGate(
       { mode: "before", repo: brief.repo, config, hidden_tests: full.hidden_tests, allow_test_change: false, localRepo: ctx.localRepo },
-      ctx.githubToken,
+      await ctx.githubToken(),
       join(ctx.env.workDir, `gate-before-${attempt}`),
       ctx.sandbox,
     );
@@ -252,9 +252,9 @@ async function buildWith(ctx: PhaseContext, records: SupervisionRecord[]): Promi
   const issue = IssueDoc.parse(await store.json(keys.issue(brief.prefix)));
   const thePlan = PublicPlan.parse(await store.json(keys.plan(brief.prefix)));
   const feedback = brief.attempt > 1 ? await store.text(keys.feedback(brief.prefix, brief.attempt)).catch(() => undefined) : undefined;
-  const remote = () => remoteHead(brief.repo.full_name, ctx.githubToken, brief.branch, ctx.localRepo);
+  const remote = async () => remoteHead(brief.repo.full_name, await ctx.githubToken(), brief.branch, ctx.localRepo);
   // Later attempts continue on what the previous attempt pushed, if it pushed anything.
-  const repoDir = checkout(ctx, "implementer", remote() !== undefined);
+  const repoDir = await checkout(ctx, "implementer", (await remote()) !== undefined);
   const config = baseConfig(repoDir, brief.repo.base_sha);
   const setupMarker = join(ctx.env.agentHome, ".verify-setup-done");
   // Local attempts share a home but get a fresh checkout, so its dependencies
@@ -322,11 +322,11 @@ async function checkWith(ctx: PhaseContext, records: SupervisionRecord[]): Promi
     return { ok: true, passed: false };
   }
   const hidden = z.array(HiddenTest).parse(await store.json(keys.hidden(brief.prefix)));
-  const configDir = checkout(ctx, "config", false);
+  const configDir = await checkout(ctx, "config", false);
   const config = baseConfig(configDir, brief.repo.base_sha);
   const report = await runGate(
     { mode: "after", repo: brief.repo, branch: brief.branch, config, hidden_tests: hidden, allow_test_change: false, localRepo: ctx.localRepo },
-    ctx.githubToken,
+    await ctx.githubToken(),
     join(ctx.env.workDir, "gate-after"),
     ctx.sandbox,
   );
@@ -348,7 +348,7 @@ async function checkWith(ctx: PhaseContext, records: SupervisionRecord[]): Promi
   await ctx.reporter.report({ kind: "check", attempt: brief.attempt, passed: true });
   const issue = IssueDoc.parse(await store.json(keys.issue(brief.prefix)));
   const impl = ImplementerOutput.parse(await store.json(keys.impl(brief.prefix, brief.attempt)));
-  const repoDir = checkout(ctx, "reviewer", true);
+  const repoDir = await checkout(ctx, "reviewer", true);
   const stats: Stats = [];
   const outcome = await llm(
     ctx,

@@ -20,8 +20,12 @@ locals {
   # Secrets are created out of band (scripts/aws-secrets.sh); Terraform only references them.
   secret_names = {
     llm_api_key    = "${var.secret_prefix}/llm-api-key"
-    github_token   = "${var.secret_prefix}/github-token"
     webhook_secret = "${var.secret_prefix}/webhook-secret"
+  }
+  github_secret_key = var.github_auth_mode == "app" ? "github_app" : "github_token"
+  github_env        = var.github_auth_mode == "app" ? "GITHUB_APP" : "GITHUB_TOKEN"
+  github_secret_names = {
+    (local.github_secret_key) = "${var.secret_prefix}/${var.github_auth_mode == "app" ? "github-app" : "github-token"}"
   }
   source_secret_names = {
     slack_signing_secret = "${var.secret_prefix}/slack-signing-secret"
@@ -31,7 +35,7 @@ locals {
 }
 
 data "aws_secretsmanager_secret" "this" {
-  for_each = local.secret_names
+  for_each = merge(local.secret_names, local.github_secret_names)
   name     = each.value
 }
 

@@ -91,7 +91,7 @@ export async function runLocalWorkflow(options: LocalOptions): Promise<LocalResu
       step: manifest.definition.steps[0],
       store,
       localRepo: remote,
-      githubToken: "",
+      githubToken: async () => "",
       model: options.model,
       panel: new DecisionPanel([]),
       superviseEveryMs: 45_000,

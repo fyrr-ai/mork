@@ -6,6 +6,7 @@
 #   MORK_LLM_API_KEY          key for the OpenAI-compatible LLM (egress sidecar, steps Lambda)
 #   JEV_API, OPENAI_API_KEY   decision-model keys (optional)
 #   MORK_GITHUB_TOKEN         clone, push, issues, PRs, labels, comments and checks
+#   MORK_GITHUB_APP           JSON: appId, installationId, privateKey; replaces the static token
 #   MORK_SLACK_SIGNING_SECRET, MORK_SLACK_BOT_TOKEN, MORK_JIRA_API_TOKEN   Slack source (optional)
 # The webhook secret is generated once.
 #   mise run secrets:put
@@ -13,6 +14,15 @@
 # Secret names are <MORK_SECRET_PREFIX>/<name>, prefix default "mork".
 set -euo pipefail
 prefix="${MORK_SECRET_PREFIX:-${MORK_NAME:-mork}}"
+
+if [[ -n "${MORK_GITHUB_APP:-}" ]]; then
+  [[ -z "${MORK_GITHUB_TOKEN:-}" ]] || { echo "Set only MORK_GITHUB_APP or MORK_GITHUB_TOKEN" >&2; exit 1; }
+  printf '%s' "$MORK_GITHUB_APP" | bun -e '
+    const { GitHubAuth } = await import("./packages/sources/src/github-auth.ts");
+    try { new GitHubAuth({ GITHUB_APP: await Bun.stdin.text() }); }
+    catch { console.error("Invalid MORK_GITHUB_APP configuration"); process.exit(1); }
+  '
+fi
 
 put() { # name; value on stdin
   local name="$1"
@@ -63,7 +73,11 @@ if ! aws secretsmanager describe-secret --secret-id "$prefix/webhook-secret" >/d
   openssl rand -hex 32 | tr -d '\n' | put "$prefix/webhook-secret"
 fi
 
-put_optional "$prefix/github-token" MORK_GITHUB_TOKEN
+if [[ -n "${MORK_GITHUB_APP:-}" ]]; then
+  printf '%s' "$MORK_GITHUB_APP" | put "$prefix/github-app"
+else
+  put_optional "$prefix/github-token" MORK_GITHUB_TOKEN
+fi
 put_optional "$prefix/slack-signing-secret" MORK_SLACK_SIGNING_SECRET
 put_optional "$prefix/slack-bot-token" MORK_SLACK_BOT_TOKEN
 put_optional "$prefix/jira-api-token" MORK_JIRA_API_TOKEN

@@ -16,6 +16,7 @@ Required: `vpc_id`, `vpc_cidr_block`, `vpc_private_subnet_ids`, `repo_allowlist`
 | `environment` | `dev` | Environment label on logs |
 | `llm_base_url`, `model` | — | The OpenAI-compatible LLM |
 | `secret_prefix` | `mork` | Secrets Manager names are `<prefix>/<name>` |
+| `github_auth_mode` | `token` | `app` uses a GitHub App installation; `token` uses a static token |
 | `decision_providers` | `[]` | Development decision panel; Jev is required for Slack routing and is its sole provider |
 | `repo_allowlist` | — | Repositories Mork may work on |
 | `slack_channels` | `{}` | Channel ID → allowed workflows and default hint; development also needs repo and Jira project |
@@ -40,12 +41,35 @@ All secrets are `<secret_prefix>/<name>`. `scripts/aws-secrets.sh` reads each va
 | --- | --- | --- | --- |
 | `llm-api-key` | `MORK_LLM_API_KEY` | egress sidecar, steps Lambda | the LLM API |
 | `github-token` | `MORK_GITHUB_TOKEN` | Lambdas, runner and Build egress sidecar | Contents read/write, issues and pull requests read/write, checks and Actions read; no Workflows write |
+| `github-app` | `MORK_GITHUB_APP` | Lambdas and trusted runners | JSON containing App ID, installation ID and the RSA private key; used instead of `github-token` |
 | `webhook-secret` | generated | GitHub intake | webhook signatures |
 | `jev-api-key`, `openai-api-key` | `JEV_API`, `OPENAI_API_KEY` | steps Lambda, runner; Jev also in the Slack worker | decision models; Jev required for Slack |
 | `slack-signing-secret`, `slack-bot-token` | `MORK_SLACK_SIGNING_SECRET`, `MORK_SLACK_BOT_TOKEN` | Slack Lambda, steps, runner | Slack source (optional) |
 | `jira-api-token` | `MORK_JIRA_API_TOKEN` | Slack Lambda, steps | Jira tracker (optional) |
 
-Use one fine-grained token owned by a machine account with Write access, restricted to the repositories in repo_allowlist. All consumers share its permissions. The runner holds it outside the agent's environment; only Build's proxy injects it into requests for the task repository. Do not give it Maintain or Admin access or any ruleset bypass. GitHub App installation-token minting and renewal are not implemented; a short-lived token supplied manually will need renewal.
+Choose one GitHub credential type. Do not give the identity admin permissions, Workflows write permission or ruleset bypass.
+
+### GitHub App
+
+Set `github_auth_mode = "app"` in the deployment and store this JSON in `<secret_prefix>/github-app`:
+
+```json
+{"appId":"12345","installationId":67890,"privateKey":"-----BEGIN RSA PRIVATE KEY-----\n...\n-----END RSA PRIVATE KEY-----\n"}
+```
+
+Create the App under the organization that should own it. Set Contents, Issues and Pull requests to read/write, and Checks and Actions to read-only. Install it on selected repositories that match `repo_allowlist`. The App ID is in the App's General settings; the installation ID is the number in its installation settings URL. Generate an RSA private key in the App's General settings. The OAuth client secret is not used.
+
+`MORK_GITHUB_APP` passes this JSON to `mise run secrets:put`, which validates it before writing any secrets. Configure no `MORK_GITHUB_TOKEN` in this mode. Terraform references the secret ARN, never its value.
+
+Lambdas and trusted runners sign an App JWT and request an installation token scoped to the task repository. Tokens are cached and refreshed five minutes before expiry. Concurrent requests for the same repository share one mint request; renewal failures propagate rather than silently reusing a stale token. Warm Lambdas fetch a current token for each GitHub API call, and runners do so before each authenticated fetch or remote-head check.
+
+In Build, the trusted runner also maintains `/mork-egress/github-token`, a root-owned file with mode `0600`. The proxy reads it with a 30-second cache and injects authentication only for the task repository's Git URLs. The proxy receives no App private key. The runner refreshes the file during long phases and stops the agent on renewal failure. Plan and Check do not grant proxy Git authentication. Every issued token is included in session/log redaction.
+
+Installations are configured per deployment; automatic installation discovery is not implemented. Rotating the App private key requires updating the secret and restarting consumers so cached configuration is replaced. App webhooks may use the existing intake URL and webhook secret, or repository webhooks may remain configured separately.
+
+### Static token
+
+The default `github_auth_mode = "token"` supports one fine-grained machine-account token restricted to the repositories in `repo_allowlist`, with the permissions listed above. All consumers share its permissions. The runner holds it outside the agent's environment; only Build's proxy injects it into requests for the task repository. A manually supplied short-lived token still needs manual renewal.
 
 ## Repository configuration
 
@@ -76,7 +100,7 @@ The Terraform module sets these; they are listed for running the code elsewhere.
 | --- | --- |
 | `STATE_MACHINE_ARN` | Workflow the intakes start |
 | `REPO_ALLOWLIST` | Comma-separated `owner/repo` |
-| `WEBHOOK_SECRET`, `GITHUB_TOKEN` | GitHub intake and steps |
+| `WEBHOOK_SECRET`, `GITHUB_TOKEN` or `GITHUB_APP` | GitHub intake and steps; App credentials can use `GITHUB_APP_SECRET_ID` |
 | `SLACK_SIGNING_SECRET`, `SLACK_BOT_TOKEN`, `SLACK_CHANNELS` (JSON) | Slack source |
 | `JIRA_BASE_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN` | Jira tracker |
 | `LLM_BASE_URL`, `LLM_API_KEY`, `MORK_MODEL` | One-shot LLM calls (clarifying questions, issue drafts) |
@@ -96,7 +120,7 @@ The Terraform module sets these; they are listed for running the code elsewhere.
 | Variable | Purpose |
 | --- | --- |
 | `MORK_PHASE`, `MORK_BRIEF`, `MORK_TASK_TOKEN` | Set per run by Step Functions |
-| `MORK_BUCKET`, `GITHUB_TOKEN`, `MORK_MODEL`, `LLM_BASE_URL` | Inputs, clone, LLM |
+| `MORK_BUCKET`, `GITHUB_TOKEN` or `GITHUB_APP`, `MORK_MODEL`, `LLM_BASE_URL` | Inputs, GitHub authentication, LLM |
 | `MORK_SUPERVISE_SECONDS` | Supervision interval |
 | `MORK_EGRESS_PROXY`, `MORK_EGRESS_CA` | Sidecar address and CA (defaults `http://127.0.0.1:3128`, `/mork-egress/ca.crt`) |
 | `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_RESOURCE_ATTRIBUTES`, `MORK_ENV` | Live log (optional) |
@@ -108,6 +132,7 @@ The Terraform module sets these; they are listed for running the code elsewhere.
 | --- | --- |
 | `MORK_LLM_HOST`, `LLM_API_KEY` | Host the LLM key is injected for |
 | `GITHUB_TOKEN`, `MORK_REPO` | Build only: the shared GitHub token, injected for this repository only |
+| `GITHUB_TOKEN_FILE`, `MORK_REPO` | Build in App mode: root-owned renewable token file; no App private key in the proxy |
 | `MORK_EGRESS_ALLOW` | This step’s allowed domains, comma separated; the LLM host is added automatically |
 | `MORK_EGRESS_WARN` | `true` logs requests outside the allowlist, `false` blocks them |
 

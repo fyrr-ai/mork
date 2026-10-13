@@ -22,6 +22,8 @@ module "mork" {
   vpc_private_subnet_ids = ["subnet-0123456789abcdef0", "subnet-0123456789abcdef1"]
 
   repo_allowlist = ["acme/widgets"]
+  # Optional: mork/github-app holds the App installation ID, App ID and private key.
+  # github_auth_mode = "app"
 
   # Any OpenAI-compatible API; its key is the secret mork/llm-api-key.
   llm_base_url = "https://api.example.com/v1"

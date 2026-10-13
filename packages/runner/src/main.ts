@@ -3,9 +3,10 @@
 // back with the task token.
 import { DEFAULT_DEVELOPMENT, DevelopmentStep } from "@mork/contracts/development";
 import { panelFromEnv } from "@mork/decision";
-import { type Reporter, slackThreadReporterFromEnv } from "@mork/sources";
+import { githubAuthFromEnv, type Reporter, slackThreadReporterFromEnv } from "@mork/sources";
 import { Store } from "@mork/store";
 import { briefFromEnv, reportInterrupted, reportTo, requiredEnv } from "./callback.ts";
+import { withGitHubTokenFile } from "./github-auth.ts";
 import { caBundle, egressEnv } from "./llm.ts";
 import { type Logger, noLogger, OtlpLogger } from "./otlp.ts";
 import { build, check, type PhaseContext, plan } from "./phases.ts";
@@ -24,6 +25,7 @@ process.once("SIGTERM", () => {
 
 await reportTo(token, async () => {
   const { phase, brief } = briefFromEnv(env);
+  const auth = await githubAuthFromEnv(env);
 
   // Progress goes to the Slack thread of Slack tasks. Reporting must never fail a
   // phase, so a missing or broken Slack token only costs the messages.
@@ -50,7 +52,7 @@ await reportTo(token, async () => {
   }
 
   const secrets = () =>
-    [env.GITHUB_TOKEN, env.JEV_API, env.OPENAI_API_KEY, env.SLACK_BOT_TOKEN].filter((v): v is string => typeof v === "string" && v.length > 0);
+    [...auth.secrets(), env.JEV_API, env.OPENAI_API_KEY, env.SLACK_BOT_TOKEN].filter((v): v is string => typeof v === "string" && v.length > 0);
 
   const deployment = env.MORK_ENV ?? "dev";
 
@@ -86,7 +88,7 @@ await reportTo(token, async () => {
       ? DevelopmentStep.parse(JSON.parse(env.MORK_DEVELOPMENT_STEP))
       : { plan: DEFAULT_DEVELOPMENT.steps[0], build: DEFAULT_DEVELOPMENT.steps[1], check: DEFAULT_DEVELOPMENT.steps[2] }[phase],
     store: Store.fromEnv(env),
-    githubToken: requiredEnv(env, "GITHUB_TOKEN"),
+    githubToken: () => auth.token(brief.repo.full_name),
     model: requiredEnv(env, "MORK_MODEL"),
     panel: panelFromEnv(env),
     superviseEveryMs: Number(env.MORK_SUPERVISE_SECONDS ?? 45) * 1000,
@@ -115,7 +117,9 @@ await reportTo(token, async () => {
 
   const phases = { plan, build, check };
   logger.log(`${phase} · container started (attempt ${brief.attempt})`, { "mork.event": "phase" });
-  const result = await phases[phase](ctx);
+  const result = env.GITHUB_TOKEN_FILE
+    ? await withGitHubTokenFile(auth, brief.repo.full_name, env.GITHUB_TOKEN_FILE, () => phases[phase](ctx))
+    : await phases[phase](ctx);
   logger.log(
     `${phase} · container finished: ${result.question ? `asked "${result.question.slice(0, 200)}"` : result.ok ? (result.passed === false ? "checks failed" : "ok") : `failed: ${result.error ?? "?"}`}`,
     { "mork.event": "phase" },

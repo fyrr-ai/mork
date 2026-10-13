@@ -45,25 +45,30 @@ describe("session log", () => {
     // A fake `pi --export <in> <out>` that copies the input, so the test needs no Pi.
     const fakePi = join(dir, "fake-pi.sh");
     writeFileSync(fakePi, '#!/bin/sh\ncp "$2" "$3"\n', { mode: 0o755 });
+    const secrets = ["sk-secret-value-123"];
     const log = new SessionLog({
       file: join(dir, "s", "build-1-implementer.jsonl"),
       key: "tasks/x/sessions/build-1-implementer",
       store,
-      secrets: ["sk-secret-value-123"],
+      secrets: () => secrets,
       piBin: fakePi,
       piEnv: {},
       staging: join(dir, "staging"),
     });
-    writeFileSync(log.file, '{"tool":"bash","out":"LLM_API_KEY=sk-secret-value-123"}\n');
+    secrets.push("ghs-renewed-after-session-start");
+    writeFileSync(log.file, '{"tool":"bash","out":"LLM_API_KEY=sk-secret-value-123 GITHUB_TOKEN=ghs-renewed-after-session-start"}\n');
     await log.finish();
-    expect(objects.get("tasks/x/sessions/build-1-implementer.jsonl")?.toString()).toBe('{"tool":"bash","out":"LLM_API_KEY=[redacted]"}\n');
+    expect(objects.get("tasks/x/sessions/build-1-implementer.jsonl")?.toString()).toBe(
+      '{"tool":"bash","out":"LLM_API_KEY=[redacted] GITHUB_TOKEN=[redacted]"}\n',
+    );
     expect(objects.get("tasks/x/sessions/build-1-implementer.html")?.toString()).not.toContain("sk-secret-value-123");
+    expect(objects.get("tasks/x/sessions/build-1-implementer.html")?.toString()).not.toContain("ghs-renewed-after-session-start");
 
     const again = new SessionLog({
       file: join(dir, "t", "build-1-implementer.jsonl"),
       key: "tasks/x/sessions/build-1-implementer",
       store,
-      secrets: [],
+      secrets: () => [],
       piBin: fakePi,
       piEnv: {},
       staging: join(dir, "staging"),
@@ -74,7 +79,7 @@ describe("session log", () => {
       file: join(dir, "u", "x.jsonl"),
       key: "tasks/x/sessions/missing",
       store,
-      secrets: [],
+      secrets: () => [],
       piBin: fakePi,
       piEnv: {},
       staging: join(dir, "staging"),
@@ -93,7 +98,7 @@ describe("session log", () => {
       file: join(dir, "s", "plan-1-analyst.jsonl"),
       key: "tasks/x/sessions/plan-1-analyst",
       store,
-      secrets: [],
+      secrets: () => [],
       piBin: fakePi,
       piEnv: {},
       staging: join(dir, "staging"),

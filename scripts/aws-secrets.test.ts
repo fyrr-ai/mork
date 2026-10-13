@@ -1,5 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
+import { generateKeyPairSync } from "node:crypto";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -40,7 +41,7 @@ esac
 `,
     { mode: 0o755 },
   );
-  const run = (args: string[] = [], token = "fixture-github-token") =>
+  const run = (args: string[] = [], token = "fixture-github-token", app = "") =>
     spawnSync("bash", [resolve("scripts/aws-secrets.sh"), ...args], {
       encoding: "utf8",
       env: {
@@ -50,6 +51,7 @@ esac
         SECRET_CALLS: join(root, "calls"),
         MORK_SECRET_PREFIX: "fixture",
         MORK_GITHUB_TOKEN: token,
+        MORK_GITHUB_APP: app,
         MORK_LLM_API_KEY: "",
         JEV_API: "",
         OPENAI_API_KEY: "",
@@ -83,4 +85,27 @@ test("deleting the stored GitHub credential recreates only its canonical secret"
   expect(run(["--delete-github"]).status).toBe(0);
   expect(readdirSync(state).filter((name) => name.includes("github"))).toEqual(["fixture_github-token"]);
   expect(readFileSync(join(state, "fixture_github-token"), "utf8")).toBe("revoked");
+});
+
+test("App setup writes one JSON credential without creating a static token or exposing the key", () => {
+  const { state, run } = fixture();
+  const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const key = privateKey.export({ type: "pkcs1", format: "pem" }).toString();
+  const app = JSON.stringify({ appId: "123", installationId: 456, privateKey: key });
+  const first = run([], "", app);
+  expect(first.status).toBe(0);
+  expect(run([], "", app).status).toBe(0);
+  expect(readdirSync(state).filter((name) => name.includes("github"))).toEqual(["fixture_github-app"]);
+  expect(readFileSync(join(state, "fixture_github-app"), "utf8")).toBe(app);
+  expect(first.stdout + first.stderr).not.toContain(key);
+  expect(first.stdout + first.stderr).not.toContain(app);
+});
+
+test("invalid or conflicting App credentials fail before writing any secrets", () => {
+  const { state, run } = fixture();
+  const invalid = run([], "", "private-key-must-not-be-printed");
+  expect(invalid.status).not.toBe(0);
+  expect(invalid.stdout + invalid.stderr).not.toContain("private-key-must-not-be-printed");
+  expect(run([], "static", "invalid-app").status).not.toBe(0);
+  expect(readdirSync(state)).toEqual([]);
 });

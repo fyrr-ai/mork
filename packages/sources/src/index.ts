@@ -9,6 +9,7 @@ import { type Pending, type ThreadStore, threadKey } from "./threads.ts";
 import type { Complete, ReportEvent, Reporter, SlackRef, SlackStart, TrackerIssue } from "./types.ts";
 
 export { deliverAnswer } from "./answers.ts";
+export { GitHubAuth, type GitHubTokenSource, githubAuthFromEnv } from "./github-auth.ts";
 export { adfToText, draftByRules, findIssueKey, Jira } from "./jira.ts";
 export { loadSecrets } from "./secrets.ts";
 export { escapeSlack, executionUrl, grafanaLiveUrl, Slack, STATUS, slackText, statusOf } from "./slack.ts";

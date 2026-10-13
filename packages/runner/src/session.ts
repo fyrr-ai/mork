@@ -27,7 +27,7 @@ export class SessionLog {
   readonly #staging: string;
   readonly key: string;
   readonly #store: Store;
-  readonly #secrets: string[];
+  readonly #secrets: () => string[];
   readonly #piBin: string;
   readonly #piEnv: Record<string, string>;
   #lastUpload = 0;
@@ -37,7 +37,7 @@ export class SessionLog {
     file: string;
     key: string;
     store: Store;
-    secrets: string[];
+    secrets: () => string[];
     piBin: string;
     piEnv: Record<string, string>;
     staging: string;
@@ -80,7 +80,7 @@ export class SessionLog {
     const raw = readAgentFile(this.file);
     if (raw === undefined) return;
     this.#lastUpload = Date.now();
-    const clean = redact(raw, this.#secrets);
+    const clean = redact(raw, this.#secrets());
     await this.#store.put(`${this.key}.jsonl`, clean, "application/x-ndjson");
     if (!withHtml) return;
     // Export the redacted copy, so the HTML cannot contain what the JSONL no longer does. The export
@@ -93,7 +93,7 @@ export class SessionLog {
     writeFileSync(redacted, clean);
     const exported = exec(this.#piBin, ["--export", redacted, html], { env: this.#piEnv, timeoutMs: 120_000 });
     if (exported.code === 0 && existsSync(html)) {
-      await this.#store.put(`${this.key}.html`, redact(readFileSync(html, "utf8"), this.#secrets), "text/html");
+      await this.#store.put(`${this.key}.html`, redact(readFileSync(html, "utf8"), this.#secrets()), "text/html");
     } else {
       console.error(JSON.stringify({ kind: "session.export_failed", key: this.key, output: exported.output.slice(-300) }));
     }
