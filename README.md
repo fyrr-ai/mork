@@ -1,4 +1,4 @@
-![Mork. Serverless dark factory. Because darkness never sleeps.](docs/assets/mork-banner.png)
+![Mork. Serverless dark factory.](docs/assets/mork-banner.png)
 
 Mork is a serverless dark factory for AI workflows. Give it a task in Slack,
 and it runs the steps you configured and returns the result.
@@ -8,6 +8,27 @@ steps use an AI agent, which run a command and which require human approval.
 Deploy it in your AWS account and choose your model provider.
 
 [Configure a workflow](docs/workflows.md) · [Deploy Mork](docs/deployment.md) · [How it works](docs/architecture.md)
+
+## How Mork compares
+
+![Comparison of Stripe, Ramp, Spotify, Shopify, Uber, Meta, Copilot and Mork across Slack requests, sandboxing, checks, hidden acceptance tests, code review, review depth, fixes, network controls, prepared environments and automatic merge.](docs/assets/mork-comparison.png)
+
+**Shared patterns.** Like the published systems at Stripe, Uber and Spotify,
+Mork runs work in the background, checks the result and returns a PR for human
+review. Its PR includes an Uber-style table of the checks performed.
+
+**Mork's focus.** Configure workflows in your own AWS account. Development adds
+acceptance tests withheld from Build and a separate decision model that recommends
+review depth. Other workflows combine agents, commands and human approvals.
+A person merges development PRs.
+
+**Current gaps.** Mork has no warm workspace pool. Its network controls cover the
+proxy; direct egress remains an open boundary.
+The effects of hidden tests and review recommendations still need production benchmarks.
+
+The table records published capabilities. `?` means the cited sources do not
+establish the feature; `◐` marks partial or restricted coverage. Meta's column
+covers RADAR review. See [sources and explanations](docs/comparison.md).
 
 ## Architecture
 
@@ -29,6 +50,9 @@ available for container startup optimization.
 The development workflow plans the change, writes code and checks the result
 before opening a draft pull request. Hidden acceptance tests, repository tests
 and an independent review help your team assess the change. A person merges.
+
+Each PR includes an Uber-style table of the checks performed and their results,
+alongside review findings and a recommendation for how carefully to review it.
 
 Configure the prompts, tools, models and limits for **Plan, Build and Check**.
 These operations run in that order. Failed checks can trigger another build
@@ -95,6 +119,7 @@ deployment. Read [SECURITY.md](SECURITY.md) before giving it access to important
 | [Deployment](docs/deployment.md) | AWS setup, repositories and Slack |
 | [Configuration](docs/configuration.md) | Secrets, deployment settings and repository checks |
 | [Architecture](docs/architecture.md) | Execution, verification and supervision |
+| [Comparison](docs/comparison.md) | Published agent platforms, shared patterns and Mork's current gaps |
 | [Security](SECURITY.md) | Trust boundaries and known gaps |
 | [Local verification](docs/local-verification.md) | Run workflows and checks without AWS |
 | [Contributing](CONTRIBUTING.md) | Development setup and review |
