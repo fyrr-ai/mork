@@ -1,6 +1,6 @@
 # Deployment
 
-Mork runs in one AWS account. You need a VPC with private subnets and outbound HTTPS through NAT, [mise](https://mise.jdx.dev), Git, Docker with Buildx, AWS CLI v2, GitHub CLI (`gh`), OpenSSL, and an OpenAI-compatible LLM endpoint. Mise installs the project's pinned Bun, Node, OpenTofu, jq and verification tools. Use one GitHub machine-account token as described in [configuration](configuration.md#secrets).
+Mork runs in one AWS account. You need a VPC with private subnets and outbound HTTPS through NAT, [mise](https://mise.jdx.dev), Git, Docker with Buildx, AWS CLI v2, GitHub CLI (`gh`), OpenSSL, and an OpenAI-compatible LLM endpoint. Mise installs the project's pinned Bun, Node, OpenTofu, jq and verification tools. Configure one GitHub App installation or machine-account token as described in [configuration](configuration.md#secrets).
 
 ## 1. Local settings
 
@@ -30,6 +30,8 @@ mise run secrets:put
 ```
 
 Add `JEV_API` or `OPENAI_API_KEY` for a decision model, and `MORK_SLACK_SIGNING_SECRET`, `MORK_SLACK_BOT_TOKEN`, `MORK_JIRA_API_TOKEN` for Slack. The script never prints values. Missing values become `unset` on the first run. This is a disabled placeholder, not a usable signing secret. Configure required credentials before starting tasks.
+
+For a GitHub App, set `MORK_GITHUB_APP` to the JSON credential described in [configuration](configuration.md#github-app) instead of setting `MORK_GITHUB_TOKEN`, and set the deployment's `github_auth_mode = "app"`. The App's private key stays in Secrets Manager and trusted root/Lambda processes. Mork issues and renews repository-scoped installation tokens automatically, including Build's proxy token during long executions.
 
 ## 3. First deployment
 

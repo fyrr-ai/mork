@@ -1,0 +1,10 @@
+        - source:
+            type: file
+            path: "/mork-egress/github-token"
+            ttl: "30s"
+          inject:
+            header: "Authorization"
+            formatter: 'Basic {{ base64 "x-access-token:" .Value }}'
+          rules:
+            - host: "github.com"
+              paths: ["/@REPO@.git/*", "/@REPO@/*"]

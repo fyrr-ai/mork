@@ -94,7 +94,7 @@ export async function runWorkflowStep(ctx: WorkflowContext): Promise<{ ok: true;
         file: join(env.agentHome, "session.jsonl"),
         key: `${prefix}/steps/${step.name}/session`,
         store,
-        secrets,
+        secrets: () => secrets,
         piBin: env.piBin,
         piEnv: { PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin" },
         staging: join(env.workDir, "exports"),

@@ -27,11 +27,22 @@ sed -e "s|@LLM_HOST@|${MORK_LLM_HOST:?MORK_LLM_HOST is required}|g" \
     -e "s|@ALLOW_WARN@|${MORK_EGRESS_WARN:-true}|g" \
     -e "s|        # @EXTRA_DOMAINS@.*|${extra%\\n}|" /etc/mork-egress/base.yaml > "$config"
 # Build is the only phase that pushes: only its sidecar holds the push token.
-if [ -n "${GITHUB_TOKEN:-}" ]; then
+if [ -n "${GITHUB_TOKEN:-}${GITHUB_TOKEN_FILE:-}" ]; then
+  if [ -n "${GITHUB_TOKEN:-}" ] && [ -n "${GITHUB_TOKEN_FILE:-}" ]; then
+    echo "Configure only one GitHub credential source" >&2; exit 1
+  fi
   case "${MORK_REPO:-}" in
     */*) ;;
     *) echo "MORK_REPO (owner/repo) is required when the push token is set" >&2; exit 1 ;;
   esac
-  sed -e "s|@REPO@|${MORK_REPO}|g" /etc/mork-egress/github-push.yaml >> "$config"
+  if ! printf '%s\n' "$MORK_REPO" | grep -Eq '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'; then
+    echo "Invalid repository name" >&2; exit 1
+  fi
+  template=/etc/mork-egress/github-push.yaml
+  if [ -n "${GITHUB_TOKEN_FILE:-}" ]; then
+    [ "$GITHUB_TOKEN_FILE" = /mork-egress/github-token ] || { echo "Invalid GitHub token file" >&2; exit 1; }
+    template=/etc/mork-egress/github-app.yaml
+  fi
+  sed -e "s|@REPO@|${MORK_REPO}|g" "$template" >> "$config"
 fi
 exec iron-proxy -config "$config"

@@ -3,7 +3,7 @@
 // task to a person throws HandoverError, which the state's Catch routes.
 import { DevelopmentPolicy } from "@mork/contracts/development";
 import { panelFromEnv } from "@mork/decision";
-import { grafanaLiveUrl, loadSecrets, type SlackSource, slackSourceFromEnv } from "@mork/sources";
+import { githubAuthFromEnv, grafanaLiveUrl, loadSecrets, type SlackSource, slackSourceFromEnv } from "@mork/sources";
 import { Store } from "@mork/store";
 import { DynamoStore } from "@mork/timeline/dynamo";
 import { ask, type Deps, decide, type FlowState, handover, start } from "./flow.ts";
@@ -31,10 +31,9 @@ let deps: Deps | undefined;
 
 async function getDeps(): Promise<Deps> {
   if (deps) return deps;
-  await loadSecrets(process.env, ["GITHUB_TOKEN", "LLM_API_KEY", "JEV_API", "OPENAI_API_KEY"]);
-  const token = process.env.GITHUB_TOKEN;
-  if (!token) throw new Error("GITHUB_TOKEN is required");
-  const github = new GitHub(async () => token);
+  await loadSecrets(process.env, ["LLM_API_KEY", "JEV_API", "OPENAI_API_KEY"]);
+  const auth = await githubAuthFromEnv(process.env);
+  const github = new GitHub(auth.token);
   const llm = llmFromEnv(process.env);
   let slackSource: Promise<SlackSource> | undefined;
   // Slack and Jira credentials are only loaded for tasks that come from Slack.

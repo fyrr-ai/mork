@@ -37,7 +37,7 @@ data "aws_iam_policy_document" "station_exec_secrets" {
     resources = concat(
       [
         data.aws_secretsmanager_secret.this["llm_api_key"].arn,
-        data.aws_secretsmanager_secret.this["github_token"].arn,
+        data.aws_secretsmanager_secret.this[local.github_secret_key].arn,
       ],
       [for s in data.aws_secretsmanager_secret.decision : s.arn],
     )
@@ -182,7 +182,7 @@ resource "aws_ecs_task_definition" "phase" {
     # ECS stops the station before the sidecar it depends on, so the last push still goes out.
     stopTimeout = 120
     dependsOn   = [{ containerName = "egress", condition = "HEALTHY" }]
-    mountPoints = [{ sourceVolume = "egress-ca", containerPath = "/mork-egress", readOnly = true }]
+    mountPoints = [{ sourceVolume = "egress-ca", containerPath = "/mork-egress", readOnly = !(var.github_auth_mode == "app" && each.key == "build") }]
     environment = concat([
       { name = "MORK_PHASE", value = each.key },
       { name = "MORK_DEVELOPMENT_STEP", value = jsonencode(local.development_steps[each.key]) },
@@ -194,13 +194,14 @@ resource "aws_ecs_task_definition" "phase" {
       { name = "SLACK_BOT_TOKEN_SECRET_ID", value = local.source_secret_names.slack_bot_token },
       { name = "MORK_ENV", value = var.environment },
       ],
+      var.github_auth_mode == "app" && each.key == "build" ? [{ name = "GITHUB_TOKEN_FILE", value = "/mork-egress/github-token" }] : [],
       # Live log over OTLP/HTTP (optional), e.g. to Grafana Alloy or an OpenTelemetry collector.
       var.otlp_endpoint == null ? [] : [{ name = "OTEL_EXPORTER_OTLP_ENDPOINT", value = var.otlp_endpoint }],
       var.otel_resource_attributes == "" ? [] : [{ name = "OTEL_RESOURCE_ATTRIBUTES", value = var.otel_resource_attributes }],
       [for k, v in local.decision_settings : { name = k, value = v }],
     )
     secrets = concat(
-      [{ name = "GITHUB_TOKEN", valueFrom = data.aws_secretsmanager_secret.this["github_token"].arn }],
+      [{ name = local.github_env, valueFrom = data.aws_secretsmanager_secret.this[local.github_secret_key].arn }],
       # Every phase supervises its LLM station; the runner, not Pi, holds these keys.
       [for p, s in data.aws_secretsmanager_secret.decision : { name = local.decision_env[p], valueFrom = s.arn }],
     )
@@ -216,16 +217,16 @@ resource "aws_ecs_task_definition" "phase" {
     name      = "egress"
     image     = "${aws_ecr_repository.this["egress"].repository_url}@${lookup(var.image_digests, "egress", "sha256:missing")}"
     essential = true
-    environment = [
+    environment = concat([
       { name = "MORK_LLM_HOST", value = regex("^https?://([^/:]+)", var.llm_base_url)[0] },
       { name = "MORK_EGRESS_ALLOW", value = join(",", local.development_steps[each.key].allowed_domains) },
       # "false" blocks hosts outside the allowlist; "true" only logs them.
       { name = "MORK_EGRESS_WARN", value = tostring(!var.egress_enforce) },
-    ]
+    ], var.github_auth_mode == "app" && each.key == "build" ? [{ name = "GITHUB_TOKEN_FILE", value = "/mork-egress/github-token" }] : [])
     secrets = concat(
       [{ name = "LLM_API_KEY", valueFrom = data.aws_secretsmanager_secret.this["llm_api_key"].arn }],
       # Only Build injects GitHub authentication into the agent's proxied requests.
-      each.key == "build" ? [{ name = "GITHUB_TOKEN", valueFrom = data.aws_secretsmanager_secret.this["github_token"].arn }] : [],
+      each.key == "build" && var.github_auth_mode == "token" ? [{ name = "GITHUB_TOKEN", valueFrom = data.aws_secretsmanager_secret.this["github_token"].arn }] : [],
     )
     mountPoints = [{ sourceVolume = "egress-ca", containerPath = "/mork-egress" }]
     healthCheck = {

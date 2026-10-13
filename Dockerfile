@@ -84,7 +84,7 @@ COPY --from=proxy-binary /usr/local/bin/iron-proxy /usr/local/bin/iron-proxy
 COPY --from=proxy-binary /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY LICENSE NOTICE THIRD_PARTY_NOTICES.md /usr/share/licenses/mork/
 COPY licenses /usr/share/licenses/mork/licenses/
-COPY images/egress/base.yaml images/egress/github-push.yaml /etc/mork-egress/
+COPY images/egress/base.yaml images/egress/github-push.yaml images/egress/github-app.yaml /etc/mork-egress/
 COPY images/egress/entrypoint.sh /usr/local/bin/mork-egress
 ENV PATH=/usr/local/bin:/bin
 ENTRYPOINT ["/usr/local/bin/mork-egress"]
@@ -93,4 +93,4 @@ ENTRYPOINT ["/usr/local/bin/mork-egress"]
 FROM runner AS runner-test
 COPY --from=deps /bundles/runner-test /opt/mork
 COPY --from=deps /usr/local/bin/bun /usr/local/bin/bun
-CMD ["bun", "test", "packages/runner/src/gate.runtime.test.ts", "packages/runner/src/agentfs.test.ts", "packages/runner/src/git.test.ts", "packages/runner/src/phases.test.ts"]
+CMD ["bun", "test", "packages/runner/src/gate.runtime.test.ts", "packages/runner/src/agentfs.test.ts", "packages/runner/src/git.test.ts", "packages/runner/src/phases.test.ts", "packages/runner/src/github-auth.test.ts", "packages/sources/src/github-auth.test.ts"]

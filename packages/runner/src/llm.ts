@@ -41,7 +41,7 @@ export type LlmJob = {
   extensions?: string[];
   environment?: Record<string, string>;
   /** Implementer only: the agent commits and pushes `branch` itself. */
-  push?: { branch: string; remoteHead: () => string | undefined };
+  push?: { branch: string; remoteHead: () => Promise<string | undefined> };
   /**
    * The only brake on a run: every `everyMs` the decision model scores progress
    * and the supervisor steers or stops. There are no turn or time limits; Step
@@ -217,7 +217,7 @@ export async function runLlmStation(spec: LlmJob, env: RunnerEnv, repoDir: strin
         }
         if (parsed.success) {
           output = parsed.data;
-          problem = spec.push && spec.repo ? (pushProblem(spec.repo.base_sha, spec.push, opts) ?? "") : "";
+          problem = spec.push && spec.repo ? ((await pushProblem(spec.repo.base_sha, spec.push, opts)) ?? "") : "";
           if (!problem && spec.verify) {
             // Pushed and submitted, but does it pass the repository's own checks? Still the agent's turn to fix it.
             const verified = await verifyAsAgent(env, verifyFile, opts);
@@ -366,11 +366,11 @@ function pushWip(branch: string, baseSha: string, opts: { cwd: string; env: Reco
  * words the agent can act on. Runs git as the agent user: as root inside an
  * agent-owned repository git would execute whatever hooks the agent set up.
  */
-function pushProblem(
+async function pushProblem(
   baseSha: string,
   push: NonNullable<LlmJob["push"]>,
   opts: { cwd: string; env: Record<string, string>; uid?: number; gid?: number },
-): string | undefined {
+): Promise<string | undefined> {
   const git = (...args: string[]) => exec("git", args, opts).output.trim();
   const head = git("symbolic-ref", "--short", "HEAD");
   if (head !== push.branch) return `Your work must stay on branch ${push.branch}, but HEAD is ${head || "detached"}. Switch back and push it.`;
@@ -378,7 +378,7 @@ function pushProblem(
   if (dirty) return `You have uncommitted changes:\n${dirty.slice(0, 1000)}\nCommit them and push with \`git push origin ${push.branch}\`.`;
   if (git("rev-list", "--count", `${baseSha}..HEAD`) === "0") return `There are no commits on ${push.branch} yet. Commit your change and push it.`;
   const local = git("rev-parse", "HEAD");
-  const remote = push.remoteHead();
+  const remote = await push.remoteHead();
   if (remote !== local) {
     return `${push.branch} on origin is ${remote ?? "missing"}, your HEAD is ${local}. Push with \`git push origin ${push.branch}\` (no force).`;
   }

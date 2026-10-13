@@ -1,7 +1,7 @@
 // Runs inside the final images, with networking disabled except container loopback.
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { createHmac } from "node:crypto";
+import { createHmac, generateKeyPairSync, verify } from "node:crypto";
 import { chownSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
@@ -14,6 +14,14 @@ if (process.argv[2] === "lambda") {
   }
   const timestamp = String(Math.floor(Date.now() / 1000));
   const body = JSON.stringify({ type: "url_verification", challenge: "bundled-lambda-works" });
+  const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const appBody = JSON.stringify({
+    action: "labeled",
+    label: { name: "mork" },
+    repository: { full_name: "example-org/mork" },
+    issue: { number: 1 },
+    sender: { login: "tomsej", type: "User" },
+  });
   const cases = [
     {
       handler: "packages/steps/lambda-intake.handler",
@@ -38,11 +46,35 @@ if (process.argv[2] === "lambda") {
       handler: "packages/steps/lambda-steps.handler",
       event: { action: "start" },
       environment: {},
-      error: "GITHUB_TOKEN is required",
+      error: "GITHUB_TOKEN or GITHUB_APP is required",
+    },
+    {
+      handler: "packages/steps/lambda-intake.handler",
+      event: {
+        requestContext: { http: { method: "POST", path: "/" } },
+        body: appBody,
+        headers: {
+          "x-github-event": "issues",
+          "x-hub-signature-256": `sha256=${createHmac("sha256", "image-test-secret").update(appBody).digest("hex")}`,
+        },
+      },
+      environment: {
+        WEBHOOK_SECRET: "image-test-secret",
+        REPO_ALLOWLIST: "example-org/mork",
+        GITHUB_APP: JSON.stringify({
+          appId: "12345",
+          installationId: 99,
+          privateKey: privateKey.export({ type: "pkcs1", format: "pem" }).toString(),
+        }),
+      },
+      expected: { statusCode: 202 },
+      app: true,
     },
   ];
   for (const test of cases) {
     let delivered = false;
+    let minted = false;
+    let authenticated = false;
     let finish: (value: { path: string; body: any }) => void;
     const answer = new Promise<{ path: string; body: any }>((resolve) => {
       finish = resolve;
@@ -63,16 +95,41 @@ if (process.argv[2] === "lambda") {
       const chunks: Buffer[] = [];
       for await (const chunk of request) chunks.push(Buffer.from(chunk));
       const body = Buffer.concat(chunks).toString("utf8");
+      if (test.app && request.url === "/app/installations/99/access_tokens") {
+        const [header, payload, signature] = (request.headers.authorization ?? "").slice(7).split(".");
+        assert(header && payload && signature);
+        assert(verify("RSA-SHA256", Buffer.from(`${header}.${payload}`), publicKey, Buffer.from(signature, "base64url")));
+        assert.equal(JSON.parse(Buffer.from(payload, "base64url").toString()).iss, "12345");
+        assert.deepEqual(JSON.parse(body), { repositories: ["mork"] });
+        minted = true;
+        response
+          .writeHead(201, { "content-type": "application/json" })
+          .end(JSON.stringify({ token: "ghs-image-app-token", expires_at: new Date(Date.now() + 3_600_000).toISOString() }));
+        return;
+      }
+      if (test.app && request.url === "/repos/example-org/mork/collaborators/tomsej/permission") {
+        assert.equal(request.headers.authorization, "Bearer ghs-image-app-token");
+        authenticated = true;
+        response.writeHead(200, { "content-type": "application/json" }).end('{"role_name":"read"}');
+        return;
+      }
       response.writeHead(202).end();
       finish({ path: request.url ?? "", body: body ? JSON.parse(body) : null });
     });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const address = server.address();
     assert(address && typeof address !== "string");
+    const hook = "/tmp/mork-app-fetch.mjs";
+    if (test.app)
+      writeFileSync(
+        hook,
+        `const original = globalThis.fetch; globalThis.fetch = (input, init) => { const url = new URL(String(input)); if (url.hostname === 'api.github.com') { url.protocol = 'http:'; url.host = '127.0.0.1:${address.port}'; } return original(url, init); };`,
+      );
     const child = spawn(process.execPath, ["/var/runtime/entrypoint.mjs", test.handler], {
       env: {
         PATH: process.env.PATH,
         HOME: "/tmp",
+        NODE_OPTIONS: test.app ? `--import=${hook}` : "",
         AWS_REGION: "eu-west-1",
         AWS_LAMBDA_RUNTIME_API: `127.0.0.1:${address.port}`,
         AWS_LAMBDA_FUNCTION_NAME: "image-test",
@@ -104,10 +161,14 @@ if (process.argv[2] === "lambda") {
         assert.equal(result.path, "/2018-06-01/runtime/invocation/image-test/error");
         assert.equal(result.body.errorMessage, test.error);
       } else {
-        assert.equal(result.path, "/2018-06-01/runtime/invocation/image-test/response");
+        assert.equal(result.path, "/2018-06-01/runtime/invocation/image-test/response", JSON.stringify(result.body));
         assert.deepEqual(result.body, test.expected);
       }
       console.log(`Lambda Runtime API passed: ${test.handler}`);
+      if (test.app) {
+        assert(minted && authenticated);
+        console.log("Compiled GitHub App intake passed: JWT signature, scoped token and authenticated permission check");
+      }
     } finally {
       clearTimeout(timer);
       child.kill("SIGKILL");
