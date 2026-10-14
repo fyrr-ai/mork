@@ -3,7 +3,6 @@ import {
   type Answer,
   boundEvidence,
   checkBudget,
-  chooseRepairs,
   criterionVerdict,
   type Decider,
   DecisionPanel,
@@ -12,6 +11,7 @@ import {
   judgeCriteria,
   OpenAiDecider,
   panelFromEnv,
+  pickRepairs,
   STEER_GRACE_MS,
   supervise,
   triageFrom,
@@ -186,19 +186,16 @@ describe("policies", () => {
     expect(findingPriority({ severity: "P1" }, answer(0.5))).toMatchObject({ fix: true, decidedBy: "reviewer" });
     expect(findingPriority({ severity: "P2" }, { type: "undecided", reason: "jev 500" })).toMatchObject({ fix: false, decidedBy: "reviewer" });
   });
-  test("repairs take the most urgent findings first and stop at the limit", async () => {
-    const finding = { category: "bug", where: "a.ts:1", what: "x", excerpt: "1: x" };
-    const offline = await chooseRepairs(
-      new DecisionPanel([]),
-      [
-        { ...finding, severity: "P1" },
-        { ...finding, severity: "P2" },
-        { ...finding, severity: "P0" },
-      ],
-      1,
-    );
-    expect(offline.chosen).toEqual([2]);
-    expect(offline.trace).toBeUndefined();
+  test("repairs take the most urgent repairable findings first and stop at the limit", () => {
+    const urgent = (p?: number) => ({ fix: true, p, decidedBy: "decision model" as const, reason: "" });
+    const findings = [
+      { severity: "P1" as const, repairable: true },
+      { severity: "P0" as const, repairable: false },
+      { severity: "P2" as const, repairable: true },
+      { severity: "P0" as const, repairable: true },
+    ];
+    expect(pickRepairs(findings, [urgent(0.85), urgent(1), urgent(0.95), urgent()], 2)).toEqual([3, 2]);
+    expect(pickRepairs(findings, [urgent(0.85), urgent(1), { fix: false, decidedBy: "reviewer", reason: "" }, urgent()], 5)).toEqual([3, 0]);
   });
   test("supervision steers once, waits out the grace, then stops", () => {
     const stuck = { worker_stuck: { type: "noul" as const, p: 0.9 } };

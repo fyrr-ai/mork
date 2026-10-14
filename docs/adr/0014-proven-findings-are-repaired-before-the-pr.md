@@ -19,7 +19,9 @@ After a green gate, Decide sends findings back to Build when all of this holds:
 - the run has a repair round left (`repairs.rounds` in the development workflow, 3 by default, 0 turns repairs off),
 - the rules would not hand the task to a person anyway (protected path, security-sensitive change).
 
-At most three findings go back per round, the most urgent first. Each repair round adds a Build attempt of its own, so a gate failure never costs a repair and a repair never costs a gate retry; the run timeout counts these attempts. The gate judges the result, and the review after the last round goes to the PR and the recommendation as before. A P0 that survives still means takeover. Every priority the decision model gave is recorded in the timeline under `findings`.
+At most three findings go back per round, the most urgent first. Each repair round adds a Build attempt of its own, so a gate failure never costs a repair and a repair never costs a gate retry; the run timeout counts these attempts. The gate judges the result, and the review after the last round goes to the PR. Every priority the decision model gave is recorded in the timeline under `findings`.
+
+The recommendation uses the same priorities instead of the reviewer's severity: a finding rated must-fix keeps the PR at careful review, a minor one raises nothing, and a reviewer P0 alone no longer takes the task over. Reviewers often call a P1 or a non-issue P0, and a takeover throws away a tested change.
 
 ## Consequences
 
@@ -27,5 +29,6 @@ At most three findings go back per round, the most urgent first. Each repair rou
 - The implementer may leave a finding unfixed and say why in `deviations`; nothing checks that a repaired finding is gone except the next review.
 - Findings without a matching quote stay in the PR text and never trigger a repair.
 - Fix runs after the PR ([ADR 12](0012-fix-runs-after-the-pr.md)) get their own repair rounds.
-- The recommendation's hard rules still use the reviewer's severity; whether they should use the decision model's priority is open.
+- Protected paths and security-sensitive changes still take the task over; only the reviewer's severity lost that power.
+- Merging without a person is the goal; these priorities are one of the signals it will rest on.
 - The 0.8 threshold is a guess until the timeline links these priorities to PR outcomes.

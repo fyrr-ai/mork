@@ -128,9 +128,9 @@ export type Review = z.infer<typeof Review>;
 
 export const MAX_REPAIR_FINDINGS = 3;
 
-/** Findings a repair may take on: bugs and security issues whose quote the runner found in the commit. */
-export function repairCandidates(review: Review): Review["findings"] {
-  return review.findings.filter((f) => f.located && (f.category === "bug" || f.category === "security"));
+/** Whether a repair may take on a finding: a bug or security issue whose quote the runner found in the commit. */
+export function repairCandidate(finding: Review["findings"][number]): boolean {
+  return finding.located !== null && (finding.category === "bug" || finding.category === "security");
 }
 
 /** Feedback that sends the chosen findings back to Build. */

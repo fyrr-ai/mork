@@ -19,16 +19,17 @@ import {
   PublicPlan,
   Review,
   RunResult,
-  repairCandidates,
+  repairCandidate,
   repairFeedback,
 } from "@mork/contracts";
 import { DEFAULT_DEVELOPMENT_POLICY, type DevelopmentPolicy } from "@mork/contracts/development";
 import {
   type CriterionVerdict,
-  chooseRepairs,
   type DecisionPanel,
   type DecisionTrace,
   judgeCriteria,
+  pickRepairs,
+  prioritizeFindings,
   type Triage,
   triage,
   triageMessage,
@@ -313,37 +314,53 @@ export async function decide(deps: Deps, state: FlowState): Promise<FlowState> {
   const impl = ImplementerOutput.parse(await store.json(keys.impl(brief.prefix, brief.attempt)));
   const issue = IssueDoc.parse(await store.json(keys.issue(brief.prefix)));
   const attempt = `check-${brief.attempt}`;
-  // Proven defects go back to Build before a person sees the PR, as many times as the policy allows; each
-  // repair adds a Build attempt of its own. The decision model sets their priority. Changes the rules hand
-  // to a person anyway are not repaired first.
+  // The decision model sets each finding's priority. Proven defects it rates must-fix go back to Build before
+  // a person sees the PR, as many times as the policy allows; each repair adds a Build attempt of its own.
+  // Changes the rules hand to a person anyway are not repaired first.
+  const prioritized = await prioritizeFindings(
+    deps.panel,
+    review.findings.map((f) => ({
+      severity: f.severity,
+      category: f.category,
+      where: f.where,
+      what: f.what,
+      excerpt: f.located?.excerpt ?? f.quote,
+    })),
+  );
   const repairs = state.repair ?? { rounds: 0, findings: 0 };
   const takeover = (gate.diff_policy?.protected_hits ?? []).length > 0 || plan.security_sensitive || state.security === true;
   const allowed = (state.policy ?? DEFAULT_DEVELOPMENT_POLICY).repairs.rounds;
-  const candidates = repairs.rounds >= allowed || takeover ? [] : repairCandidates(review);
-  if (candidates.length) {
-    const { chosen, priorities, trace } = await chooseRepairs(
-      deps.panel,
-      candidates.map((f) => ({ severity: f.severity, category: f.category, where: f.where, what: f.what, excerpt: f.located?.excerpt ?? f.quote })),
-      MAX_REPAIR_FINDINGS,
-    );
-    const defects = chosen.map((index) => candidates[index] as Review["findings"][number]);
-    const findings = defects.map((f) => `${f.severity} ${f.category} ${f.where}: ${f.what}`);
-    if (trace) {
-      const decided = candidates.map((f, index) => ({ where: f.where, severity: f.severity, ...priorities[index] }));
-      await recordDecision(deps.timeline, { task: task.id, point: "findings", attempt, trace, action: { priorities: decided, repair: findings } });
-    }
-    if (defects.length) {
-      await store.put(keys.feedback(brief.prefix, brief.attempt + 1), repairFeedback(defects), "text/markdown");
-      await reporter.report({ kind: "repair", attempt: brief.attempt, findings: defects.map((f) => `\`${f.where}\`: ${f.what.slice(0, 200)}`) });
-      deps.log(task.id, "review.repair", { attempt: brief.attempt, round: repairs.rounds + 1, findings });
-      return {
-        ...state,
-        brief: { ...brief, attempt: brief.attempt + 1, last_attempt: lastAttempt(brief) + 1 },
-        next: "build",
-        last: undefined,
-        repair: { rounds: repairs.rounds + 1, findings: repairs.findings + defects.length },
-      };
-    }
+  const chosen =
+    repairs.rounds >= allowed || takeover
+      ? []
+      : pickRepairs(
+          review.findings.map((f) => ({ severity: f.severity, repairable: repairCandidate(f) })),
+          prioritized.priorities,
+          MAX_REPAIR_FINDINGS,
+        );
+  const defects = chosen.map((index) => review.findings[index] as Review["findings"][number]);
+  const findings = defects.map((f) => `${f.severity} ${f.category} ${f.where}: ${f.what}`);
+  if (prioritized.trace) {
+    const decided = review.findings.map((f, index) => ({ where: f.where, severity: f.severity, ...prioritized.priorities[index] }));
+    await recordDecision(deps.timeline, {
+      task: task.id,
+      point: "findings",
+      attempt,
+      trace: prioritized.trace,
+      action: { priorities: decided, repair: findings },
+    });
+  }
+  if (defects.length) {
+    await store.put(keys.feedback(brief.prefix, brief.attempt + 1), repairFeedback(defects), "text/markdown");
+    await reporter.report({ kind: "repair", attempt: brief.attempt, findings: defects.map((f) => `\`${f.where}\`: ${f.what.slice(0, 200)}`) });
+    deps.log(task.id, "review.repair", { attempt: brief.attempt, round: repairs.rounds + 1, findings });
+    return {
+      ...state,
+      brief: { ...brief, attempt: brief.attempt + 1, last_attempt: lastAttempt(brief) + 1 },
+      next: "build",
+      last: undefined,
+      repair: { rounds: repairs.rounds + 1, findings: repairs.findings + defects.length },
+    };
   }
   const untestable = plan.acceptance_criteria.filter((c) => !c.testable);
   const judged = await judgeCriteria(
@@ -359,6 +376,7 @@ export async function decide(deps: Deps, state: FlowState): Promise<FlowState> {
     review,
     criteria: judged.verdicts,
     securityTriage: state.security === true,
+    priorities: prioritized.priorities,
     panel: deps.panel,
   });
   if (trace) await recordDecision(deps.timeline, { task: task.id, point: "recommendation", attempt, trace, action: rec });

@@ -69,8 +69,8 @@ Whether the code works is decided by tests, not by a model.
    | Level | When | What the person gets |
    | --- | --- | --- |
    | **Quick look** | Gate green, small low-risk diff, clean review, confident model | Draft PR, label `review:quick` |
-   | **Careful review** (default) | Moderate risk, larger diff, reviewer findings, or an unsure model | Draft PR, label `review:careful` |
-   | **Take over** | Gate still failing, security change, protected paths, P0 finding left after its repair | No PR; label `needs-human` and the reason; the branch stays |
+   | **Careful review** (default) | Moderate risk, larger diff, findings the decision model rates must-fix, or an unsure model | Draft PR, label `review:careful` |
+   | **Take over** | Gate still failing, security change, protected paths | No PR; label `needs-human` and the reason; the branch stays |
 
    The PR starts with the recommendation, the checks table (everything that ran), where to start reading, and links to the agents' transcripts.
 

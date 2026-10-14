@@ -13,11 +13,11 @@ import {
   MAX_REPAIR_FINDINGS,
   parseRepoConfig,
   Review,
-  repairCandidates,
+  repairCandidate,
   repairFeedback,
 } from "@mork/contracts";
 import { DEFAULT_DEVELOPMENT, DevelopmentWorkflow } from "@mork/contracts/development";
-import { chooseRepairs, DecisionPanel } from "@mork/decision";
+import { DecisionPanel, pickRepairs, prioritizeFindings } from "@mork/decision";
 import { LocalStore } from "@mork/store/local";
 import { z } from "zod";
 import { exec, mustExec, remoteHead, SAFE_GIT } from "./git.ts";
@@ -151,19 +151,24 @@ export async function runLocalWorkflow(options: LocalOptions): Promise<LocalResu
       const checked = await check(ctx);
       signal.throwIfAborted();
       // As in Decide: the reviewer's proven defects get the configured repairs before the result counts.
-      const candidates =
+      const review =
         checked.ok && checked.passed && manifest.repairs < manifest.definition.repairs.rounds
-          ? repairCandidates(Review.parse(await store.json(keys.review(ctx.brief.prefix, ctx.brief.attempt))))
-          : [];
-      const { chosen } = await chooseRepairs(
+          ? Review.parse(await store.json(keys.review(ctx.brief.prefix, ctx.brief.attempt)))
+          : undefined;
+      const findings = review?.findings ?? [];
+      const { priorities } = await prioritizeFindings(
         ctx.panel,
-        candidates.map((f) => ({ severity: f.severity, category: f.category, where: f.where, what: f.what, excerpt: f.located?.excerpt ?? f.quote })),
+        findings.map((f) => ({ severity: f.severity, category: f.category, where: f.where, what: f.what, excerpt: f.located?.excerpt ?? f.quote })),
+      );
+      const chosen = pickRepairs(
+        findings.map((f) => ({ severity: f.severity, repairable: repairCandidate(f) })),
+        priorities,
         MAX_REPAIR_FINDINGS,
       );
       if (chosen.length) {
         await store.put(
           keys.feedback(ctx.brief.prefix, ctx.brief.attempt + 1),
-          repairFeedback(chosen.map((index) => candidates[index] as Review["findings"][number])),
+          repairFeedback(chosen.map((index) => findings[index] as Review["findings"][number])),
         );
         manifest.repairs += 1;
         // A repair brings its own Build attempt.

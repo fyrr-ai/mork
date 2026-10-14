@@ -116,8 +116,8 @@ export async function judgeCriteria(
 
 // ------------------------------------------------------ reviewer findings
 // The decision model sets each finding's priority from the finding and the code
-// around its quote. A finding is repaired when the model is confident it must be
-// fixed before merge; an undecided answer falls back to the reviewer's severity.
+// around its quote: whether it is repaired before the PR, and whether it keeps the
+// PR at careful review. An undecided answer falls back to the reviewer's severity.
 
 export const REPAIR_AT = 0.8;
 
@@ -166,19 +166,17 @@ export async function prioritizeFindings(
 }
 
 /** The findings to repair, most urgent first, at most `max`, as indexes into `findings`. */
-export async function chooseRepairs(
-  panel: DecisionPanel,
-  findings: FindingEvidence[],
+export function pickRepairs(
+  findings: { severity: FindingEvidence["severity"]; repairable: boolean }[],
+  priorities: Priority[],
   max: number,
-): Promise<{ chosen: number[]; priorities: Priority[]; trace?: DecisionTrace }> {
-  const { priorities, trace } = await prioritizeFindings(panel, findings);
+): number[] {
   const urgency = (index: number) => priorities[index]?.p ?? (findings[index]?.severity === "P0" ? 1 : REPAIR_AT);
-  const chosen = findings
+  return findings
     .map((_, index) => index)
-    .filter((index) => priorities[index]?.fix)
+    .filter((index) => findings[index]?.repairable && priorities[index]?.fix)
     .sort((a, b) => urgency(b) - urgency(a))
     .slice(0, max);
-  return { chosen, priorities, trace };
 }
 
 // ------------------------------------------------ implementer supervision

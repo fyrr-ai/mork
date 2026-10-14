@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type AnalystOutput, type GateReport, keys, MAX_BUILD_ATTEMPTS, type Review } from "@mork/contracts";
 import { DEFAULT_DEVELOPMENT_POLICY } from "@mork/contracts/development";
-import { type Answer, type Decider, DecisionPanel } from "@mork/decision";
+import { type Answer, type Decider, DecisionPanel, findingPriority, type Priority } from "@mork/decision";
 import type { ReportEvent } from "@mork/sources";
 import { LocalStore } from "@mork/store/local";
 import { linkPr, MemoryStore as TimelineMemory } from "@mork/timeline";
@@ -69,6 +69,7 @@ const rec = async (input: {
   panel: DecisionPanel;
   criteria?: typeof passed;
   security?: boolean;
+  priorities?: Priority[];
 }) =>
   (
     await recommend({
@@ -77,6 +78,7 @@ const rec = async (input: {
       review: input.review ?? review,
       criteria: input.criteria ?? passed,
       securityTriage: input.security ?? false,
+      priorities: input.priorities ?? (input.review ?? review).findings.map((f) => findingPriority(f, undefined)),
       panel: input.panel,
     })
   ).rec.level;
@@ -102,6 +104,15 @@ describe("recommendation", () => {
     expect(await rec({ panel: q, review: { ...review, findings: [{ ...finding, where: "a:1", what: "x" }] } })).toBe("careful");
     const flagged = { ...gate, diff_policy: { ...gate.diff_policy, flags: ["test script changed"] } };
     expect(await rec({ panel: q, gate: flagged })).toBe("careful");
+  });
+  test("a finding's priority decides, not the reviewer's severity, and a P0 never takes the task over by itself", async () => {
+    const q = live(fixedDecider("quick", 0.99));
+    const p0 = { ...review, findings: [{ ...finding, severity: "P0" as const }] };
+    const minor = { fix: false, decidedBy: "decision model" as const, reason: "can wait" };
+    const urgent = { fix: true, decidedBy: "decision model" as const, reason: "must be fixed" };
+    expect(await rec({ panel: q, review: p0, priorities: [minor] })).toBe("quick");
+    expect(await rec({ panel: q, review: p0, priorities: [urgent] })).toBe("careful");
+    expect(await rec({ panel: q, review: { ...review, findings: [{ ...finding, severity: "P2" as const }] }, priorities: [urgent] })).toBe("careful");
   });
   test("a changed file the reviewer did not read keeps careful", async () => {
     const partial = { ...review, unreviewed_files: ["infra/main.tf"] };
@@ -286,7 +297,10 @@ describe("repair before the PR", () => {
     expect(feedback).toContain("2:   return a - b;");
     expect(feedback.match(/^## /gm)).toHaveLength(1);
     expect(await timeline.get("task#o/r#1/abc", "decision#findings#check-1")).toMatchObject({
-      action: { priorities: [{ fix: true, decidedBy: "decision model" }], repair: [expect.stringContaining("math.mjs:2")] },
+      action: {
+        priorities: expect.arrayContaining([expect.objectContaining({ fix: true, decidedBy: "decision model" })]),
+        repair: [expect.stringContaining("math.mjs:2")],
+      },
     });
   });
   test("the decision model's priority overrides the reviewer's severity both ways", async () => {
