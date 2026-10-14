@@ -207,15 +207,18 @@ export function pickRepairs(
 export const SUPERVISION_QUESTIONS = {
   worker_stuck: {
     type: "noul",
-    instructions: "Is the coding agent stuck: repeating the same commands or failing the same way without changing its approach?",
+    instructions:
+      "Is the agent stuck: repeating the same commands or failing the same way without changing its approach? Reading different relevant files is normal for an analyst or read-only verifier; lack of code edits does not establish a loop.",
   },
   work_off_track: {
     type: "noul",
-    instructions: "Is the coding agent working on something the task does not ask for?",
+    instructions:
+      "Is the agent working on something the task does not ask for? Judge work against its task and station role. Analyst, verifier and criteria stations read and reason; only the implementer edits project files.",
   },
   meaningful_progress: {
     type: "noul",
-    instructions: "Has the coding agent made meaningful progress toward the task since the previous check?",
+    instructions:
+      "Compare previous_check with the current evidence. Has the agent made meaningful progress toward its task in its station role? For analyst, verifier and criteria stations, relevant new repository evidence, resolved uncertainties, test design and completed analysis count as progress; a code diff is not expected. Do not infer no progress merely from elapsed time or the absence of edits. If the evidence does not establish progress or its absence, return undecided.",
   },
 } satisfies Record<string, Question>;
 
@@ -229,7 +232,8 @@ export type SupervisionAction = { action: "continue" } | { action: "steer"; mess
 const STEER_TEXT: Record<string, string> = {
   worker_stuck: "You are repeating the same steps without progress. Stop, re-read the failing output, and try a different approach.",
   work_off_track: "You are working on something the task does not ask for. Re-read the task and acceptance criteria and work only on them.",
-  meaningful_progress: "There has been no progress since the last check. Pick the next acceptance criterion and make a concrete change toward it.",
+  meaningful_progress:
+    "There has been no progress since the last check. Focus on the next task requirement and produce a concrete result appropriate to your role. Read-only stations should finish analysis or evidence without editing project files.",
 };
 
 export function problemSignals(answers: Record<string, Answer>): string[] {
