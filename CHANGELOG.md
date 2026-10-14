@@ -4,6 +4,7 @@
 
 Prepared for release; not published.
 
+- Ask the decision model about a running station only on cheap signals (repeated tool call, tool errors in a row, implementer diff unchanged for 10 minutes) or every 5 minutes, instead of every 45 seconds.
 - Open a draft PR labelled `needs-human` on every handover whose branch has work, so the person taking over starts from a PR and `@mork` can continue it.
 - Give the reviewer the changed files and rules by file type, verify each finding's quote in the reviewed commit, and send proven defects that Jev rates must-fix back to Build before the PR (`repairs.rounds`, 3 by default, each with its own Build attempt). The recommendation uses the same priorities; a reviewer P0 alone no longer takes the task over.
 - Configure the original development workflow and generic agent, command and approval workflows through Terraform; route one Slack app exclusively through Jev.

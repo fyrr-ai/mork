@@ -107,7 +107,7 @@ export async function runLocalWorkflow(options: LocalOptions): Promise<LocalResu
       githubToken: async () => "",
       model: options.model,
       panel: new DecisionPanel([]),
-      superviseEveryMs: 45_000,
+      superviseEveryMs: 300_000,
       reporter: {
         report: async (event) => {
           console.error(JSON.stringify(event));

@@ -24,7 +24,7 @@ Required: `vpc_id`, `vpc_cidr_block`, `vpc_private_subnet_ids`, `repo_allowlist`
 | `routing_confidence` | `0.85` | Minimum Jev confidence before starting a workflow |
 | `jira_base_url`, `jira_email` | `""` | Jira Cloud site and service account for Slack tasks |
 | `station_size` | 2048 CPU, 8192 MiB, 40 GiB | Fargate size of a phase container |
-| `supervise_seconds` | 45 | How often the supervisor checks a running station |
+| `supervise_seconds` | 300 | Longest time between two supervision questions to the decision model; signals ask earlier |
 | `egress_enforce` | `false` | Block instead of log requests outside the allowlist |
 | `otlp_endpoint`, `otlp_cidr_block` | `null` | Live log over OTLP/HTTP |
 | `otel_resource_attributes` | `""` | Extra attributes on the live log |
@@ -121,7 +121,7 @@ The Terraform module sets these; they are listed for running the code elsewhere.
 | --- | --- |
 | `MORK_PHASE`, `MORK_BRIEF`, `MORK_TASK_TOKEN` | Set per run by Step Functions |
 | `MORK_BUCKET`, `GITHUB_TOKEN` or `GITHUB_APP`, `MORK_MODEL`, `LLM_BASE_URL` | Inputs, GitHub authentication, LLM |
-| `MORK_SUPERVISE_SECONDS` | Supervision interval |
+| `MORK_SUPERVISE_SECONDS` | Longest time between two supervision questions |
 | `MORK_EGRESS_PROXY`, `MORK_EGRESS_CA` | Sidecar address and CA (defaults `http://127.0.0.1:3128`, `/mork-egress/ca.crt`) |
 | `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_RESOURCE_ATTRIBUTES`, `MORK_ENV` | Live log (optional) |
 | `PI_BIN`, `MORK_EXTENSIONS`, `MORK_WORK`, `MORK_AGENT_*`, `MORK_SANDBOX_*` | Image layout; defaults match the Dockerfile |

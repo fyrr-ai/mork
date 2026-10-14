@@ -146,9 +146,9 @@ variable "station_size" {
 }
 
 variable "supervise_seconds" {
-  description = "How often each phase container asks the decision model whether its LLM station is stuck."
+  description = "Longest time between two questions to the decision model about a running LLM station; signals such as repeated tool calls ask earlier."
   type        = number
-  default     = 45
+  default     = 300
 
   validation {
     condition     = var.supervise_seconds >= 1 && var.supervise_seconds == floor(var.supervise_seconds)

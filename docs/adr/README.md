@@ -19,3 +19,4 @@ Decisions that are hard to reverse, surprising without their context, or the res
 | 13 | [One GitHub token](0013-one-github-token.md) |
 | 14 | [Proven findings are repaired before the PR](0014-proven-findings-are-repaired-before-the-pr.md) |
 | 15 | [Handovers open a draft PR](0015-handovers-open-a-draft-pr.md) |
+| 16 | [Supervision asks on signals](0016-supervision-asks-on-signals.md) |
