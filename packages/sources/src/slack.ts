@@ -133,6 +133,8 @@ export function statusOf(event: ReportEvent): Status {
       return "checking";
     case "check":
       return event.passed ? "checking" : "working";
+    case "repair":
+      return "working";
     case "pr":
     case "fixed":
       return "ready";
@@ -196,6 +198,8 @@ export function slackText(event: ReportEvent): string {
     case "check":
       if (event.passed) return "*Checks passed:* repository tests, hidden tests and review";
       return `*Checks failed* (attempt ${event.attempt})${event.failures?.length ? `\n${bullets(event.failures)}` : ""}`;
+    case "repair":
+      return `*Review found ${count(event.findings.length, "defect")}, fixing before the PR:*\n${bullets(event.findings)}`;
     case "pr":
       return `*Draft PR ready:* ${link(event.url, prLabel(event.url))}\n*Recommendation:* ${REVIEW_LEVEL_TEXT[event.level]}${event.reasons.length ? `\n${bullets(event.reasons)}` : ""}${event.transcripts_url ? `\n${link(event.transcripts_url, "Agent transcripts")}` : ""}`;
     case "handover":

@@ -17,7 +17,7 @@ export type Trace = {
   providers: Record<string, { answers: Record<string, unknown>; ms: number }>;
 };
 
-export type DecisionPoint = "triage" | "criteria" | "recommendation" | "supervision";
+export type DecisionPoint = "triage" | "criteria" | "findings" | "recommendation" | "supervision";
 
 export type DecisionItem = {
   pk: string;

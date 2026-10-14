@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type AnalystOutput, type GateReport, keys, MAX_BUILD_ATTEMPTS, type ReviewerOutput } from "@mork/contracts";
+import { type AnalystOutput, type GateReport, keys, MAX_BUILD_ATTEMPTS, type Review } from "@mork/contracts";
 import { DEFAULT_DEVELOPMENT_POLICY } from "@mork/contracts/development";
 import { type Answer, type Decider, DecisionPanel } from "@mork/decision";
 import type { ReportEvent } from "@mork/sources";
@@ -32,11 +32,21 @@ const gate = {
   hidden: [{ file: "add.test.mjs", criteria: ["AC1"], passed: true, output: "" }],
   diff_policy: { violations: [], changed_files: ["math.mjs"], protected_hits: [], flags: [], added_lines: 3, removed_lines: 1 },
 } satisfies GateReport;
-const review: ReviewerOutput = {
+const review: Review = {
   summary: "ok",
+  files_reviewed: ["math.mjs"],
+  unreviewed_files: [],
   criteria: [{ id: "AC2", pass: true, evidence: [{ where: "README.md:3", quote: "add(a, b) returns the sum" }] }],
   findings: [],
   read_first: [],
+};
+const finding: Review["findings"][number] = {
+  severity: "P1",
+  category: "bug",
+  where: "math.mjs:2",
+  quote: "return a - b;",
+  what: "add subtracts",
+  located: { line: 2, excerpt: "2:   return a - b;" },
 };
 /** Answers the level question with `choice` and every yes/no question with `p`. */
 const fixedDecider = (choice: string, confidence: number, p = 0.95): Decider => ({
@@ -55,7 +65,7 @@ const passed = [{ id: "AC2", verdict: "pass" as const, p: 0.95, reason: "p=0.95"
 const rec = async (input: {
   plan?: AnalystOutput;
   gate?: GateReport;
-  review?: ReviewerOutput;
+  review?: Review;
   panel: DecisionPanel;
   criteria?: typeof passed;
   security?: boolean;
@@ -89,9 +99,13 @@ describe("recommendation", () => {
     const q = live(fixedDecider("quick", 0.99));
     expect(await rec({ panel: q, plan: { ...plan, security_sensitive: true } })).toBe("takeover");
     expect(await rec({ panel: q, security: true })).toBe("takeover");
-    expect(await rec({ panel: q, review: { ...review, findings: [{ severity: "P1", where: "a:1", what: "x" }] } })).toBe("careful");
+    expect(await rec({ panel: q, review: { ...review, findings: [{ ...finding, where: "a:1", what: "x" }] } })).toBe("careful");
     const flagged = { ...gate, diff_policy: { ...gate.diff_policy, flags: ["test script changed"] } };
     expect(await rec({ panel: q, gate: flagged })).toBe("careful");
+  });
+  test("a changed file the reviewer did not read keeps careful", async () => {
+    const partial = { ...review, unreviewed_files: ["infra/main.tf"] };
+    expect(await rec({ panel: live(fixedDecider("quick", 0.99)), review: partial })).toBe("careful");
   });
   test("only a diff over 1000 lines forces careful", async () => {
     const q = live(fixedDecider("quick", 0.99));
@@ -239,6 +253,73 @@ describe("flow", () => {
     await store.putJson(keys.plan(prefix), { ...publicPlan, security_sensitive: true });
     await expect(decide(makeDeps(store), { ...baseState, last: { ok: true, passed: true } })).rejects.toMatchObject({ name: "Handover" });
     expect(calls).toEqual([]);
+  });
+});
+
+describe("repair before the PR", () => {
+  const passed = { ...baseState, last: { ok: true, passed: true } };
+  /** Answers every priority question with the same probability that the finding must be fixed. */
+  const urgent = (p: number) =>
+    live({
+      name: "fixed",
+      decide: async (_state, questions) =>
+        Object.fromEntries(
+          Object.keys(questions).map((k): [string, Answer] => [
+            k,
+            { type: "choice", choice: p > 0.5 ? "P1" : "P2", confidence: 0.9, probabilities: { P0: p / 2, P1: p / 2, P2: 1 - p } },
+          ]),
+        ),
+    });
+  const reviewed = async (findings: Review["findings"]) => {
+    const store = await checkedStore(true);
+    await store.putJson(keys.review(prefix, 1), { ...review, findings });
+    return store;
+  };
+  test("a proven defect goes back to Build, without a PR, and only located bugs and security issues are candidates", async () => {
+    calls.length = 0;
+    const store = await reviewed([finding, { ...finding, category: "style" }, { ...finding, located: null }]);
+    const next = await decide(makeDeps(store, urgent(0.95)), passed);
+    expect(next).toMatchObject({ next: "build", brief: { attempt: 2 }, repair: { rounds: 1, findings: 1 } });
+    expect(calls).not.toContain("pr");
+    const feedback = await store.text(keys.feedback(prefix, 2));
+    expect(feedback).toContain("The reviewer found defects in your change");
+    expect(feedback).toContain("2:   return a - b;");
+    expect(feedback.match(/^## /gm)).toHaveLength(1);
+    expect(await timeline.get("task#o/r#1/abc", "decision#findings#check-1")).toMatchObject({
+      action: { priorities: [{ fix: true, decidedBy: "decision model" }], repair: [expect.stringContaining("math.mjs:2")] },
+    });
+  });
+  test("the decision model's priority overrides the reviewer's severity both ways", async () => {
+    const minor = await decide(makeDeps(await reviewed([finding]), urgent(0.1)), passed);
+    expect(minor.next).toBe("done");
+    const major = await decide(makeDeps(await reviewed([{ ...finding, severity: "P2" }]), urgent(0.9)), passed);
+    expect(major).toMatchObject({ next: "build", repair: { rounds: 1 } });
+  });
+  test("without a confident decision model the reviewer's P0 and P1 are repaired", async () => {
+    expect((await decide(makeDeps(await reviewed([finding])), passed)).next).toBe("build");
+    expect((await decide(makeDeps(await reviewed([{ ...finding, severity: "P2" }])), passed)).next).toBe("done");
+    expect((await decide(makeDeps(await reviewed([finding]), urgent(0.5)), passed)).next).toBe("build");
+  });
+  test("used-up repair rounds send the review to the PR", async () => {
+    calls.length = 0;
+    const next = await decide(makeDeps(await reviewed([finding])), { ...passed, repair: { rounds: 1, findings: 1 } });
+    expect(next).toMatchObject({ next: "done", outcome: { level: "careful" } });
+    expect(calls).toContain("pr");
+    const twice = { ...passed, repair: { rounds: 1, findings: 1 }, policy: { ...DEFAULT_DEVELOPMENT_POLICY, repairs: { rounds: 2 } } };
+    expect(await decide(makeDeps(await reviewed([finding])), twice)).toMatchObject({ next: "build", repair: { rounds: 2, findings: 2 } });
+    const off = { ...passed, policy: { ...DEFAULT_DEVELOPMENT_POLICY, repairs: { rounds: 0 } } };
+    expect((await decide(makeDeps(await reviewed([finding])), off)).next).toBe("done");
+  });
+  test("the last attempt and changes the rules hand to a person are not repaired", async () => {
+    const last = await decide(makeDeps(await reviewed([finding])), { ...passed, brief: { ...baseState.brief, last_attempt: 1 } });
+    expect(last.next).toBe("done");
+    const store = await reviewed([{ ...finding, severity: "P0" }]);
+    await store.putJson(keys.plan(prefix), { ...publicPlan, security_sensitive: true });
+    await expect(decide(makeDeps(store), passed)).rejects.toMatchObject({ name: "Handover" });
+  });
+  test("a P0 defect gets its repair before the rules take the task over", async () => {
+    const next = await decide(makeDeps(await reviewed([{ ...finding, severity: "P0" }])), passed);
+    expect(next).toMatchObject({ next: "build", repair: { findings: 1 } });
   });
 });
 
@@ -443,7 +524,7 @@ describe("checks table", () => {
     const table = checksTable({
       gateBefore: { mode: "before", hidden: [{ file: "add.test.mjs", criteria: ["AC1"], passed: false, output: "" }] },
       gate: { ...gate, checks: [{ command: "npm run lint", exit_code: 1, output: "" }] },
-      review: { ...review, findings: [{ severity: "P1", where: "math.mjs:2", what: "a | b" }] },
+      review: { ...review, findings: [{ ...finding, what: "a | b" }] },
       verdicts: [{ id: "AC2", verdict: "pass", p: 0.95, reason: "p=0.95" }],
       attempt: 2,
       lastAttempt: 3,

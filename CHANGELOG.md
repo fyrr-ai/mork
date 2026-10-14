@@ -4,6 +4,7 @@
 
 Prepared for release; not published.
 
+- Give the reviewer the changed files and rules by file type, verify each finding's quote in the reviewed commit, and send proven defects that Jev rates must-fix back to Build before the PR (`repairs.rounds`, 1 by default).
 - Configure the original development workflow and generic agent, command and approval workflows through Terraform; route one Slack app exclusively through Jev.
 - Configure prompts, domains, Spot fallback and retry budgets per container step.
 - Run development Plan/Build/Check and configured workflows locally with real Pi.

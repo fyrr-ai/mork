@@ -5,7 +5,7 @@ locals {
   development          = jsondecode(lookup({ for name, workflow in var.workflows : name => jsonencode(workflow) }, "development", file("${path.module}/../../packages/contracts/src/development.json")))
   development_steps    = { for step in local.development.steps : step.kind => step }
   development_names    = { for step in local.development.steps : step.kind => title(step.name) }
-  development_policy   = { questions = local.development.questions, fixes = local.development.fixes, build_attempts = local.development_steps.build.attempts }
+  development_policy   = { questions = local.development.questions, fixes = local.development.fixes, repairs = local.development.repairs, build_attempts = local.development_steps.build.attempts }
   configured_workflows = { for name, workflow in var.workflows : name => workflow if name != "development" }
   workflow_steps = merge({}, [for name, workflow in local.configured_workflows : {
     for step in workflow.steps : "${name}.${step.name}" => {

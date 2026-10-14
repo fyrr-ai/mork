@@ -59,5 +59,5 @@ export function gateFeedback(gate: GateReport, plan: Pick<AnalystOutput, "accept
     lines.push(`- Acceptance criterion not met: ${text}. Test output tail:\n\n\`\`\`\n${hidden.output.slice(-1200)}\n\`\`\``);
   }
   for (const violation of gate.diff_policy?.violations ?? []) lines.push(`- Policy violation: ${violation}. Revert that part.`);
-  return lines.join("\n");
+  return `# The attempt did not pass the gate\n\n${lines.join("\n")}`;
 }

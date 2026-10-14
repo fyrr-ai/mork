@@ -14,13 +14,25 @@ import {
   IssueDoc,
   keys,
   lastAttempt,
+  MAX_REPAIR_FINDINGS,
   type Phase,
   PublicPlan,
-  ReviewerOutput,
+  Review,
   RunResult,
+  repairCandidates,
+  repairFeedback,
 } from "@mork/contracts";
 import { DEFAULT_DEVELOPMENT_POLICY, type DevelopmentPolicy } from "@mork/contracts/development";
-import { type CriterionVerdict, type DecisionPanel, type DecisionTrace, judgeCriteria, type Triage, triage, triageMessage } from "@mork/decision";
+import {
+  type CriterionVerdict,
+  chooseRepairs,
+  type DecisionPanel,
+  type DecisionTrace,
+  judgeCriteria,
+  type Triage,
+  triage,
+  triageMessage,
+} from "@mork/decision";
 import type { Complete } from "@mork/sources";
 import { executionUrl, findIssueKey, REVIEW_LEVEL_TEXT, type ReportEvent, type Reporter, type SlackStart, type TrackerIssue } from "@mork/sources";
 import type { Store } from "@mork/store";
@@ -58,6 +70,8 @@ export type FlowState = {
   error?: { Error?: string; Cause?: string };
   /** Fix runs after the PR: which PR, which round and why. */
   fix?: FixState;
+  /** Repairs this run made so far, and how many findings they sent back to Build. */
+  repair?: { rounds: number; findings: number };
 };
 
 /** Start found nothing to do (e.g. a greeting in Slack); Route goes straight to Done. */
@@ -278,7 +292,7 @@ export async function decide(deps: Deps, state: FlowState): Promise<FlowState> {
   const { brief, task } = state;
   const result = lastResult(state);
   await recordSupervision(deps, state);
-  // Plan, Build and Check report their own progress; Decide only reports the PR.
+  // Plan, Build and Check report their own progress; Decide reports a repair and the PR.
   if (!result.passed) {
     deps.log(task.id, "check.end", { attempt: brief.attempt, passed: false, stats: result.stats });
     return retryBuild(deps, state, await store.text(keys.feedback(brief.prefix, brief.attempt + 1)));
@@ -295,15 +309,41 @@ export async function decide(deps: Deps, state: FlowState): Promise<FlowState> {
     stats: result.stats,
   });
 
-  const review = ReviewerOutput.parse(await store.json(keys.review(brief.prefix, brief.attempt)));
+  const review = Review.parse(await store.json(keys.review(brief.prefix, brief.attempt)));
   const impl = ImplementerOutput.parse(await store.json(keys.impl(brief.prefix, brief.attempt)));
   const issue = IssueDoc.parse(await store.json(keys.issue(brief.prefix)));
+  const attempt = `check-${brief.attempt}`;
+  // Proven defects go back to Build before a person sees the PR, as many times as the policy allows.
+  // The decision model sets their priority. Changes the rules hand to a person anyway are not repaired first.
+  const repairs = state.repair ?? { rounds: 0, findings: 0 };
+  const takeover = (gate.diff_policy?.protected_hits ?? []).length > 0 || plan.security_sensitive || state.security === true;
+  const allowed = (state.policy ?? DEFAULT_DEVELOPMENT_POLICY).repairs.rounds;
+  const candidates = repairs.rounds >= allowed || takeover || brief.attempt >= lastAttempt(brief) ? [] : repairCandidates(review);
+  if (candidates.length) {
+    const { chosen, priorities, trace } = await chooseRepairs(
+      deps.panel,
+      candidates.map((f) => ({ severity: f.severity, category: f.category, where: f.where, what: f.what, excerpt: f.located?.excerpt ?? f.quote })),
+      MAX_REPAIR_FINDINGS,
+    );
+    const defects = chosen.map((index) => candidates[index] as Review["findings"][number]);
+    const findings = defects.map((f) => `${f.severity} ${f.category} ${f.where}: ${f.what}`);
+    if (trace) {
+      const decided = candidates.map((f, index) => ({ where: f.where, severity: f.severity, ...priorities[index] }));
+      await recordDecision(deps.timeline, { task: task.id, point: "findings", attempt, trace, action: { priorities: decided, repair: findings } });
+    }
+    if (defects.length) {
+      await store.put(keys.feedback(brief.prefix, brief.attempt + 1), repairFeedback(defects), "text/markdown");
+      await reporter.report({ kind: "repair", attempt: brief.attempt, findings: defects.map((f) => `\`${f.where}\`: ${f.what.slice(0, 200)}`) });
+      deps.log(task.id, "review.repair", { attempt: brief.attempt, round: repairs.rounds + 1, findings });
+      const next = await retryBuild(deps, state, findings.join("\n"));
+      return { ...next, repair: { rounds: repairs.rounds + 1, findings: repairs.findings + defects.length } };
+    }
+  }
   const untestable = plan.acceptance_criteria.filter((c) => !c.testable);
   const judged = await judgeCriteria(
     deps.panel,
     untestable.map((c) => ({ id: c.id, text: c.text, evidence: review.criteria.find((r) => r.id === c.id)?.evidence ?? [] })),
   );
-  const attempt = `check-${brief.attempt}`;
   if (judged.trace) {
     await recordDecision(deps.timeline, { task: task.id, point: "criteria", attempt, trace: judged.trace, action: { verdicts: judged.verdicts } });
   }
@@ -339,6 +379,7 @@ export async function decide(deps: Deps, state: FlowState): Promise<FlowState> {
     attempt: brief.attempt,
     lastAttempt: lastAttempt(brief),
     head,
+    repaired: state.repair?.findings,
   };
   if (state.fix) {
     const { fix } = state;
@@ -435,11 +476,13 @@ export function transcriptsUrl(bucket: string, prefix: string, region = process.
 export type ChecksEvidence = {
   gateBefore?: GateReport;
   gate: GateReport;
-  review: ReviewerOutput;
+  review: Review;
   verdicts: CriterionVerdict[];
   attempt: number;
   lastAttempt: number;
   head: string;
+  /** Reviewer findings this run sent back to Build before this review. */
+  repaired?: number;
 };
 
 /** Uber-style table of every check that ran, so the reviewer sees what is already verified. */
@@ -479,6 +522,7 @@ export function checksTable(c: ChecksEvidence): string {
       `${passed === c.verdicts.length ? "✅" : "⚠️"} ${passed}/${c.verdicts.length} confirmed from quotes`,
     ]);
   }
+  if (c.repaired) rows.push(["Review findings sent back to Build", "workflow", `${c.repaired} before this review`]);
   rows.push(["Build attempts", "workflow", `${c.attempt} of ${c.lastAttempt}`]);
   rows.push(["Branch is the commit the gate checked", "workflow", `✅ \`${c.head.slice(0, 7)}\``]);
   const cell = (t: string) => t.replaceAll("|", "\\|").replaceAll("\n", " ");
@@ -490,7 +534,7 @@ export function prBody(
   plan: PublicPlan,
   gate: GateReport,
   impl: ImplementerOutput,
-  review: ReviewerOutput,
+  review: Review,
   rec: Recommendation,
   verdicts: CriterionVerdict[],
   footer: string,
@@ -527,7 +571,7 @@ ${checksTable(checks)}
 ## Review
 
 ${review.summary}
-${review.findings.length ? `\n${review.findings.map((f) => `- ${f.severity} \`${f.where}\`: ${f.what}`).join("\n")}\n` : ""}${impl.deviations.length ? `\n## Deviations from the plan\n\n${impl.deviations.map((d) => `- ${d}`).join("\n")}\n` : ""}
+${review.findings.length ? `\n${review.findings.map((f) => `- ${f.severity} ${f.category} \`${f.where}\`${f.located ? "" : " (quote not found in the commit)"}: ${f.what}`).join("\n")}\n` : ""}${impl.deviations.length ? `\n## Deviations from the plan\n\n${impl.deviations.map((d) => `- ${d}`).join("\n")}\n` : ""}
 ${liveUrl ? `Live log (Grafana): ${liveUrl}\n` : ""}${transcripts ? `Agent transcripts (AWS console, secrets redacted): ${transcripts}\n\n` : ""}${footer}
 
 <sub>Mork task ${task.id}</sub>`;

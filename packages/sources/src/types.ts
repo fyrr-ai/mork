@@ -38,6 +38,8 @@ export type ReportEvent =
   | { kind: "build"; attempt: number; max: number }
   | { kind: "built"; attempt: number; branch: string; branch_url?: string; files?: number }
   | { kind: "check"; attempt: number; passed: boolean; failures?: string[] }
+  /** The gate passed, but the reviewer found defects Mork fixes before it opens the PR. */
+  | { kind: "repair"; attempt: number; findings: string[] }
   | { kind: "pr"; url: string; level: "quick" | "careful"; reasons: string[]; transcripts_url?: string }
   | { kind: "handover"; reason: string }
   /** After the PR: CI failed or a reviewer asked for changes, and Mork is on it. */

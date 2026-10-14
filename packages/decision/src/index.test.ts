@@ -3,9 +3,11 @@ import {
   type Answer,
   boundEvidence,
   checkBudget,
+  chooseRepairs,
   criterionVerdict,
   type Decider,
   DecisionPanel,
+  findingPriority,
   JevDecider,
   judgeCriteria,
   OpenAiDecider,
@@ -176,6 +178,27 @@ describe("policies", () => {
     const result = await judgeCriteria(panel, [{ id: "AC2", text: "x", evidence: [] }]);
     expect(result.trace).toBeUndefined();
     expect(result.verdicts[0]?.verdict).toBe("review");
+  });
+  test("a finding's priority comes from the decision model when it is confident, otherwise from the reviewer", () => {
+    const answer = (p: number) => ({ type: "choice" as const, choice: "P1", confidence: 0.5, probabilities: { P0: p / 2, P1: p / 2, P2: 1 - p } });
+    expect(findingPriority({ severity: "P2" }, answer(0.9))).toMatchObject({ fix: true, decidedBy: "decision model" });
+    expect(findingPriority({ severity: "P0" }, answer(0.1))).toMatchObject({ fix: false, decidedBy: "decision model" });
+    expect(findingPriority({ severity: "P1" }, answer(0.5))).toMatchObject({ fix: true, decidedBy: "reviewer" });
+    expect(findingPriority({ severity: "P2" }, { type: "undecided", reason: "jev 500" })).toMatchObject({ fix: false, decidedBy: "reviewer" });
+  });
+  test("repairs take the most urgent findings first and stop at the limit", async () => {
+    const finding = { category: "bug", where: "a.ts:1", what: "x", excerpt: "1: x" };
+    const offline = await chooseRepairs(
+      new DecisionPanel([]),
+      [
+        { ...finding, severity: "P1" },
+        { ...finding, severity: "P2" },
+        { ...finding, severity: "P0" },
+      ],
+      1,
+    );
+    expect(offline.chosen).toEqual([2]);
+    expect(offline.trace).toBeUndefined();
   });
   test("supervision steers once, waits out the grace, then stops", () => {
     const stuck = { worker_stuck: { type: "noul" as const, p: 0.9 } };

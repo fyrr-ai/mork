@@ -1,7 +1,7 @@
 // The recommendation a human gets with the finished work. Hard rules decide
 // first and can only raise the level; a confident decision model sets the
 // level, never below what the rules require, and an unsure one leaves careful.
-import { type GateReport, type PublicPlan, type ReviewerOutput, type ReviewLevel, raiseLevel } from "@mork/contracts";
+import { type GateReport, type PublicPlan, type Review, type ReviewLevel, raiseLevel } from "@mork/contracts";
 import { boundEvidence, type CriterionVerdict, type DecisionPanel, type DecisionTrace } from "@mork/decision";
 
 export const QUICK_THRESHOLD = 0.8;
@@ -24,7 +24,7 @@ export const LEVEL_QUESTION = {
 export async function recommend(input: {
   plan: PublicPlan;
   gate: GateReport;
-  review: ReviewerOutput;
+  review: Review;
   /** Decision-model verdicts for the criteria tests cannot decide. */
   criteria: CriterionVerdict[];
   /** Triage classified the issue as a security change. */
@@ -51,6 +51,7 @@ export async function recommend(input: {
     if (v.verdict === "fail") hit("careful", `Decision model: ${v.id} not met (${v.reason})`);
     if (v.verdict === "review") hit("careful", `${v.id} unconfirmed (${v.reason})`);
   }
+  if (review.unreviewed_files.length) hit("careful", `The reviewer did not read ${review.unreviewed_files.length} changed file(s)`);
   const p1 = review.findings.filter((f) => f.severity === "P1");
   if (p1.length) hit("careful", `The reviewer has ${p1.length}× P1`);
   for (const flag of gate.diff_policy?.flags ?? []) hit("careful", `Gate: ${flag}`);

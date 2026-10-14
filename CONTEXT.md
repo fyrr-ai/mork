@@ -152,6 +152,14 @@ The analyst's output: problem, steps, acceptance criteria, hidden tests and risk
 One pass through Build and Check. A first run has up to 3; each fix run has 2 more and continues the numbering. The analyst has its own 2 attempts in Plan.
 _Avoid_: retry, iteration
 
+**Finding**:
+A defect the reviewer reports, with a severity (P0, P1, P2), a category and a quote. The runner locates the quote in the reviewed commit; a finding without one stays an opinion in the PR text.
+_Avoid_: comment, issue
+
+**Repair**:
+Decide sending located bug and security findings back to Build after a green gate, when the decision model rates them must-fix. A run has `repairs.rounds` of them (1 by default), each using an attempt from the run's budget.
+_Avoid_: fix (that is a fix run), retry
+
 **Fix round**:
 One fix run's claim on a PR, at most 2 per PR, taken with a conditional write so concurrent triggers start one run.
 
@@ -187,6 +195,7 @@ The word **factory** is not part of Mork's language: the trigger label is `mork`
 - A **Task** has one **Origin**, one branch, at most one draft PR, one first **Run** and up to two **Fix runs**.
 - Each **Run** is one **Execution** and goes through **Phases**; each **Phase** runs one **Container** per **Attempt** and holds one or two **Stations**.
 - **Steps** run between **Phases**: Start before Plan, Decide after Check, Ask when a **Station** has a **Question**, Handover on any stop.
+- A green **Gate** with located **Findings** leads to a **Repair** while the **Run** has repair rounds left; the review after the last one goes to the PR.
 - The **Gate** decides whether the change works; the **Decision model** only advises: **Triage**, **Supervision**, untestable **Acceptance criteria** and the **Recommendation**.
 - **Hard rules** run first and can only raise the **Review level**; a **Takeover** always ends in a **Handover**.
 

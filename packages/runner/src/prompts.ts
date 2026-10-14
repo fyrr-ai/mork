@@ -1,5 +1,6 @@
 // Station instructions (system prompt append) and task messages.
 import type { AnalystOutput, Answers, GateReport, ImplementerOutput, IssueDoc, RepoConfig } from "@mork/contracts";
+import type { ChangedFile } from "./review.ts";
 
 type Plan = Pick<AnalystOutput, "problem" | "plan" | "acceptance_criteria">;
 
@@ -41,11 +42,19 @@ ${criteria}
 - Test command: \`${config.test}\`${config.setup ? `\n- Setup command (dependencies): \`${config.setup}\`` : ""}${config.checks.length ? `\n- Further checks that must pass: ${config.checks.map((c) => `\`${c}\``).join(", ")}` : ""}
 - The verify tool runs all of these for you.
 - Your branch: \`${branch}\`. Push it with \`git push origin ${branch}\`.
-${feedback ? `\n## Your previous attempt did not pass the gate\n\n${feedback}\n\nFix the problems on the current branch. Your earlier commits are already on it.\n` : ""}
+${feedback ? `\n## Your previous attempt was sent back\n\n${feedback}\n\nFix the problems on the current branch. Your earlier commits are already on it.\n` : ""}
 Implement it, commit, and push your branch.`;
 }
 
-export function reviewerMessage(issue: Issue, plan: Plan, baseSha: string, gate: GateReport, impl: ImplementerOutput): string {
+export function reviewerMessage(
+  issue: Issue,
+  plan: Plan,
+  baseSha: string,
+  gate: GateReport,
+  impl: ImplementerOutput,
+  files: ChangedFile[],
+  rules: string,
+): string {
   const mine = plan.acceptance_criteria.filter((c) => !c.testable);
   const tested = plan.acceptance_criteria.filter((c) => c.testable);
   return `${issueBlock(issue)}
@@ -70,6 +79,16 @@ ${tested.map((c) => `- ${c.id}: ${c.text}`).join("\n") || "- (none)"}
 ## Implementer's summary
 
 ${impl.summary}
+
+## Changed files
+
+Give every file below its own pass; a small or secondary file is not a reason to skip it. List the files you read in \`files_reviewed\`.
+
+${files.map((file) => `- \`${file.path}\` (+${file.added} -${file.removed})`).join("\n")}
+
+## Review rules by file type
+
+${rules}
 
 Review the change.`;
 }

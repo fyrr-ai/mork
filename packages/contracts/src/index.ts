@@ -82,8 +82,22 @@ export const ImplementerOutput = z.object({
 });
 export type ImplementerOutput = z.infer<typeof ImplementerOutput>;
 
+export const FINDING_CATEGORIES = ["bug", "security", "performance", "maintainability", "test", "style", "documentation"] as const;
+
+const Finding = z.object({
+  severity: z.enum(["P0", "P1", "P2"]),
+  category: z.enum(FINDING_CATEGORIES),
+  /** `path:line` in the reviewed commit. */
+  where: z.string(),
+  /** One line copied verbatim from that file; the runner checks it is there. */
+  quote: z.string().min(1),
+  what: z.string(),
+});
+
 export const ReviewerOutput = z.object({
   summary: z.string().min(1),
+  /** Changed files the reviewer read. */
+  files_reviewed: z.array(z.string()),
   /** Judgments for criteria a test cannot decide. */
   criteria: z.array(
     z.object({
@@ -93,17 +107,44 @@ export const ReviewerOutput = z.object({
       evidence: z.array(z.object({ where: z.string().min(1), quote: z.string().min(1) })),
     }),
   ),
-  findings: z.array(
-    z.object({
-      severity: z.enum(["P0", "P1", "P2"]),
-      where: z.string(),
-      what: z.string(),
-    }),
-  ),
+  findings: z.array(Finding),
   /** Hunks a human should read first, as `path:line` strings. */
   read_first: z.array(z.string()),
 });
 export type ReviewerOutput = z.infer<typeof ReviewerOutput>;
+
+/** The stored review: the reviewer's output plus what the runner checked itself. */
+export const Review = ReviewerOutput.extend({
+  findings: z.array(
+    Finding.extend({
+      /** Where the runner found the quote in the reviewed commit, with the lines around it; null when it is not there. */
+      located: z.object({ line: z.number().int().positive(), excerpt: z.string() }).nullable(),
+    }),
+  ),
+  /** Changed files missing from `files_reviewed`. */
+  unreviewed_files: z.array(z.string()),
+});
+export type Review = z.infer<typeof Review>;
+
+export const MAX_REPAIR_FINDINGS = 3;
+
+/** Findings a repair may take on: bugs and security issues whose quote the runner found in the commit. */
+export function repairCandidates(review: Review): Review["findings"] {
+  return review.findings.filter((f) => f.located && (f.category === "bug" || f.category === "security"));
+}
+
+/** Feedback that sends the chosen findings back to Build. */
+export function repairFeedback(findings: Review["findings"]): string {
+  const items = findings.map(
+    (f, i) => `## ${i + 1}. ${f.severity} ${f.category} at \`${f.where}\`\n\n${f.what}\n\n\`\`\`\n${f.located?.excerpt ?? f.quote}\n\`\`\``,
+  );
+  return `# The reviewer found defects in your change
+
+The gate passed. Fix each defect below and nothing else: stay within the request and keep the rest of the change as it is.
+If a finding is wrong, leave that code alone and explain why in \`deviations\`.
+
+${items.join("\n\n")}`;
+}
 
 export const StationOutput = {
   analyst: AnalystOutput,

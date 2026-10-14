@@ -24,6 +24,7 @@ import {
   PublicPlan,
   parseRepoConfig,
   type RepoConfig,
+  ReviewerOutput,
   type RunResult,
   StationOutput,
 } from "@mork/contracts";
@@ -38,6 +39,7 @@ import { fetchRepo, mustExec, remoteHead, repoUrl, SAFE_GIT } from "./git.ts";
 import { type LlmJob, type LlmOutcome, type RunnerEnv, runLlmStation } from "./llm.ts";
 import type { Logger } from "./otlp.ts";
 import * as prompts from "./prompts.ts";
+import { changedFiles, checkReview, readAt, reviewRules } from "./review.ts";
 import { checkPlan, gateFailures, gateFeedback, gatePassed } from "./rules.ts";
 import { SessionLog } from "./session.ts";
 import { onShutdown } from "./shutdown.ts";
@@ -349,19 +351,21 @@ async function checkWith(ctx: PhaseContext, records: SupervisionRecord[]): Promi
   const issue = IssueDoc.parse(await store.json(keys.issue(brief.prefix)));
   const impl = ImplementerOutput.parse(await store.json(keys.impl(brief.prefix, brief.attempt)));
   const repoDir = await checkout(ctx, "reviewer", true);
+  const files = changedFiles(repoDir, brief.repo.base_sha, built.head_sha);
   const stats: Stats = [];
   const outcome = await llm(
     ctx,
     `check-${brief.attempt}-reviewer`,
     "reviewer",
     repoDir,
-    prompts.reviewerMessage(issue, thePlan, brief.repo.base_sha, report, impl),
+    prompts.reviewerMessage(issue, thePlan, brief.repo.base_sha, report, impl, files, reviewRules(files)),
     stats,
     records,
     { title: issue.title, reviewing: brief.branch },
   );
   if (outcome.question) return { ok: true, question: outcome.question, resume: "check", stats };
   if (!outcome.ok) throw new HandoverError(`The reviewer failed: ${outcome.error}. Branch \`${brief.branch}\` passed the gate.`);
-  await store.putJson(keys.review(brief.prefix, brief.attempt), outcome.output);
+  const review = checkReview(ReviewerOutput.parse(outcome.output), files, readAt(repoDir, built.head_sha));
+  await store.putJson(keys.review(brief.prefix, brief.attempt), review);
   return { ok: true, passed: true, stats };
 }
