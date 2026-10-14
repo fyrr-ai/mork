@@ -328,7 +328,10 @@ if (process.argv[2] === "lambda") {
     ["git", ["--version"]],
     ["bash", ["-c", "printf runner-tools"]],
     ["npm", ["--version"]],
+    ["openssl", ["version"]],
+    ["envsubst", ["--version"]],
     ["python3", ["-c", "import ssl, sqlite3, socket; from zoneinfo import ZoneInfo; ZoneInfo('Europe/Prague'); socket.getaddrinfo('localhost', 80)"]],
+    ["python3", ["-c", "import ctypes; [ctypes.CDLL(name) for name in ('librt.so.1', 'libpthread.so.0', 'libdl.so.2', 'libutil.so.1')]"]],
     ["rg", ["--version"]],
     ["fd", ["--version"]],
   ])

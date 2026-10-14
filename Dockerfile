@@ -37,7 +37,7 @@ RUN mkdir -p /pi/dist/core /pi/dist/modes/interactive /pi/node_modules/@silvia-o
 # libraries from a pinned Debian/Node builder, rather than shipping apt and a distro.
 FROM node:24.21.0-trixie-slim@sha256:173f125896c3b47ddf056734c7ea789d04595a6a08769a8f78e0df642781fb66 AS runner-rootfs
 RUN apt-get update \
- && apt-get install -y --no-install-recommends git ca-certificates bash python3 ripgrep fd-find binutils \
+ && apt-get install -y --no-install-recommends git ca-certificates bash python3 ripgrep fd-find binutils openssl gettext-base \
  && rm -rf /var/lib/apt/lists/* \
  && strip --strip-unneeded /usr/local/bin/node \
  && groupadd -g 10001 agent && useradd -m -u 10001 -g 10001 agent \
