@@ -1,8 +1,8 @@
 // The recommendation a human gets with the finished work. Hard rules decide
 // first and can only raise the level; a confident decision model sets the
 // level, never below what the rules require, and an unsure one leaves careful.
-import { type GateReport, type PublicPlan, type ReviewerOutput, type ReviewLevel, raiseLevel } from "@mork/contracts";
-import { boundEvidence, type CriterionVerdict, type DecisionPanel, type DecisionTrace } from "@mork/decision";
+import { type GateReport, type PublicPlan, type Review, type ReviewLevel, raiseLevel } from "@mork/contracts";
+import { boundEvidence, type CriterionVerdict, type DecisionPanel, type DecisionTrace, type Priority } from "@mork/decision";
 
 export const QUICK_THRESHOLD = 0.8;
 export const LARGE_DIFF_LINES = 1000;
@@ -24,11 +24,13 @@ export const LEVEL_QUESTION = {
 export async function recommend(input: {
   plan: PublicPlan;
   gate: GateReport;
-  review: ReviewerOutput;
+  review: Review;
   /** Decision-model verdicts for the criteria tests cannot decide. */
   criteria: CriterionVerdict[];
   /** Triage classified the issue as a security change. */
   securityTriage: boolean;
+  /** Each review finding's priority, in the order of `review.findings`. */
+  priorities: Priority[];
   panel: DecisionPanel;
 }): Promise<{ rec: Recommendation; trace?: DecisionTrace }> {
   const { plan, gate, review, criteria } = input;
@@ -43,16 +45,16 @@ export async function recommend(input: {
   if (protectedHits.length) hit("takeover", `Changes protected paths: ${protectedHits.join(", ")}`);
   if (plan.security_sensitive) hit("takeover", "The analyst marked the change as security-sensitive");
   if (input.securityTriage) hit("takeover", "Triage classified the issue as a security change");
-  const p0 = review.findings.filter((f) => f.severity === "P0");
-  if (p0.length) hit("takeover", `The reviewer found ${p0.length}× P0: ${p0.map((f) => f.where).join(", ")}`);
   const failedJudgments = review.criteria.filter((c) => !c.pass);
   if (failedJudgments.length) hit("careful", `The reviewer did not confirm ${failedJudgments.map((c) => c.id).join(", ")}`);
   for (const v of criteria) {
     if (v.verdict === "fail") hit("careful", `Decision model: ${v.id} not met (${v.reason})`);
     if (v.verdict === "review") hit("careful", `${v.id} unconfirmed (${v.reason})`);
   }
-  const p1 = review.findings.filter((f) => f.severity === "P1");
-  if (p1.length) hit("careful", `The reviewer has ${p1.length}× P1`);
+  if (review.unreviewed_files.length) hit("careful", `The reviewer did not read ${review.unreviewed_files.length} changed file(s)`);
+  // A finding's priority, not the reviewer's severity, decides: reviewers often call a P1 or a non-issue P0.
+  const mustFix = review.findings.filter((_, index) => input.priorities[index]?.fix);
+  if (mustFix.length) hit("careful", `${mustFix.length} finding(s) should be fixed before merge: ${mustFix.map((f) => f.where).join(", ")}`);
   for (const flag of gate.diff_policy?.flags ?? []) hit("careful", `Gate: ${flag}`);
   const size = (gate.diff_policy?.added_lines ?? 0) + (gate.diff_policy?.removed_lines ?? 0);
   if (size > LARGE_DIFF_LINES) hit("careful", `Large diff (${size} lines)`);

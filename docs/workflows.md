@@ -6,7 +6,7 @@ runner and Lambda images, artifact bucket and Slack endpoint.
 
 `workflows.development` configures the original Plan/Build/Check workflow. Its
 operations keep hidden tests, the before/after gate, reviewer, draft PR delivery
-and the Build/Check repair loop. Terraform compiles their order, question paths
+and the Build/Check retry loop. Terraform compiles their order, question paths
 and retry paths into the development state machine. The existing resource
 addresses stay in place. If omitted, development uses the
 [shipped definition](../packages/contracts/src/development.json); the local
@@ -60,6 +60,7 @@ workflows = {
     ]
     questions = { max = 3, timeout_seconds = 259200 }
     fixes = { rounds = 2, attempts = 2 }
+    repairs = { rounds = 3 }
     delivery = { kind = "draft_pr", step = "verify" }
   }
 }
@@ -68,8 +69,10 @@ workflows = {
 Development requires exactly Plan, Build and Check in that order. These are
 operations with fixed output contracts and credential boundaries. `attempts` in
 Plan bounds analyst corrections; in Build it bounds the Build/Check loop. Check
-runs once per Build attempt. `fixes` bounds post-PR repair rounds and their Build
-attempts. Step names, prompts, optional model overrides, tools and trusted Pi
+runs once per Build attempt. `fixes` bounds post-PR fix rounds and their Build
+attempts. `repairs.rounds` bounds how often reviewer findings go back to Build
+before the PR (default 3, 0 turns repairs off); each repair adds a Build attempt
+of its own. Step names, prompts, optional model overrides, tools and trusted Pi
 extensions are configurable. `submit_result`, Build's `verify`, and Slack's
 `ask_human` remain available when the operation requires them. Instructions append
 to Pi's system prompt. Gate policy still comes from the base commit's

@@ -81,7 +81,7 @@ run "webhook_permissions_and_timeout" {
     error_message = "Capacity and Spot retry/fallback must be isolated per configured step."
   }
   assert {
-    condition     = jsondecode(aws_ecs_task_definition.phase["plan"].container_definitions)[1].environment[1].value == "github.com" && jsondecode(aws_ecs_task_definition.phase["build"].container_definitions)[1].environment[1].value == "github.com,registry.npmjs.org" && jsondecode(jsondecode(aws_ecs_task_definition.phase["plan"].container_definitions)[0].environment[1].value).instructions == "Plan" && local.definition.States.Start.Parameters.Payload.policy.build_attempts == 3
+    condition     = jsondecode(aws_ecs_task_definition.phase["plan"].container_definitions)[1].environment[1].value == "github.com" && jsondecode(aws_ecs_task_definition.phase["build"].container_definitions)[1].environment[1].value == "github.com,registry.npmjs.org" && jsondecode(jsondecode(aws_ecs_task_definition.phase["plan"].container_definitions)[0].environment[1].value).instructions == "Plan" && local.definition.States.Start.Parameters.Payload.policy.build_attempts == 3 && local.definition.States.Start.Parameters.Payload.policy.repairs.rounds == 3
     error_message = "Runner instructions, allowed domains and retry policy must come from the same workflow definition."
   }
   assert {

@@ -175,7 +175,8 @@ export async function startFix(deps: Deps, input: { fix: FixRequest; execution: 
       ...latest,
       running: owner,
       fix_rounds: latest.fix_rounds + 1,
-      running_last_attempt: attempt + policy.fixes.attempts - 1,
+      // Repairs inside the fix run add attempts of their own; reserve them too.
+      running_last_attempt: attempt + policy.fixes.attempts + policy.repairs.rounds - 1,
       state: { ...latest.state, brief: { ...latest.state.brief, attempt } },
     };
     return reserved;

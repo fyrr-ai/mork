@@ -1,6 +1,6 @@
 # 5. Supervision instead of turn and time limits
 
-Date: 2026-10-10 · Status: Accepted
+Date: 2026-10-10 · Status: Accepted; when supervision asks is superseded by [ADR 16](0016-supervision-asks-on-signals.md)
 
 ## Context
 

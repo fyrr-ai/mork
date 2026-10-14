@@ -91,7 +91,7 @@ await reportTo(token, async () => {
     githubToken: () => auth.token(brief.repo.full_name),
     model: requiredEnv(env, "MORK_MODEL"),
     panel: panelFromEnv(env),
-    superviseEveryMs: Number(env.MORK_SUPERVISE_SECONDS ?? 45) * 1000,
+    superviseEveryMs: Number(env.MORK_SUPERVISE_SECONDS ?? 300) * 1000,
     reporter: await threadReporter(),
     secrets,
     logger,

@@ -14,20 +14,33 @@ import {
   IssueDoc,
   keys,
   lastAttempt,
+  MAX_REPAIR_FINDINGS,
   type Phase,
   PublicPlan,
-  ReviewerOutput,
+  Review,
   RunResult,
+  repairCandidate,
+  repairFeedback,
 } from "@mork/contracts";
 import { DEFAULT_DEVELOPMENT_POLICY, type DevelopmentPolicy } from "@mork/contracts/development";
-import { type CriterionVerdict, type DecisionPanel, type DecisionTrace, judgeCriteria, type Triage, triage, triageMessage } from "@mork/decision";
+import {
+  type CriterionVerdict,
+  type DecisionPanel,
+  type DecisionTrace,
+  judgeCriteria,
+  pickRepairs,
+  prioritizeFindings,
+  type Triage,
+  triage,
+  triageMessage,
+} from "@mork/decision";
 import type { Complete } from "@mork/sources";
 import { executionUrl, findIssueKey, REVIEW_LEVEL_TEXT, type ReportEvent, type Reporter, type SlackStart, type TrackerIssue } from "@mork/sources";
 import type { Store } from "@mork/store";
 import { linkPr, recordDecision, recordTakeover, type TimelineStore } from "@mork/timeline";
 import { z } from "zod";
 import { type FixState, MARKER, releasePr, savePr, startFix } from "./fix.ts";
-import type { GitHub } from "./github.ts";
+import { type GitHub, GitHubError } from "./github.ts";
 import { CLARIFY_SYSTEM } from "./llm.ts";
 import { LABELS, naming, type Origin, prLink, type StartInput } from "./origin.ts";
 import { type Recommendation, recommend } from "./recommend.ts";
@@ -58,6 +71,8 @@ export type FlowState = {
   error?: { Error?: string; Cause?: string };
   /** Fix runs after the PR: which PR, which round and why. */
   fix?: FixState;
+  /** Repairs this run made so far, and how many findings they sent back to Build. */
+  repair?: { rounds: number; findings: number };
 };
 
 /** Start found nothing to do (e.g. a greeting in Slack); Route goes straight to Done. */
@@ -278,7 +293,7 @@ export async function decide(deps: Deps, state: FlowState): Promise<FlowState> {
   const { brief, task } = state;
   const result = lastResult(state);
   await recordSupervision(deps, state);
-  // Plan, Build and Check report their own progress; Decide only reports the PR.
+  // Plan, Build and Check report their own progress; Decide reports a repair and the PR.
   if (!result.passed) {
     deps.log(task.id, "check.end", { attempt: brief.attempt, passed: false, stats: result.stats });
     return retryBuild(deps, state, await store.text(keys.feedback(brief.prefix, brief.attempt + 1)));
@@ -295,15 +310,63 @@ export async function decide(deps: Deps, state: FlowState): Promise<FlowState> {
     stats: result.stats,
   });
 
-  const review = ReviewerOutput.parse(await store.json(keys.review(brief.prefix, brief.attempt)));
+  const review = Review.parse(await store.json(keys.review(brief.prefix, brief.attempt)));
   const impl = ImplementerOutput.parse(await store.json(keys.impl(brief.prefix, brief.attempt)));
   const issue = IssueDoc.parse(await store.json(keys.issue(brief.prefix)));
+  const attempt = `check-${brief.attempt}`;
+  // The decision model sets each finding's priority. Proven defects it rates must-fix go back to Build before
+  // a person sees the PR, as many times as the policy allows; each repair adds a Build attempt of its own.
+  // Changes the rules hand to a person anyway are not repaired first.
+  const prioritized = await prioritizeFindings(
+    deps.panel,
+    review.findings.map((f) => ({
+      severity: f.severity,
+      category: f.category,
+      where: f.where,
+      what: f.what,
+      excerpt: f.located?.excerpt ?? f.quote,
+    })),
+  );
+  const repairs = state.repair ?? { rounds: 0, findings: 0 };
+  const takeover = (gate.diff_policy?.protected_hits ?? []).length > 0 || plan.security_sensitive || state.security === true;
+  const allowed = (state.policy ?? DEFAULT_DEVELOPMENT_POLICY).repairs.rounds;
+  const chosen =
+    repairs.rounds >= allowed || takeover
+      ? []
+      : pickRepairs(
+          review.findings.map((f) => ({ severity: f.severity, repairable: repairCandidate(f) })),
+          prioritized.priorities,
+          MAX_REPAIR_FINDINGS,
+        );
+  const defects = chosen.map((index) => review.findings[index] as Review["findings"][number]);
+  const findings = defects.map((f) => `${f.severity} ${f.category} ${f.where}: ${f.what}`);
+  if (prioritized.trace) {
+    const decided = review.findings.map((f, index) => ({ where: f.where, severity: f.severity, ...prioritized.priorities[index] }));
+    await recordDecision(deps.timeline, {
+      task: task.id,
+      point: "findings",
+      attempt,
+      trace: prioritized.trace,
+      action: { priorities: decided, repair: findings },
+    });
+  }
+  if (defects.length) {
+    await store.put(keys.feedback(brief.prefix, brief.attempt + 1), repairFeedback(defects), "text/markdown");
+    await reporter.report({ kind: "repair", attempt: brief.attempt, findings: defects.map((f) => `\`${f.where}\`: ${f.what.slice(0, 200)}`) });
+    deps.log(task.id, "review.repair", { attempt: brief.attempt, round: repairs.rounds + 1, findings });
+    return {
+      ...state,
+      brief: { ...brief, attempt: brief.attempt + 1, last_attempt: lastAttempt(brief) + 1 },
+      next: "build",
+      last: undefined,
+      repair: { rounds: repairs.rounds + 1, findings: repairs.findings + defects.length },
+    };
+  }
   const untestable = plan.acceptance_criteria.filter((c) => !c.testable);
   const judged = await judgeCriteria(
     deps.panel,
     untestable.map((c) => ({ id: c.id, text: c.text, evidence: review.criteria.find((r) => r.id === c.id)?.evidence ?? [] })),
   );
-  const attempt = `check-${brief.attempt}`;
   if (judged.trace) {
     await recordDecision(deps.timeline, { task: task.id, point: "criteria", attempt, trace: judged.trace, action: { verdicts: judged.verdicts } });
   }
@@ -313,6 +376,7 @@ export async function decide(deps: Deps, state: FlowState): Promise<FlowState> {
     review,
     criteria: judged.verdicts,
     securityTriage: state.security === true,
+    priorities: prioritized.priorities,
     panel: deps.panel,
   });
   if (trace) await recordDecision(deps.timeline, { task: task.id, point: "recommendation", attempt, trace, action: rec });
@@ -339,6 +403,7 @@ export async function decide(deps: Deps, state: FlowState): Promise<FlowState> {
     attempt: brief.attempt,
     lastAttempt: lastAttempt(brief),
     head,
+    repaired: state.repair?.findings,
   };
   if (state.fix) {
     const { fix } = state;
@@ -401,7 +466,15 @@ export async function handover(deps: Deps, state: FlowState): Promise<{ next: "d
   const task: Task = state.task ?? taskFromStartInput(state as unknown as StartInput);
   const reason = handoverReason(state);
   const stopped = task.started_by ? await deps.stopStations(task.started_by) : 0;
-  await (await deps.reporter(task)).report({ kind: "handover", reason });
+  // The person who takes over starts from a PR, not from a bare branch. A failed PR must not stop the handover.
+  const pr =
+    state.task && state.brief && !state.fix
+      ? await handoverPr(deps, state as FlowState, reason).catch((error: Error) => {
+          deps.log(task.id, "handover.pr_failed", { error: error.message.slice(0, 500) });
+          return undefined;
+        })
+      : undefined;
+  await (await deps.reporter(task)).report({ kind: "handover", reason, ...(pr ? { pr_url: pr.html_url } : {}) });
   if (state.fix && state.brief) {
     await deps.github.comment(
       task.repo,
@@ -416,6 +489,43 @@ export async function handover(deps: Deps, state: FlowState): Promise<{ next: "d
   }
   deps.log(task.id, "task.handover", { reason: reason.slice(0, 500), stopped });
   return { next: "done", outcome: { level: "takeover" } };
+}
+
+/** Opens (or finds) the draft PR of a handed-over task, labelled for a person; none when the branch has no work. */
+async function handoverPr(deps: Deps, state: FlowState, reason: string): Promise<{ number: number; html_url: string } | undefined> {
+  const { task, brief } = state;
+  const head = await deps.github.branchSha(task.repo, brief.branch).catch((error) => {
+    if (error instanceof GitHubError && error.status === 404) return undefined;
+    throw error;
+  });
+  if (!head || head === brief.repo.base_sha) return undefined;
+  const issue = IssueDoc.parse(await deps.store.json(keys.issue(brief.prefix)));
+  const link = prLink(task.origin, issue.title);
+  const transcripts = transcriptsUrl(deps.store.bucket, brief.prefix);
+  const pr =
+    (await deps.github.openPr(task.repo, brief.branch)) ??
+    (await deps.github.createDraftPr(task.repo, {
+      title: link.title,
+      head: brief.branch,
+      base: brief.repo.default_branch,
+      body: `## Recommendation: ${REVIEW_LEVEL_TEXT.takeover}
+
+Mork hands this change to a person:
+
+${reason}
+
+The branch holds Mork's last attempt (\`${head.slice(0, 7)}\`); it may not pass its checks. Take it over, or comment \`@mork\` with what to change to let Mork continue.
+
+Agent transcripts (AWS console, secrets redacted): ${transcripts}
+
+${link.footer}
+
+<sub>Mork task ${task.id}</sub>`,
+    }));
+  await linkPr(deps.timeline, task.id, task.repo, pr.number, brief.prefix);
+  await savePr(deps, state, { number: pr.number, url: pr.html_url });
+  await deps.github.addLabels(task.repo, pr.number, [LABELS.takeover.name]);
+  return pr;
 }
 
 /** A failing Start has no task yet; its input is all there is. */
@@ -435,11 +545,13 @@ export function transcriptsUrl(bucket: string, prefix: string, region = process.
 export type ChecksEvidence = {
   gateBefore?: GateReport;
   gate: GateReport;
-  review: ReviewerOutput;
+  review: Review;
   verdicts: CriterionVerdict[];
   attempt: number;
   lastAttempt: number;
   head: string;
+  /** Reviewer findings this run sent back to Build before this review. */
+  repaired?: number;
 };
 
 /** Uber-style table of every check that ran, so the reviewer sees what is already verified. */
@@ -479,6 +591,7 @@ export function checksTable(c: ChecksEvidence): string {
       `${passed === c.verdicts.length ? "✅" : "⚠️"} ${passed}/${c.verdicts.length} confirmed from quotes`,
     ]);
   }
+  if (c.repaired) rows.push(["Review findings sent back to Build", "workflow", `${c.repaired} before this review`]);
   rows.push(["Build attempts", "workflow", `${c.attempt} of ${c.lastAttempt}`]);
   rows.push(["Branch is the commit the gate checked", "workflow", `✅ \`${c.head.slice(0, 7)}\``]);
   const cell = (t: string) => t.replaceAll("|", "\\|").replaceAll("\n", " ");
@@ -490,7 +603,7 @@ export function prBody(
   plan: PublicPlan,
   gate: GateReport,
   impl: ImplementerOutput,
-  review: ReviewerOutput,
+  review: Review,
   rec: Recommendation,
   verdicts: CriterionVerdict[],
   footer: string,
@@ -527,7 +640,7 @@ ${checksTable(checks)}
 ## Review
 
 ${review.summary}
-${review.findings.length ? `\n${review.findings.map((f) => `- ${f.severity} \`${f.where}\`: ${f.what}`).join("\n")}\n` : ""}${impl.deviations.length ? `\n## Deviations from the plan\n\n${impl.deviations.map((d) => `- ${d}`).join("\n")}\n` : ""}
+${review.findings.length ? `\n${review.findings.map((f) => `- ${f.severity} ${f.category} \`${f.where}\`${f.located ? "" : " (quote not found in the commit)"}: ${f.what}`).join("\n")}\n` : ""}${impl.deviations.length ? `\n## Deviations from the plan\n\n${impl.deviations.map((d) => `- ${d}`).join("\n")}\n` : ""}
 ${liveUrl ? `Live log (Grafana): ${liveUrl}\n` : ""}${transcripts ? `Agent transcripts (AWS console, secrets redacted): ${transcripts}\n\n` : ""}${footer}
 
 <sub>Mork task ${task.id}</sub>`;

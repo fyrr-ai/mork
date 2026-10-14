@@ -17,7 +17,7 @@ import type { Logger } from "./otlp.ts";
 import { PiRpc } from "./rpc.ts";
 import type { SessionLog } from "./session.ts";
 import { onShutdown } from "./shutdown.ts";
-import { type SupervisionRecord, Supervisor } from "./supervisor.ts";
+import { SUPERVISION_TICK_MS, type SupervisionRecord, Supervisor } from "./supervisor.ts";
 import { type VerifyResult, type VerifySpec, verifyText } from "./verify.ts";
 
 export type RunnerEnv = {
@@ -43,8 +43,8 @@ export type LlmJob = {
   /** Implementer only: the agent commits and pushes `branch` itself. */
   push?: { branch: string; remoteHead: () => Promise<string | undefined> };
   /**
-   * The only brake on a run: every `everyMs` the decision model scores progress
-   * and the supervisor steers or stops. There are no turn or time limits; Step
+   * The only brake on a run: on a cheap signal, and at least every `everyMs`, the
+   * decision model scores progress and the supervisor steers or stops. There are no turn or time limits; Step
    * Functions' per-phase timeout is the backstop.
    */
   supervise: { panel: DecisionPanel; everyMs: number; task: Record<string, unknown> };
@@ -167,9 +167,10 @@ export async function runLlmStation(spec: LlmJob, env: RunnerEnv, repoDir: strin
         void pi.command({ type: "abort" }).catch(() => undefined);
       },
     },
+    { everyMs: spec.supervise.everyMs, trackDiff: spec.station === "implementer" },
   );
   pi.onEvent((event) => supervisor.observe(event));
-  const ticker = spec.supervise.panel.enabled ? setInterval(() => void supervisor.check().catch(() => undefined), spec.supervise.everyMs) : undefined;
+  const ticker = spec.supervise.panel.enabled ? setInterval(() => void supervisor.check().catch(() => undefined), SUPERVISION_TICK_MS) : undefined;
 
   const parseOutput =
     spec.parseOutput ??

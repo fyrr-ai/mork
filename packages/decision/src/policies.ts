@@ -2,7 +2,7 @@
 // recommendation. Each policy is a fixed question set plus a pure function
 // from answers to an action; the code, not the model, owns the thresholds and
 // every `undecided` answer lands on the safe side.
-import type { Answer, DecisionPanel, DecisionTrace, Question } from "./core.ts";
+import { type Answer, boundEvidence, type DecisionPanel, type DecisionTrace, type Question } from "./core.ts";
 
 const probability = (answer: Answer | undefined): number | undefined => (answer?.type === "noul" ? answer.p : undefined);
 
@@ -112,6 +112,71 @@ export async function judgeCriteria(
   const state = { evidence: Object.fromEntries(asked.map((c) => [c.id, { criterion: c.text, quotes: c.evidence.slice(0, 8) }])) };
   const { answers, trace } = await panel.decide(state, questions);
   return { verdicts: criteria.map((c) => criterionVerdict(c, answers[c.id])), trace };
+}
+
+// ------------------------------------------------------ reviewer findings
+// The decision model sets each finding's priority from the finding and the code
+// around its quote: whether it is repaired before the PR, and whether it keeps the
+// PR at careful review. An undecided answer falls back to the reviewer's severity.
+
+export const REPAIR_AT = 0.8;
+
+export const PRIORITY_QUESTION = {
+  type: "choice",
+  instructions:
+    "A code reviewer reported this finding about a pull request. Judged from the finding and the code excerpt, how urgent is it to fix before the change is merged? Choose none if the excerpt does not show the described defect.",
+  options: {
+    P0: "Must not merge: breaks the feature in normal use, a security hole, data loss or a crash",
+    P1: "Should be fixed before merge: wrong behaviour in a realistic case",
+    P2: "Minor: style, naming, documentation, missing tests or an unlikely edge case",
+    none: "The excerpt does not show the described defect",
+  },
+} as const satisfies Question;
+
+export type FindingEvidence = { severity: "P0" | "P1" | "P2"; category: string; where: string; what: string; excerpt: string };
+export type Priority = { fix: boolean; p?: number; decidedBy: "decision model" | "reviewer"; reason: string };
+
+export function findingPriority(finding: Pick<FindingEvidence, "severity">, answer: Answer | undefined): Priority {
+  if (answer?.type === "choice") {
+    const p = (answer.probabilities.P0 ?? 0) + (answer.probabilities.P1 ?? 0);
+    if (p >= REPAIR_AT) return { fix: true, p, decidedBy: "decision model", reason: `must be fixed, p=${p.toFixed(2)}` };
+    if (p <= 1 - REPAIR_AT) return { fix: false, p, decidedBy: "decision model", reason: `can wait, p=${p.toFixed(2)}` };
+  }
+  const fix = finding.severity !== "P2";
+  return { fix, decidedBy: "reviewer", reason: `decision model unsure; reviewer says ${finding.severity}` };
+}
+
+/** Priorities in the order of `findings`, plus the trace when the decision model was asked. */
+export async function prioritizeFindings(
+  panel: DecisionPanel,
+  findings: FindingEvidence[],
+): Promise<{ priorities: Priority[]; trace?: DecisionTrace }> {
+  if (!panel.enabled || !findings.length) return { priorities: findings.map((f) => findingPriority(f, undefined)) };
+  const ids = findings.map((_, index) => `F${index + 1}`);
+  const questions: Record<string, Question> = Object.fromEntries(
+    ids.map((id) => [id, { ...PRIORITY_QUESTION, instructions: `${PRIORITY_QUESTION.instructions} Answer for ${id} only.` }]),
+  );
+  const state = {
+    findings: Object.fromEntries(
+      findings.map((f, index) => [ids[index], boundEvidence({ finding: `${f.category}: ${f.what}`, where: f.where, excerpt: f.excerpt })]),
+    ),
+  };
+  const { answers, trace } = await panel.decide(state, questions);
+  return { priorities: findings.map((f, index) => findingPriority(f, answers[ids[index] as string])), trace };
+}
+
+/** The findings to repair, most urgent first, at most `max`, as indexes into `findings`. */
+export function pickRepairs(
+  findings: { severity: FindingEvidence["severity"]; repairable: boolean }[],
+  priorities: Priority[],
+  max: number,
+): number[] {
+  const urgency = (index: number) => priorities[index]?.p ?? (findings[index]?.severity === "P0" ? 1 : REPAIR_AT);
+  return findings
+    .map((_, index) => index)
+    .filter((index) => findings[index]?.repairable && priorities[index]?.fix)
+    .sort((a, b) => urgency(b) - urgency(a))
+    .slice(0, max);
 }
 
 // ------------------------------------------------ implementer supervision

@@ -4,9 +4,20 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { Brief, BuildResult, IssueDoc, keys, lastAttempt, parseRepoConfig } from "@mork/contracts";
+import {
+  Brief,
+  BuildResult,
+  IssueDoc,
+  keys,
+  lastAttempt,
+  MAX_REPAIR_FINDINGS,
+  parseRepoConfig,
+  Review,
+  repairCandidate,
+  repairFeedback,
+} from "@mork/contracts";
 import { DEFAULT_DEVELOPMENT, DevelopmentWorkflow } from "@mork/contracts/development";
-import { DecisionPanel } from "@mork/decision";
+import { DecisionPanel, pickRepairs, prioritizeFindings } from "@mork/decision";
 import { LocalStore } from "@mork/store/local";
 import { z } from "zod";
 import { exec, mustExec, remoteHead, SAFE_GIT } from "./git.ts";
@@ -26,6 +37,8 @@ const Manifest = z.object({
   brief: Brief,
   definition: DevelopmentWorkflow.default(DEFAULT_DEVELOPMENT),
   next: z.enum(["plan", "build", "check", "done"]),
+  /** Repairs the run made so far. */
+  repairs: z.number().int().min(0).default(0),
   result: Result.optional(),
 });
 const MANIFEST_KEY = "local-run.json";
@@ -74,7 +87,7 @@ export async function runLocalWorkflow(options: LocalOptions): Promise<LocalResu
         repo: { full_name: "local/repository", default_branch: defaultBranch || "main", base_sha: base },
         branch: `mork/local-${randomUUID().slice(0, 8)}`,
       });
-      manifest = { brief, definition, next: "plan" };
+      manifest = { brief, definition, next: "plan", repairs: 0 };
       await store.putJson(keys.issue(brief.prefix), IssueDoc.parse(options.issue));
       await store.putJson(MANIFEST_KEY, manifest);
     }
@@ -94,7 +107,7 @@ export async function runLocalWorkflow(options: LocalOptions): Promise<LocalResu
       githubToken: async () => "",
       model: options.model,
       panel: new DecisionPanel([]),
-      superviseEveryMs: 45_000,
+      superviseEveryMs: 300_000,
       reporter: {
         report: async (event) => {
           console.error(JSON.stringify(event));
@@ -113,7 +126,7 @@ export async function runLocalWorkflow(options: LocalOptions): Promise<LocalResu
       sandbox: { env: { HOME: workDir, PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin", CI: "1" } },
     };
     const save = async (next: z.infer<typeof Manifest>["next"], result?: LocalResult) => {
-      manifest = { brief: ctx.brief, definition: manifest.definition, next, ...(result ? { result } : {}) };
+      manifest = { brief: ctx.brief, definition: manifest.definition, next, repairs: manifest.repairs, ...(result ? { result } : {}) };
       await store.putJson(MANIFEST_KEY, manifest);
     };
     if (manifest.next === "plan") {
@@ -137,7 +150,30 @@ export async function runLocalWorkflow(options: LocalOptions): Promise<LocalResu
       signal.throwIfAborted();
       const checked = await check(ctx);
       signal.throwIfAborted();
-      if (checked.ok && checked.passed) {
+      // As in Decide: the reviewer's proven defects get the configured repairs before the result counts.
+      const review =
+        checked.ok && checked.passed && manifest.repairs < manifest.definition.repairs.rounds
+          ? Review.parse(await store.json(keys.review(ctx.brief.prefix, ctx.brief.attempt)))
+          : undefined;
+      const findings = review?.findings ?? [];
+      const { priorities } = await prioritizeFindings(
+        ctx.panel,
+        findings.map((f) => ({ severity: f.severity, category: f.category, where: f.where, what: f.what, excerpt: f.located?.excerpt ?? f.quote })),
+      );
+      const chosen = pickRepairs(
+        findings.map((f) => ({ severity: f.severity, repairable: repairCandidate(f) })),
+        priorities,
+        MAX_REPAIR_FINDINGS,
+      );
+      if (chosen.length) {
+        await store.put(
+          keys.feedback(ctx.brief.prefix, ctx.brief.attempt + 1),
+          repairFeedback(chosen.map((index) => findings[index] as Review["findings"][number])),
+        );
+        manifest.repairs += 1;
+        // A repair brings its own Build attempt.
+        ctx.brief = { ...ctx.brief, last_attempt: lastAttempt(ctx.brief) + 1 };
+      } else if (checked.ok && checked.passed) {
         const head = remoteHead(ctx.brief.repo.full_name, "", ctx.brief.branch, remote);
         const result: LocalResult = { ok: true, branch: ctx.brief.branch, attempt: ctx.brief.attempt, head_sha: head };
         await save("done", result);

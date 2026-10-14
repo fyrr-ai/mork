@@ -37,7 +37,7 @@ function completion(model: string, tool?: { name: string; arguments: unknown }):
 }
 
 integration(
-  "real Pi resumes after SIGTERM, plans hidden tests, pushes two Build attempts and passes Check without AWS",
+  "real Pi resumes after SIGTERM, plans hidden tests, retries a red gate, repairs a reviewer finding and passes Check without AWS",
   async () => {
     const directory = mkdtempSync(join(tmpdir(), "mork-local-workflow-"));
     const source = join(directory, "source");
@@ -118,8 +118,11 @@ integration(
             });
         } else if (station === "implementer") {
           if (turns === 0) {
-            const retry = users.includes("Your previous attempt did not pass the gate");
-            const code = retry ? "export const add = (a, b) => a + b;" : "export const add = (a, b) => a + b + 1;";
+            const code = users.includes("The reviewer found defects in your change")
+              ? "export const add = (a, b) => Number(a) + Number(b);"
+              : users.includes("The attempt did not pass the gate")
+                ? "export const add = (a, b) => a + b;"
+                : "export const add = (a, b) => a + b + 1;";
             return completion(body.model, {
               name: "bash",
               arguments: {
@@ -153,7 +156,26 @@ integration(
           if (turns === 1)
             return completion(body.model, {
               name: "submit_result",
-              arguments: { json: JSON.stringify({ summary: "Addition is corrected", criteria: [], findings: [], read_first: ["math.mjs:1"] }) },
+              arguments: {
+                json: JSON.stringify({
+                  summary: "Addition is corrected",
+                  files_reviewed: ["math.mjs"],
+                  criteria: [],
+                  // The first green gate gets one proven defect; the review after the repair is clean.
+                  findings: JSON.stringify(body.messages).includes("Number(a)")
+                    ? []
+                    : [
+                        {
+                          severity: "P1",
+                          category: "bug",
+                          where: "math.mjs:1",
+                          quote: "export const add = (a, b) => a + b;",
+                          what: "Strings are concatenated instead of added",
+                        },
+                      ],
+                  read_first: ["math.mjs:1"],
+                }),
+              },
             });
         }
         return completion(body.model);
@@ -203,11 +225,14 @@ integration(
       expect(started.code, started.output).toBe(0);
       const store = new LocalStore(join(task, "outputs"));
       const state = (await store.json("local-run.json")) as { result: { ok: boolean; attempt: number; head_sha: string; branch: string } };
-      expect(state.result).toMatchObject({ ok: true, attempt: 2 });
+      expect(state.result).toMatchObject({ ok: true, attempt: 3 });
       expect(await store.json(keys.gateBefore("tasks/local"))).toMatchObject({ hidden: [{ passed: false }] });
       expect(await store.json(keys.gate("tasks/local", 1))).toMatchObject({ hidden: [{ passed: false }] });
-      expect(await store.json(keys.gate("tasks/local", 2))).toMatchObject({ head_sha: state.result.head_sha, hidden: [{ passed: true }] });
-      expect(await store.json(keys.review("tasks/local", 2))).toMatchObject({ summary: "Addition is corrected", findings: [] });
+      expect(await store.json(keys.gate("tasks/local", 2))).toMatchObject({ hidden: [{ passed: true }] });
+      expect(await store.json(keys.review("tasks/local", 2))).toMatchObject({ unreviewed_files: [], findings: [{ located: { line: 1 } }] });
+      expect(await store.text(keys.feedback("tasks/local", 3))).toContain("Strings are concatenated instead of added");
+      expect(await store.json(keys.gate("tasks/local", 3))).toMatchObject({ head_sha: state.result.head_sha, hidden: [{ passed: true }] });
+      expect(await store.json(keys.review("tasks/local", 3))).toMatchObject({ summary: "Addition is corrected", findings: [] });
       expect(mustExec("git", [...SAFE_GIT, "--git-dir", join(task, "remote.git"), "rev-parse", state.result.branch]).trim()).toBe(
         state.result.head_sha,
       );
@@ -222,14 +247,14 @@ integration(
         expect(requests.every((request) => request.model === `fixture-${kind}`)).toBe(true);
         expect(requests.every((request) => JSON.stringify(request.messages).includes(`CONFIGURED_${kind?.toUpperCase()}_PROMPT`))).toBe(true);
       }
-      expect(((await store.json("local-run.json")) as { brief: { last_attempt: number } }).brief.last_attempt).toBe(2);
+      expect(((await store.json("local-run.json")) as { brief: { last_attempt: number } }).brief.last_attempt).toBe(3);
       expect(seen.some((request) => request.station === "reviewer")).toBe(true);
       expect(JSON.stringify(seen.filter((request) => request.station === "implementer"))).not.toContain("HIDDEN_FIXTURE_ASSERTION");
       expect(JSON.stringify(seen.filter((request) => request.station === "implementer"))).toContain("verify: PASSED");
       expect(JSON.stringify(seen.filter((request) => request.station === "implementer"))).not.toContain("verify: FAILED");
       expect(git("rev-parse", "HEAD")).toBe(original);
       expect(git("status", "--porcelain")).toBe("");
-      const session = await store.text(`${keys.session("tasks/local", "build-2-implementer")}.jsonl`);
+      const session = await store.text(`${keys.session("tasks/local", "build-3-implementer")}.jsonl`);
       expect(session).toContain("submit_result");
       expect(session).not.toContain("local-fixture-key");
       expect(existsSync(join(task, "agent", ".pi-mork", "models.json"))).toBe(false);

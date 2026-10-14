@@ -11,6 +11,7 @@ research references. It does not change those terms.
 | [Pi](https://github.com/earendil-works/pi/tree/v1.1.0) | Runner's coding-agent CLI, version 1.1.0 | MIT, copyright 2025 Mario Zechner. [License](licenses/pi.LICENSE) |
 | [iron-proxy](https://github.com/ironsh/iron-proxy/tree/v0.53.0) | Egress sidecar, version 0.53.0 | Apache-2.0. [License](licenses/iron-proxy.LICENSE) |
 | [AWS SDK for JavaScript v3](https://github.com/aws/aws-sdk-js-v3/tree/v3.908.0) | AWS clients | Apache-2.0. [License supplement](licenses/aws-sdk-js-v3.LICENSE) |
+| [Open Code Review](https://github.com/alibaba/open-code-review/tree/b842659ed903743fe0afeb50eead62ca47de3deb) | Review rules by file type in `packages/runner/rules`, copied unmodified | Apache-2.0, copyright 2026 Alibaba. [License](licenses/open-code-review.LICENSE) |
 | [Zod](https://github.com/colinhacks/zod) | Input schemas | MIT. See the installed package's `LICENSE` |
 | [smol-toml](https://github.com/squirrelchat/smol-toml) | Repository configuration parsing | BSD-3-Clause. See the installed package's `LICENSE` |
 

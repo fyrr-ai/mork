@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { type Decider, DecisionPanel, STEER_GRACE_MS } from "@mork/decision";
-import { Supervisor } from "./supervisor.ts";
+import { STALL_MS, Supervisor } from "./supervisor.ts";
+
+const every = { everyMs: 0, trackDiff: false, started: 0 };
 
 const stuck: Decider = { name: "fixed", decide: async () => ({ worker_stuck: { type: "noul", p: 0.95 } }) };
 
@@ -19,13 +21,14 @@ function hooks() {
 describe("supervisor", () => {
   test("steers once, waits out the grace, then stops", async () => {
     const { done, hooks: h } = hooks();
-    const s = new Supervisor(new DecisionPanel([stuck]), { title: "t" }, h);
+    const s = new Supervisor(new DecisionPanel([stuck]), { title: "t" }, h, every);
     s.observe({ type: "tool_execution_start", toolName: "bash", args: { command: "npm test" } });
     await s.check(1_000);
     await s.check(1_000 + STEER_GRACE_MS - 1);
     await s.check(1_000 + STEER_GRACE_MS);
     expect(done).toEqual(["steer:You are repe", "stop:Supervi"]);
-    expect(s.records.map((r) => r.action.action)).toEqual(["steer", "continue", "stop"]);
+    expect(s.records.map((r) => r.action.action)).toEqual(["steer", "stop"]);
+    expect(s.records.map((r) => r.action.trigger)).toEqual(["periodic", "after steering"]);
     const state = s.records[0]?.trace.state as { recent_tool_calls: string[]; diff_stat: string };
     expect(state.recent_tool_calls[0]).toContain("npm test");
     expect(state.diff_stat).toContain("a.mjs");
@@ -35,7 +38,7 @@ describe("supervisor", () => {
     h.diffStat = () => {
       throw new Error("No model must not spawn git");
     };
-    const s = new Supervisor(new DecisionPanel([]), { title: "t" }, h);
+    const s = new Supervisor(new DecisionPanel([]), { title: "t" }, h, every);
     await s.check(0);
     expect(done).toEqual([]);
     expect(s.records).toEqual([]);
@@ -43,9 +46,33 @@ describe("supervisor", () => {
   test("a configured model that cannot decide still records its safe default", async () => {
     const { done, hooks: h } = hooks();
     const unavailable: Decider = { name: "fixed", decide: async () => ({ worker_stuck: { type: "undecided", reason: "offline" } }) };
-    const s = new Supervisor(new DecisionPanel([unavailable]), { title: "t" }, h);
+    const s = new Supervisor(new DecisionPanel([unavailable]), { title: "t" }, h, every);
     await s.check(0);
     expect(done).toEqual([]);
-    expect(s.records[0]?.action).toEqual({ action: "continue" });
+    expect(s.records[0]?.action).toEqual({ action: "continue", trigger: "periodic" });
+  });
+  test("asks on a repeated tool call or tool errors in a row, otherwise once per period", async () => {
+    const { hooks: h } = hooks();
+    const fine: Decider = { name: "fixed", decide: async () => ({ worker_stuck: { type: "noul", p: 0.05 } }) };
+    const s = new Supervisor(new DecisionPanel([fine]), { title: "t" }, h, { everyMs: 300_000, trackDiff: false, started: 0 });
+    await s.check(60_000);
+    for (let i = 0; i < 3; i++) s.observe({ type: "tool_execution_start", toolName: "bash", args: { command: "npm test" } });
+    await s.check(61_000);
+    await s.check(62_000);
+    for (let i = 0; i < 3; i++) {
+      s.observe({ type: "tool_execution_start", toolName: "read", args: { path: `f${i}` } });
+      s.observe({ type: "tool_execution_end", isError: true });
+    }
+    await s.check(63_000);
+    await s.check(63_000 + 300_000);
+    expect(s.records.map((r) => r.action.trigger)).toEqual(["repeated tool call", "tool errors in a row", "periodic"]);
+  });
+  test("an implementer whose diff stops changing gets a check", async () => {
+    const { hooks: h } = hooks();
+    const s = new Supervisor(new DecisionPanel([stuck]), { title: "t" }, h, { everyMs: 3_600_000, trackDiff: true, started: 0 });
+    await s.check(1_000);
+    await s.check(STALL_MS);
+    await s.check(STALL_MS + 1_000);
+    expect(s.records.map((r) => r.action.trigger)).toEqual(["diff unchanged"]);
   });
 });

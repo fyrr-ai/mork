@@ -134,7 +134,7 @@ export async function draftIssue(ask: string, complete?: Complete): Promise<Draf
 export function jiraReporter(jira: Jira, key: string): Reporter {
   const text = (event: ReportEvent): string | undefined => {
     if (event.kind === "pr") return `Mork opened a draft PR: ${event.url}`;
-    if (event.kind === "handover") return `Mork hands this over to a person: ${event.reason}`;
+    if (event.kind === "handover") return `Mork hands this over to a person: ${event.reason}${event.pr_url ? `\n\nDraft PR: ${event.pr_url}` : ""}`;
     if (event.kind === "clarify") return `Mork needs more detail before it can start:\n\n${event.questions}`;
     if (event.kind === "question") return `Mork asked in Slack: ${event.text}`;
     if (event.kind === "answered") return `Answer from Slack (${event.by}): ${event.text}`;

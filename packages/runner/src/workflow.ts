@@ -111,7 +111,7 @@ export async function runWorkflowStep(ctx: WorkflowContext): Promise<{ ok: true;
           extensions: step.extensions,
           environment,
           session,
-          supervise: { panel: new DecisionPanel([]), everyMs: 45_000, task: { workflow: run.request.workflow, step: step.name } },
+          supervise: { panel: new DecisionPanel([]), everyMs: 300_000, task: { workflow: run.request.workflow, step: step.name } },
         },
         env,
         cwd,

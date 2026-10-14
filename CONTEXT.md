@@ -111,10 +111,10 @@ The value of a recommendation: `quick`, `careful` (the safe default) or `takeove
 _Avoid_: risk score, priority
 
 **Takeover**:
-The highest review level: a person should take the task over. It opens no PR and always ends in a handover.
+The highest review level: a person should take the task over. It always ends in a handover.
 
 **Handover**:
-Mork stops working on a task and gives it to a person: a comment with the reason, the `needs-human` label, its containers stopped, the branch kept. Caused by a takeover, exhausted attempts, an error or a failed integrity check. Mork hands over; a person takes over.
+Mork stops working on a task and gives it to a person: a comment with the reason, the `needs-human` label, its containers stopped, the branch kept and, when the branch has work, a draft PR labelled `needs-human`. Caused by a takeover, exhausted attempts, an error or a failed integrity check. Mork hands over; a person takes over, or asks Mork to continue with `@mork` on that PR.
 _Avoid_: escalation, failure, abort
 
 **Decision model**:
@@ -152,6 +152,14 @@ The analyst's output: problem, steps, acceptance criteria, hidden tests and risk
 One pass through Build and Check. A first run has up to 3; each fix run has 2 more and continues the numbering. The analyst has its own 2 attempts in Plan.
 _Avoid_: retry, iteration
 
+**Finding**:
+A defect the reviewer reports, with a severity (P0, P1, P2), a category and a quote. The runner locates the quote in the reviewed commit; a finding without one stays an opinion in the PR text.
+_Avoid_: comment, issue
+
+**Repair**:
+Decide sending located bug and security findings back to Build after a green gate, when the decision model rates them must-fix. A run has `repairs.rounds` of them (3 by default), each with a Build attempt of its own.
+_Avoid_: fix (that is a fix run), retry
+
 **Fix round**:
 One fix run's claim on a PR, at most 2 per PR, taken with a conditional write so concurrent triggers start one run.
 
@@ -187,6 +195,7 @@ The word **factory** is not part of Mork's language: the trigger label is `mork`
 - A **Task** has one **Origin**, one branch, at most one draft PR, one first **Run** and up to two **Fix runs**.
 - Each **Run** is one **Execution** and goes through **Phases**; each **Phase** runs one **Container** per **Attempt** and holds one or two **Stations**.
 - **Steps** run between **Phases**: Start before Plan, Decide after Check, Ask when a **Station** has a **Question**, Handover on any stop.
+- A green **Gate** with located **Findings** leads to a **Repair** while the **Run** has repair rounds left; the review after the last one goes to the PR.
 - The **Gate** decides whether the change works; the **Decision model** only advises: **Triage**, **Supervision**, untestable **Acceptance criteria** and the **Recommendation**.
 - **Hard rules** run first and can only raise the **Review level**; a **Takeover** always ends in a **Handover**.
 
