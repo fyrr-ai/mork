@@ -33,8 +33,12 @@ export function naming(repo: string, origin: Origin, short: string): Naming {
 export function prLink(origin: Origin, title: string): { title: string; footer: string } {
   const reference = origin.kind === "github" ? `#${origin.issue}` : origin.work?.key;
   const suffix = reference ? ` (${reference})` : "";
+  const subject = suffix && title.endsWith(suffix) ? title.slice(0, -suffix.length) : title;
+  const conventional = /^(feat|fix|docs|test|refactor|perf|build|ci|chore|style|revert)(?:\(([^)]+)\))?(!)?: (.+)$/.exec(subject);
+  const scope = conventional?.[2] && /^[a-z0-9][a-z0-9_-]*$/.test(conventional[2]) ? conventional[2] : "mork";
+  const normalized = conventional ? `${conventional[1]}(${scope})${conventional[3] ?? ""}: ${conventional[4]}` : `chore(mork): ${subject}`;
   return {
-    title: suffix && !title.endsWith(suffix) ? `${title}${suffix}` : title,
+    title: `${normalized.slice(0, 100 - suffix.length).trimEnd()}${suffix}`,
     footer: origin.kind === "github" ? `Closes #${origin.issue}` : `Jira: ${origin.work?.url ?? reference ?? ""}`,
   };
 }
