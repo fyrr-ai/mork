@@ -2,6 +2,8 @@
 
 ## 0.1.0
 
+- Select the sole allowed Slack workflow without a routing question; retry transient GitHub App token failures up to three requests.
+
 Prepared for release; not published.
 
 - Use the pushed commit's subject as the PR title and append its tracking reference, preserving repository title conventions during normal delivery and handover.

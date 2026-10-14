@@ -34,7 +34,7 @@ export const Binding = z.object({
   input: z.union([SlackStart, WorkflowRequest]),
 });
 
-/** Jev selects from the channel's allowlist. Configuration never becomes model output. */
+/** One allowed workflow is already selected; Jev chooses between multiple workflows. */
 export async function decideWorkflow(
   panel: DecisionPanel,
   config: SlackConfig,
@@ -42,6 +42,15 @@ export async function decideWorkflow(
   ask: string,
   clarification?: string,
 ): Promise<{ name?: string; unavailable: boolean; trace: DecisionTrace }> {
+  if (channel.allowed_workflows.length === 1) {
+    const name = channel.allowed_workflows[0];
+    if (!name || !config.workflows[name]) throw new Error(`Configured workflow ${name} is missing`);
+    return {
+      name,
+      unavailable: false,
+      trace: { used: "configuration", state: { request: ask, clarification, workflow: name }, questions: {}, providers: {} },
+    };
+  }
   const options: Record<string, string> = {};
   for (const name of channel.allowed_workflows) {
     const route = config.workflows[name];

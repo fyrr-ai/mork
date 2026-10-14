@@ -199,7 +199,7 @@ if (process.argv[2] === "lambda") {
     } else if (path === "/v1/systemone") {
       jevCalls++;
       const body = JSON.parse(text);
-      assert.deepEqual(Object.keys(body.questions.workflow.criteria), ["analysis", "_clarify"]);
+      assert.deepEqual(Object.keys(body.questions.workflow.criteria), ["analysis", "backup", "_clarify"]);
       response
         .writeHead(200)
         .end(JSON.stringify({ answers: { workflow: { choice: "analysis", confidence: 0.99, probabilities: { analysis: 0.99 } } } }));
@@ -217,9 +217,10 @@ if (process.argv[2] === "lambda") {
   routingObjects.set(
     "/routing-test/config/slack.json",
     JSON.stringify({
-      channels: { CDEMO: { default_workflow: "analysis", allowed_workflows: ["analysis"] } },
+      channels: { CDEMO: { default_workflow: "analysis", allowed_workflows: ["analysis", "backup"] } },
       workflows: {
         analysis: { arn: "arn:aws:states:us-east-1:123456789012:stateMachine:mork_analysis", kind: "configured", description: "Analyze numbers" },
+        backup: { arn: "arn:aws:states:us-east-1:123456789012:stateMachine:mork_backup", kind: "configured", description: "Back up data" },
       },
     }),
   );
@@ -267,7 +268,16 @@ if (process.argv[2] === "lambda") {
     assert.equal(jevCalls, 1);
     assert.equal(started.stateMachineArn, "arn:aws:states:us-east-1:123456789012:stateMachine:mork_analysis");
     assert.equal(JSON.parse(started.input).workflow, "analysis");
-    console.log("Compiled Slack webhook and Jev worker passed: asynchronous acknowledgement and workflow dispatch");
+    const storedConfig = routingObjects.get("/routing-test/config/slack.json");
+    assert(storedConfig);
+    const single = JSON.parse(storedConfig);
+    single.channels.CDEMO.allowed_workflows = ["analysis"];
+    routingObjects.set("/routing-test/config/slack.json", JSON.stringify(single));
+    await handler({ ...queued, request: { ...queued.request, event_id: "EvSINGLE", ref: { ...queued.request.ref, thread_ts: "2.0" } } });
+    assert.equal(jevCalls, 1, "The sole workflow must not call Jev");
+    assert.equal(started.name, "slack-EvSINGLE");
+    assert.equal(JSON.parse(started.input).workflow, "analysis");
+    console.log("Compiled Slack webhook passed: asynchronous acknowledgement, sole workflow and Jev selection between workflows");
   } finally {
     globalThis.fetch = realFetch;
     routingServer.closeAllConnections();

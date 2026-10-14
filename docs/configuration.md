@@ -17,7 +17,7 @@ Required: `vpc_id`, `vpc_cidr_block`, `vpc_private_subnet_ids`, `repo_allowlist`
 | `llm_base_url`, `model` | — | The OpenAI-compatible LLM |
 | `secret_prefix` | `mork` | Secrets Manager names are `<prefix>/<name>` |
 | `github_auth_mode` | `token` | `app` uses a GitHub App installation; `token` uses a static token |
-| `decision_providers` | `[]` | Development decision panel; Jev is required for Slack routing and is its sole provider |
+| `decision_providers` | `[]` | Development decision panel; Jev selects between multiple Slack workflows; a single workflow is selected directly |
 | `repo_allowlist` | — | Repositories Mork may work on |
 | `slack_channels` | `{}` | Channel ID → allowed workflows and default hint; development also needs repo and Jira project |
 | `workflows` | `{}` | [Development and generic steps, prompts, domains, capacity, retry policy and delivery](workflows.md) |
