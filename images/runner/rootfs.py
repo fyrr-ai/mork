@@ -44,7 +44,7 @@ def copy(path):
 
 packages = [
     "libc6", "bash", "coreutils", "diffutils", "findutils", "grep", "sed", "mawk", "tar", "gzip",
-    "git", "python3-minimal", "python3.13-minimal", "python3.13",
+    "git", "openssl", "gettext-base", "python3-minimal", "python3.13-minimal", "python3.13",
     "libpython3.13-minimal", "libpython3.13-stdlib", "ripgrep", "fd-find", "tzdata",
 ]
 for package in packages:

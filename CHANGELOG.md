@@ -4,7 +4,7 @@
 
 Prepared for release; not published.
 
-- Retain glibc compatibility libraries in the runner so repository tools such as uv can start.
+- Retain glibc compatibility libraries and ship OpenSSL and envsubst in the runner so repository tools and offline checks can run.
 
 - Choose where logs go with `log_destination`: CloudWatch log groups (default) or only the OTLP collector, including Lambda events and the egress proxy audit. Lambdas join the VPC to reach an internal collector. Alarms and the Slack failure queue are created only with `alarm_actions`.
 - Ask the decision model about a running station only on cheap signals (repeated tool call, tool errors in a row, implementer diff unchanged for 10 minutes) or every 5 minutes, instead of every 45 seconds.
