@@ -85,7 +85,7 @@ locals {
       writes = ["build/*/output.json", "build/*/result.json", "build/*/supervision.json", "sessions/build-*", "sessions/pending.json"]
     }
     check = {
-      reads  = ["issue.json", "answers.json", "plan.json", "hidden/*", "build/*/output.json", "build/*/result.json", "sessions/check-*", "sessions/pending.json"]
+      reads  = ["issue.json", "answers.json", "plan.json", "hidden/*", "build/*/output.json", "build/*/result.json", "check/*", "sessions/check-*", "sessions/pending.json"]
       writes = ["check/*", "build/*/feedback.md", "sessions/check-*", "sessions/pending.json"]
     }
   }

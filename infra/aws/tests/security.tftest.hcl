@@ -73,6 +73,12 @@ run "webhook_permissions_and_timeout" {
     error_message = "Failure artifacts must be writable by the steps Lambda."
   }
   assert {
+    condition = alltrue([for phase in ["plan", "build", "check"] :
+      contains(one([for statement in data.aws_iam_policy_document.phase[phase].statement : statement.resources if statement.sid == "ReadInputs"]), "${aws_s3_bucket.mork.arn}/tasks/*/check/*") == (phase == "check")
+    ])
+    error_message = "Only Check may read cached OCR and previous review results for resumed verification and repair rounds."
+  }
+  assert {
     condition     = length([for statement in data.aws_iam_policy_document.phase["build"].statement : statement if statement.sid == "HiddenTestsStayHidden" && statement.effect == "Deny" && contains(statement.actions, "s3:GetObject") && contains(statement.resources, "${aws_s3_bucket.mork.arn}/tasks/*/hidden/*")]) == 1
     error_message = "Build must explicitly deny hidden test reads even if another policy later grants them."
   }
