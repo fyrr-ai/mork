@@ -35,6 +35,14 @@ export const OcrResult = z.object({
 });
 export type OcrResult = z.infer<typeof OcrResult>;
 
+/** Both fresh and resumed results must identify the exact gate-tested range. */
+export function parseOcrResult(value: unknown, base: string, head: string): OcrResult {
+  const result = OcrResult.parse(value);
+  if (result.manifest.input.resolved_base !== base || result.manifest.input.resolved_head !== head)
+    throw new Error("OCR reviewed different commits from the gate");
+  return result;
+}
+
 export function ocrReview(result: OcrResult, files: ChangedFile[]): Review {
   const reviewed = [...new Set([...(result.manifest.coverage.completed ?? []), ...(result.manifest.coverage.reused ?? [])].map((f) => f.path))];
   const findings: Review["findings"] = result.comments.map((c) => ({
@@ -108,9 +116,7 @@ export async function runOcr(env: RunnerEnv, repoDir: string, base: string, head
   killUser(env.agentUid);
   const json = readAgentFile(output);
   if (!json) throw new Error(`OCR did not produce a review (exit ${run.code}): ${run.output.slice(-1000)}`);
-  const result = OcrResult.parse(JSON.parse(json));
-  if (result.manifest.input.resolved_base !== base || result.manifest.input.resolved_head !== head)
-    throw new Error("OCR reviewed different commits from the gate");
+  const result = parseOcrResult(JSON.parse(json), base, head);
   if (run.code !== 0 && result.status === "complete") throw new Error(`OCR failed with exit ${run.code}`);
   return result;
 }

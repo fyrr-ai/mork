@@ -46,37 +46,55 @@ function safePath(path: string): boolean {
   );
 }
 
-export function readAt(repoDir: string, head: string): (path: string) => string | undefined {
+export type Snapshot = { status: "present"; content: string } | { status: "absent" } | { status: "error"; reason: string };
+export type SnapshotReader = (path: string) => Snapshot;
+
+export function readAt(repoDir: string, head: string): SnapshotReader {
   return (path) => {
-    if (!safePath(path)) return undefined;
-    const shown = exec("git", [...SAFE_GIT, "-C", repoDir, "show", "--end-of-options", `${head}:${path}`]);
-    return shown.code === 0 ? shown.output : undefined;
+    if (!safePath(path)) return { status: "error", reason: "Invalid repository path" };
+    // Establish absence from the tree. A failed/oversized blob read is not absence.
+    const tree = exec("git", [...SAFE_GIT, "--literal-pathspecs", "-C", repoDir, "ls-tree", "-z", head, "--", path]);
+    if (tree.code !== 0) return { status: "error", reason: "Cannot read commit tree" };
+    if (!tree.output) return { status: "absent" };
+    const blob = /^\d+ blob ([0-9a-f]+)\t/.exec(tree.output);
+    if (!blob) return { status: "error", reason: "Path is not a blob" };
+    const shown = exec("git", [...SAFE_GIT, "-C", repoDir, "cat-file", "-p", blob[1] as string]);
+    return shown.code === 0 ? { status: "present", content: shown.output } : { status: "error", reason: "Cannot read blob" };
   };
 }
 
-export function locateFindings(review: Review, read: (path: string) => string | undefined): Review {
+/** Findings not explicitly resolved are reassessed on each new head, even if OCR misses them next time. */
+export function carryFindings(review: Review, previous: Review): Review {
+  const findings = [...review.findings];
+  const claims = new Set(findings.map((f) => `${f.where}\0${f.what}\0${f.quote}`));
+  for (const finding of previous.findings) {
+    const claim = `${finding.where}\0${finding.what}\0${finding.quote}`;
+    if (claims.has(claim)) continue;
+    claims.add(claim);
+    findings.push({ ...finding, located: null, verification: { status: "unknown", reason: "Previous claim needs reassessment against this head" } });
+  }
+  return { ...review, findings };
+}
+
+export function locateFindings(review: Review, read: SnapshotReader): Review {
   return {
     ...review,
     findings: review.findings.map((finding) => {
       const where = /^(.+?):(\d+)(?:\D.*)?$/.exec(finding.where);
-      const content = read(where?.[1] ?? finding.where);
-      return { ...finding, located: content === undefined ? null : locate(content, finding.quote, Number(where?.[2] ?? 1)) };
+      const snapshot = read(where?.[1] ?? finding.where);
+      return { ...finding, located: snapshot.status !== "present" ? null : locate(snapshot.content, finding.quote, Number(where?.[2] ?? 1)) };
     }),
   };
 }
 
-function citationValid(e: ReviewEvidence, read: { base: (path: string) => string | undefined; head: (path: string) => string | undefined }): boolean {
+function citationValid(e: ReviewEvidence, read: { base: SnapshotReader; head: SnapshotReader }): boolean {
   if (!safePath(e.path)) return false;
-  const content = read[e.revision](e.path);
-  if ("absent" in e) return content === undefined;
-  return content !== undefined && locate(content, e.quote, e.line)?.line === e.line;
+  const snapshot = read[e.revision](e.path);
+  if ("absent" in e) return snapshot.status === "absent";
+  return snapshot.status === "present" && locate(snapshot.content, e.quote, e.line)?.line === e.line;
 }
 
-export function verifyReview(
-  review: Review,
-  output: VerificationOutput,
-  read: { base: (path: string) => string | undefined; head: (path: string) => string | undefined },
-): Review {
+export function verifyReview(review: Review, output: VerificationOutput, read: { base: SnapshotReader; head: SnapshotReader }): Review {
   const ids = review.findings.map((_, index) => `F${index + 1}`);
   const seen = new Map<string, FindingVerification>();
   for (const f of output.findings) {
@@ -86,21 +104,30 @@ export function verifyReview(
   }
   const unknown = (reason: string): FindingVerification => ({ status: "unknown", reason });
   const findings = review.findings.map((finding, index) => {
+    let anchored = finding;
     let verification = seen.get(`F${index + 1}`) ?? unknown("Verifier omitted this finding");
     if (verification.status === "confirmed" || verification.status === "refuted") {
       if (!verification.evidence.every((e) => citationValid(e, read)))
         verification = unknown("Verifier evidence was not found at the cited revision and line");
       else if (verification.status === "confirmed") {
         const revisions = new Set(verification.evidence.map((e) => e.revision));
-        if (!finding.located || !revisions.has("base") || !revisions.has("head"))
-          verification = unknown("A confirmed defect needs located code and evidence of both previous and changed behaviour");
+        const path = /^(.+?):\d+(?:\D.*)?$/.exec(finding.where)?.[1] ?? finding.where;
+        const citation = verification.evidence.find((e) => e.revision === "head" && e.path === path && "quote" in e);
+        if (!revisions.has("base") || !revisions.has("head") || !citation || !("quote" in citation))
+          verification = unknown("A confirmed defect needs baseline evidence and a current-head quote at the claimed path");
+        else {
+          const snapshot = read.head(citation.path);
+          const located = snapshot.status === "present" ? locate(snapshot.content, citation.quote, citation.line) : null;
+          if (!located) verification = unknown("Current-head evidence could not be anchored");
+          else anchored = { ...finding, where: `${citation.path}:${citation.line}`, quote: citation.quote, located };
+        }
       }
     }
     if (verification.status === "duplicate") {
       const target = Number(verification.of.slice(1)) - 1;
       if (target < 0 || target >= index || seen.get(verification.of)?.status === "duplicate") verification = unknown("Invalid duplicate reference");
     }
-    return { ...finding, verification };
+    return { ...anchored, verification };
   });
   return { ...review, findings };
 }

@@ -259,3 +259,11 @@ test("unknown P0 and refuted P1 never become repairs from a confident priority a
     findingPriority({ severity: "P1", verification: { status: "refuted", reason: "Intentional behaviour", evidence: [] } }, answer),
   ).toMatchObject({ fix: false, unresolved: false });
 });
+
+test("missing probability mass cannot declare a confirmed defect safe to defer", () => {
+  const f = {
+    severity: "P1" as const,
+    verification: { status: "confirmed" as const, reason: "regression", expected: "works", scenario: "fails", evidence: [] },
+  };
+  expect(findingPriority(f, { type: "choice", choice: "P2", confidence: 1, probabilities: {} })).toMatchObject({ fix: true, unresolved: true });
+});

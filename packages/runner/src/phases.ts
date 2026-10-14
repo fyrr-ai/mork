@@ -25,7 +25,7 @@ import {
   PublicPlan,
   parseRepoConfig,
   type RepoConfig,
-  type Review,
+  Review,
   type RunResult,
   StationOutput,
   VerificationOutput,
@@ -39,9 +39,9 @@ import { killUser } from "./agentfs.ts";
 import { runGate, type Sandbox } from "./gate.ts";
 import { fetchRepo, mustExec, remoteHead, repoUrl, SAFE_GIT } from "./git.ts";
 import { type LlmJob, type LlmOutcome, type RunnerEnv, runLlmStation } from "./llm.ts";
-import { ocrReview, runOcr } from "./ocr.ts";
+import { ocrReview, parseOcrResult, runOcr } from "./ocr.ts";
 import * as prompts from "./prompts.ts";
-import { changedFiles, locate, locateFindings, readAt, verifyReview } from "./review.ts";
+import { carryFindings, changedFiles, locate, locateFindings, readAt, verifyReview } from "./review.ts";
 import { checkPlan, gateFailures, gateFeedback, gatePassed } from "./rules.ts";
 import { SessionLog } from "./session.ts";
 import { onShutdown } from "./shutdown.ts";
@@ -370,13 +370,37 @@ async function checkWith(ctx: PhaseContext, records: SupervisionRecord[]): Promi
   const stats: Stats = [];
   let review: Review;
   try {
-    const ocr = await runOcr(ctx.env, repoDir, brief.repo.base_sha, built.head_sha, ctx.step.model ?? ctx.model);
-    await store.putJson(keys.ocr(brief.prefix, brief.attempt), ocr);
+    const ocrKey = keys.ocr(brief.prefix, brief.attempt);
+    let cached: unknown;
+    try {
+      cached = await store.json(ocrKey);
+    } catch (error) {
+      if ((error as Error).name !== "NoSuchKey") throw error;
+    }
+    if (cached === undefined) {
+      const produced = await runOcr(ctx.env, repoDir, brief.repo.base_sha, built.head_sha, ctx.step.model ?? ctx.model);
+      // First result wins, so retries and resumed verifier sessions keep identical IDs/order.
+      await store.claim(ocrKey, produced);
+      cached = await store.json(ocrKey);
+    }
+    const ocr = parseOcrResult(cached, brief.repo.base_sha, built.head_sha);
     stats.push({ station: "ocr", turns: ocr.tool_calls.total, tokens: ocr.summary.total_tokens });
     review = ocrReview(ocr, files);
     ctx.logger.log(`OCR ${ocr.status}: ${ocr.comments.length} findings`, { "mork.station": "ocr" });
   } catch (error) {
     throw new HandoverError(`OCR failed: ${(error as Error).message}. Branch \`${brief.branch}\` passed the gate.`);
+  }
+  for (let attempt = brief.attempt - 1; attempt >= 1; attempt--) {
+    let previous: unknown;
+    try {
+      previous = await store.json(keys.review(brief.prefix, attempt));
+    } catch (error) {
+      if ((error as Error).name !== "NoSuchKey") throw error;
+    }
+    if (previous !== undefined) {
+      review = carryFindings(review, Review.parse(previous));
+      break;
+    }
   }
   // A separate root-owned clone is never passed to an agent. Quotes are checked
   // against this copy after each agent has exited, not its writable checkout.
@@ -427,8 +451,8 @@ async function checkWith(ctx: PhaseContext, records: SupervisionRecord[]): Promi
           ...c,
           evidence: c.evidence.filter((e) => {
             const where = /^(.+?):(\d+)$/.exec(e.where);
-            const content = where && read.head(where[1] as string);
-            return typeof content === "string" && !!where && locate(content, e.quote, Number(where[2]))?.line === Number(where[2]);
+            const snapshot = where && read.head(where[1] as string);
+            return !!where && snapshot?.status === "present" && locate(snapshot.content, e.quote, Number(where[2]))?.line === Number(where[2]);
           }),
         }));
       if (ids.size !== untestable.length) review.incomplete.push("Acceptance criteria checker omitted criteria");

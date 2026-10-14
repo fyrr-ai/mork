@@ -107,6 +107,11 @@ integration(
     const modelPending = new Promise<void>((resolve) => {
       modelStarted = resolve;
     });
+    let firstVerification = true;
+    let verificationStarted: () => void = () => {};
+    const verificationPending = new Promise<void>((resolve) => {
+      verificationStarted = resolve;
+    });
     const server = Bun.serve({
       hostname: "127.0.0.1",
       port: 0,
@@ -131,6 +136,11 @@ integration(
                   ? "verifier"
                   : "criteria";
         if (process.env.MORK_E2E_VERBOSE) console.log("fixture", station, toolNames.join(","));
+        if (station === "verifier" && firstVerification) {
+          firstVerification = false;
+          verificationStarted();
+          return new Response(new ReadableStream(), { headers: { "content-type": "text/event-stream" } });
+        }
         seen.push({ station, model: body.model, messages: body.messages });
         const turns = body.messages.filter((message) => message.role === "tool").length;
         const users = JSON.stringify(body.messages.filter((message) => message.role === "user"));
@@ -237,22 +247,45 @@ integration(
               name: "submit_result",
               arguments: {
                 json: JSON.stringify({
-                  findings: [
-                    {
-                      id: "F1",
-                      verification: {
-                        status: "confirmed",
-                        reason: "The changed operator concatenates string operands; baseline subtraction coerces them to numbers",
-                        expected: "Numeric strings produce a numeric sum",
-                        scenario: "add('2','3') returns '23' instead of 5",
-                        evidence: [
-                          { revision: "base", path: "math.mjs", line: 1, quote: "export const add = (a, b) => a - b;" },
-                          { revision: "head", path: "math.mjs", line: 1, quote: "export const add = (a, b) => a + b;" },
-                        ],
-                      },
-                    },
-                    { id: "F2", verification: { status: "duplicate", of: "F1", reason: "Same concatenation root cause" } },
-                  ],
+                  findings: (() => {
+                    const text = body.messages
+                      .filter((m) => m.role === "user")
+                      .map((m) =>
+                        typeof m.content === "string"
+                          ? m.content
+                          : (m.content as { type: string; text: string }[])
+                              .filter((p) => p.type === "text")
+                              .map((p) => p.text)
+                              .join("\n"),
+                      )
+                      .join("\n");
+                    const ids = [...text.matchAll(/"id":\s*"(F[1-9]\d*)"/g)].map((m) => m[1]);
+                    const resolved = JSON.stringify(body.messages).includes("Number(a)");
+                    return ids.map((id, index) => ({
+                      id,
+                      verification:
+                        index > 0
+                          ? { status: "duplicate", of: ids[0], reason: "Same concatenation root cause" }
+                          : resolved
+                            ? {
+                                status: "refuted",
+                                reason: "Numeric coercion has been restored",
+                                evidence: [
+                                  { revision: "head", path: "math.mjs", line: 1, quote: "export const add = (a, b) => Number(a) + Number(b);" },
+                                ],
+                              }
+                            : {
+                                status: "confirmed",
+                                reason: "The changed operator concatenates numeric strings",
+                                expected: "Numeric strings produce a numeric sum",
+                                scenario: "add('2','3') concatenates strings",
+                                evidence: [
+                                  { revision: "base", path: "math.mjs", line: 1, quote: "export const add = (a, b) => a - b;" },
+                                  { revision: "head", path: "math.mjs", line: 1, quote: "export const add = (a, b) => a + b;" },
+                                ],
+                              },
+                    }));
+                  })(),
                 }),
               },
             });
@@ -265,45 +298,48 @@ integration(
       const cli = process.env.MORK_LOCAL_E2E_CLI ?? join(import.meta.dir, "local-cli.ts");
       const connection = ["--trusted", "--model", "fixture", "--llm-url", `http://127.0.0.1:${server.port}/v1`, "--pi", pi as string];
       const runtime = process.env.MORK_LOCAL_E2E_RUNTIME ?? process.execPath;
-      const interrupted = spawn(
-        runtime,
-        [cli, ...connection, "--repo", source, "--issue", issueFile, "--output", task, "--definition", definitionFile],
-        {
+      const interruptAt = async (args: string[], pending: Promise<void>) => {
+        const interrupted = spawn(runtime, [cli, ...connection, ...args], {
           cwd: directory,
           env: { ...process.env, MORK_LOCAL_API_KEY: "local-fixture-key", AWS_EC2_METADATA_DISABLED: "true" },
           stdio: ["ignore", "pipe", "pipe"],
-        },
-      );
-      let interruptedLog = "";
-      interrupted.stdout.on("data", (chunk) => {
-        interruptedLog += chunk;
-      });
-      interrupted.stderr.on("data", (chunk) => {
-        interruptedLog += chunk;
-      });
-      const stopped = new Promise<number | null>((resolve) => interrupted.once("close", resolve));
-      const deadline = setTimeout(() => interrupted.kill("SIGKILL"), 15000);
-      try {
-        await Promise.race([
-          modelPending,
-          stopped.then(() => {
-            throw new Error(interruptedLog || "Runner exited before model request");
-          }),
-        ]);
-        interrupted.kill("SIGTERM");
-        expect(await stopped, interruptedLog).toBe(143);
-        expect(existsSync(join(task, ".run.lock"))).toBe(false);
-        expect(existsSync(join(task, "agent", ".pi-mork", "models.json"))).toBe(false);
-      } finally {
-        clearTimeout(deadline);
-        interrupted.kill("SIGKILL");
-      }
+        });
+        let log = "";
+        interrupted.stdout.on("data", (chunk) => {
+          log += chunk;
+        });
+        interrupted.stderr.on("data", (chunk) => {
+          log += chunk;
+        });
+        const stopped = new Promise<number | null>((resolve) => interrupted.once("close", resolve));
+        const deadline = setTimeout(() => interrupted.kill("SIGKILL"), 15000);
+        try {
+          await Promise.race([
+            pending,
+            stopped.then(() => {
+              throw new Error(log || "Runner exited before model request");
+            }),
+          ]);
+          interrupted.kill("SIGTERM");
+          expect(await stopped, log).toBe(143);
+          expect(existsSync(join(task, ".run.lock"))).toBe(false);
+          expect(existsSync(join(task, "agent", ".pi-mork", "models.json"))).toBe(false);
+        } finally {
+          clearTimeout(deadline);
+          interrupted.kill("SIGKILL");
+        }
+      };
+      await interruptAt(["--repo", source, "--issue", issueFile, "--output", task, "--definition", definitionFile], modelPending);
+      await interruptAt(["--resume", task], verificationPending);
+      const ocrCallsBeforeResume = seen.filter((r) => r.station === "ocr").length;
       const started = await execAsync(runtime, [cli, ...connection, "--resume", task], {
         cwd: directory,
         env: { ...process.env, MORK_LOCAL_API_KEY: "local-fixture-key", AWS_EC2_METADATA_DISABLED: "true" },
         timeoutMs: 90_000,
       });
       expect(started.code, started.output).toBe(0);
+      // Check 2 restores the same OCR claim set; only Check 3 makes one new clean review call.
+      expect(seen.filter((r) => r.station === "ocr").length).toBe(ocrCallsBeforeResume + 1);
       const store = new LocalStore(join(task, "outputs"));
       const state = (await store.json("local-run.json")) as { result: { ok: boolean; attempt: number; head_sha: string; branch: string } };
       expect(state.result).toMatchObject({ ok: true, attempt: 3 });
@@ -314,9 +350,12 @@ integration(
         unreviewed_files: [],
         findings: [{ located: { line: 1 }, verification: { status: "confirmed" } }, { verification: { status: "duplicate", of: "F1" } }],
       });
+      expect(await store.json(keys.review("tasks/local", 2))).toMatchObject({
+        criteria: [{ id: "AC2", evidence: [{ where: "README.md:1", quote: "add returns a numeric sum, including numeric strings." }] }],
+      });
       expect(await store.text(keys.feedback("tasks/local", 3))).toContain("Strings are concatenated instead of added");
       expect(await store.json(keys.gate("tasks/local", 3))).toMatchObject({ head_sha: state.result.head_sha, hidden: [{ passed: true }] });
-      expect(await store.json(keys.review("tasks/local", 3))).toMatchObject({ findings: [] });
+      expect(await store.json(keys.review("tasks/local", 3))).toMatchObject({ findings: [{ verification: { status: "refuted" } }] });
       expect(mustExec("git", [...SAFE_GIT, "--git-dir", join(task, "remote.git"), "rev-parse", state.result.branch]).trim()).toBe(
         state.result.head_sha,
       );

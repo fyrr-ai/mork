@@ -20,8 +20,11 @@ Findings are confirmed, refuted, unknown or duplicates of an earlier canonical
 finding. Missing/invalid evidence or omitted assessments mean unknown. Partial
 OCR coverage and worker failures remain visible and keep review at careful.
 Neither an OCR P0 nor a confident Jev answer clears missing verification.
-Duplicate assessments identify root causes without removing the original PR
-comments. Invalid references remain unknown.
+A persisted OCR result freezes finding IDs for an interrupted verifier session.
+Earlier claims are carried into each new Check until reassessed against the new
+head, so silence from OCR cannot erase an unknown. Changed lines are re-anchored
+from checked current-head evidence at the claimed path. Duplicate assessments
+identify root causes while canonical claims stay visible in the PR. Invalid references remain unknown.
 
 Jev assigns urgency only to confirmed findings from their verified expected
 behaviour, scenario and code evidence, in bounded batches. Confirmed, located

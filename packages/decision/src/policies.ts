@@ -149,7 +149,8 @@ export function findingPriority(finding: Pick<FindingEvidence, "severity" | "ver
   if (answer?.type === "choice") {
     const p = (answer.probabilities.P0 ?? 0) + (answer.probabilities.P1 ?? 0);
     if (p >= REPAIR_AT) return { fix: true, unresolved: false, p, decidedBy: "decision model", reason: `must be fixed, p=${p.toFixed(2)}` };
-    if (answer.choice !== "none" && p <= 1 - REPAIR_AT)
+    const unallocated = Math.max(0, 1 - Object.values(answer.probabilities).reduce((sum, probability) => sum + probability, 0));
+    if (answer.choice !== "none" && p + unallocated <= 1 - REPAIR_AT)
       return { fix: false, unresolved: false, p, decidedBy: "decision model", reason: `can wait, p=${p.toFixed(2)}` };
   }
   return {

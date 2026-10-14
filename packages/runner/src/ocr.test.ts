@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { OcrResult, ocrReview } from "./ocr.ts";
+import { OcrResult, ocrReview, parseOcrResult } from "./ocr.ts";
 
 const result = OcrResult.parse({
   status: "complete",
@@ -36,4 +36,9 @@ test("missing quotation cannot turn a reported line into checked evidence", () =
   const review = ocrReview({ ...result, comments: result.comments.map((c) => ({ ...c, existing_code: "" })) }, []);
   expect(review.findings[0]?.quote).toBeTruthy();
   expect(review.findings[0]?.located).toBeNull();
+});
+
+test("cached OCR results are rejected if the gate-tested range changes", () => {
+  expect(parseOcrResult(result, "a".repeat(40), "b".repeat(40))).toEqual(result);
+  expect(() => parseOcrResult(result, "a".repeat(40), "c".repeat(40))).toThrow("different commits");
 });
