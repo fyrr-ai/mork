@@ -11,7 +11,7 @@ import type { ChangedFile } from "./review.ts";
 
 const item = z.object({ path: z.string(), item_id: z.string() });
 export const OcrResult = z.object({
-  status: z.enum(["complete", "partial", "failed", "blocked"]),
+  status: z.enum(["complete", "partial", "failed", "blocked", "skipped"]),
   message: z.string().optional(),
   comments: z
     .array(
@@ -117,6 +117,6 @@ export async function runOcr(env: RunnerEnv, repoDir: string, base: string, head
   const json = readAgentFile(output);
   if (!json) throw new Error(`OCR did not produce a review (exit ${run.code}): ${run.output.slice(-1000)}`);
   const result = parseOcrResult(JSON.parse(json), base, head);
-  if (run.code !== 0 && result.status === "complete") throw new Error(`OCR failed with exit ${run.code}`);
+  if (run.code !== 0 && (result.status === "complete" || result.status === "skipped")) throw new Error(`OCR failed with exit ${run.code}`);
   return result;
 }

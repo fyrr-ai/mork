@@ -59,6 +59,8 @@ for path in ("/usr/local/bin/npm", "/usr/local/bin/npx", "/bin/sh"):
     copy(path)
 # Pi uses the name `fd`; Debian calls it fdfind.
 (root / "usr/local/bin/fd").symlink_to("/usr/bin/fdfind")
+# Debian installs awk through alternatives, outside the package file list.
+(root / "usr/bin/awk").symlink_to("mawk")
 for path in ("/etc/nsswitch.conf", "/etc/ssl/certs/ca-certificates.crt", "/etc/passwd", "/etc/group"):
     copy(path)
 for path in Path("/usr/share/doc").glob("*/copyright"):

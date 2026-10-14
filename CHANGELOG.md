@@ -4,6 +4,7 @@
 
 Prepared for release; not published.
 
+- Accept OCR's skipped result without claiming review coverage. Keep small plans brief and check documentation criteria through evidence instead of hidden text snapshots. Restore the runner's awk alias.
 - Retain glibc compatibility libraries and ship OpenSSL and envsubst in the runner so repository tools and offline checks can run.
 
 - Choose where logs go with `log_destination`: CloudWatch log groups (default) or only the OTLP collector, including Lambda events and the egress proxy audit. Lambdas join the VPC to reach an internal collector. Alarms and the Slack failure queue are created only with `alarm_actions`.
