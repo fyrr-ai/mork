@@ -19,6 +19,35 @@ function hooks() {
 }
 
 describe("supervisor", () => {
+  test("read-only progress is judged against a previous check without inspecting a code diff", async () => {
+    const { done, hooks: h } = hooks();
+    h.diffStat = () => {
+      throw new Error("An analyst must not be measured by a code diff");
+    };
+    const evaluated: Array<{ state: unknown; questions: string[] }> = [];
+    const model: Decider = {
+      name: "fixed",
+      decide: async (state, questions) => {
+        evaluated.push({ state, questions: Object.keys(questions) });
+        return { meaningful_progress: { type: "noul", p: 0 } };
+      },
+    };
+    const supervisor = new Supervisor(new DecisionPanel([model]), { station: "analyst" }, h, every);
+    supervisor.observe({ type: "tool_execution_start", toolName: "read", args: { path: "README.md" } });
+    await supervisor.check(1000);
+    expect(evaluated[0]?.questions).not.toContain("meaningful_progress");
+    expect(done).toEqual([]);
+    supervisor.observe({ type: "tool_execution_start", toolName: "read", args: { path: "component.py" } });
+    await supervisor.check(2000);
+    expect(evaluated[1]?.questions).toContain("meaningful_progress");
+    const state = evaluated[1]?.state as { previous_check: { recent_tool_calls: string[] }; recent_tool_calls: string[] };
+    expect(state.previous_check.recent_tool_calls).toHaveLength(1);
+    expect(state.recent_tool_calls).toHaveLength(2);
+    expect(done).toHaveLength(1);
+    expect(supervisor.records[1]?.action.message).toContain("without editing project files");
+    await supervisor.check(2000 + STEER_GRACE_MS);
+    expect(done).toHaveLength(2);
+  });
   test("steers once, waits out the grace, then stops", async () => {
     const { done, hooks: h } = hooks();
     const s = new Supervisor(new DecisionPanel([stuck]), { title: "t" }, h, every);
@@ -29,9 +58,9 @@ describe("supervisor", () => {
     expect(done).toEqual(["steer:You are repe", "stop:Supervi"]);
     expect(s.records.map((r) => r.action.action)).toEqual(["steer", "stop"]);
     expect(s.records.map((r) => r.action.trigger)).toEqual(["periodic", "after steering"]);
-    const state = s.records[0]?.trace.state as { recent_tool_calls: string[]; diff_stat: string };
+    const state = s.records[0]?.trace.state as { recent_tool_calls: string[]; diff_stat?: string };
     expect(state.recent_tool_calls[0]).toContain("npm test");
-    expect(state.diff_stat).toContain("a.mjs");
+    expect(state.diff_stat).toBeUndefined();
   });
   test("without a model supervision does not collect evidence or write records", async () => {
     const { done, hooks: h } = hooks();

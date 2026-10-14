@@ -58,6 +58,7 @@ export class Supervisor {
   #callsWhenAsked = 0;
   #diff: string | undefined;
   #diffChangedAt: number;
+  #previousCheck: Json | undefined;
 
   constructor(panel: DecisionPanel, task: Json, hooks: SupervisorHooks, options: SupervisorOptions) {
     this.#panel = panel;
@@ -121,19 +122,27 @@ export class Supervisor {
       if (!trigger) return;
       this.#askedAt = now;
       this.#callsWhenAsked = this.#callCount;
+      const snapshot = {
+        turns: this.#turns,
+        recent_tool_calls: this.#calls,
+        tool_errors: this.#toolErrors,
+        diff_stat: this.#options.trackDiff ? this.#diff : undefined,
+        last_message: this.#lastMessage,
+      };
       const evidence = boundEvidence(
         {
           task: this.#task,
           minutes_elapsed: Math.round((now - this.#started) / 6_000) / 10,
-          turns: this.#turns,
-          recent_tool_calls: this.#calls,
-          tool_errors: this.#toolErrors,
-          diff_stat: this.#hooks.diffStat(),
-          last_message: this.#lastMessage,
+          ...snapshot,
+          previous_check: this.#previousCheck ?? null,
         },
         1_500,
       );
-      const { answers, trace } = await this.#panel.decide(evidence, SUPERVISION_QUESTIONS);
+      const questions = this.#previousCheck
+        ? SUPERVISION_QUESTIONS
+        : { worker_stuck: SUPERVISION_QUESTIONS.worker_stuck, work_off_track: SUPERVISION_QUESTIONS.work_off_track };
+      const { answers, trace } = await this.#panel.decide(evidence, questions);
+      this.#previousCheck = snapshot;
       const action = supervise(answers, this.#state, now);
       if (action.action === "steer") {
         this.#state.steeredAt = now;
