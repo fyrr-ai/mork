@@ -41,6 +41,22 @@ data "aws_secretsmanager_secret" "this" {
 
 # Decision API keys go only to the steps Lambda and the Build container.
 locals {
+  cloudwatch_logs = var.log_destination == "cloudwatch"
+  # A collector inside the network is reachable from the Lambdas only when they run in the VPC.
+  lambda_in_vpc = var.otlp_endpoint != null && var.otlp_cidr_block != null
+  otlp_env = var.otlp_endpoint == null ? {} : merge(
+    { OTEL_EXPORTER_OTLP_ENDPOINT = var.otlp_endpoint },
+    var.otel_resource_attributes == "" ? {} : { OTEL_RESOURCE_ATTRIBUTES = var.otel_resource_attributes },
+  )
+  alarms = length(var.alarm_actions) > 0
+  # iron-proxy exports its request audit (host, allowed or blocked) over OTLP when these are set.
+  egress_otlp_env = var.otlp_endpoint == null ? [] : concat(
+    [{ name = "OTEL_EXPORTER_OTLP_ENDPOINT", value = var.otlp_endpoint }, { name = "OTEL_SERVICE_NAME", value = "mork-egress" }],
+    var.otel_resource_attributes == "" ? [] : [{ name = "OTEL_RESOURCE_ATTRIBUTES", value = var.otel_resource_attributes }],
+  )
+}
+
+locals {
   decision_env = { jev = "JEV_API", openai = "OPENAI_API_KEY" }
   decision_setting_env = {
     jev    = { base_url = "TYPESAFE_BASE_URL", model = "TYPESAFE_MODEL" }

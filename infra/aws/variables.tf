@@ -16,7 +16,7 @@ variable "environment" {
 }
 
 variable "log_retention_days" {
-  description = "CloudWatch log retention in days."
+  description = "CloudWatch log retention in days, with log_destination cloudwatch."
   type        = number
   default     = 30
 }
@@ -297,6 +297,20 @@ variable "otlp_cidr_block" {
   default     = null
 }
 
+variable "log_destination" {
+  description = "Where Lambdas, phase containers and Step Functions log: cloudwatch (log groups, the default) or otlp (to otlp_endpoint only; no log groups). Lambdas join the VPC when otlp_cidr_block puts the collector inside your network."
+  type        = string
+  default     = "cloudwatch"
+  validation {
+    condition     = contains(["cloudwatch", "otlp"], var.log_destination)
+    error_message = "log_destination must be cloudwatch or otlp."
+  }
+  validation {
+    condition     = var.log_destination == "cloudwatch" || var.otlp_endpoint != null
+    error_message = "log_destination otlp needs otlp_endpoint."
+  }
+}
+
 variable "otel_resource_attributes" {
   description = "Extra resource attributes on the live log, OTEL_RESOURCE_ATTRIBUTES format: key=value,key=value."
   type        = string
@@ -339,7 +353,7 @@ variable "tags" {
 }
 
 variable "alarm_actions" {
-  description = "SNS topic ARNs notified by Slack and workflow failure alarms. Empty keeps console alarms without external notifications."
+  description = "SNS topic ARNs notified by Slack and workflow failure alarms. Empty creates no alarms and no queue for failed Slack invocations."
   type        = list(string)
   default     = []
   validation {

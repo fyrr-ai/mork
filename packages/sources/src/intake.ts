@@ -8,6 +8,7 @@ import { z } from "zod";
 import { deliverAnswer } from "./answers.ts";
 import { allOf } from "./index.ts";
 import { Jira, jiraReporter } from "./jira.ts";
+import { eventLog, logged } from "./otlp.ts";
 import { Binding, decideWorkflow, dispatchWorkflow, SlackConfig, selectedWorkflow } from "./routing.ts";
 import { loadSecrets } from "./secrets.ts";
 import { describeRun, resumeAnswer } from "./sfn-run.ts";
@@ -41,7 +42,8 @@ function store(): Store {
   bucketStore ??= Store.fromEnv(process.env);
   return bucketStore;
 }
-const log = (kind: string, detail: Record<string, unknown>) => console.log(JSON.stringify({ ts: new Date().toISOString(), kind, detail }));
+const events = eventLog(process.env, "slack");
+const log = (kind: string, detail: Record<string, unknown>) => events.log(kind, { detail });
 
 async function missingJson(store: Pick<Store, "json">, key: string): Promise<unknown | undefined> {
   try {
@@ -168,7 +170,9 @@ async function routeMention(request: Mention, deps: MentionDeps, clarification?:
   log("slack.started", { event: request.event_id, workflow: name ?? Binding.parse(existing).workflow });
 }
 
-export async function handler(event: UrlEvent | z.infer<typeof WorkerEvent>): Promise<UrlResult> {
+export const handler = (event: UrlEvent | z.infer<typeof WorkerEvent>): Promise<UrlResult> => logged(events, () => handle(event));
+
+async function handle(event: UrlEvent | z.infer<typeof WorkerEvent>): Promise<UrlResult> {
   if ("action" in event) {
     const job = WorkerEvent.parse(event);
     await loadSecrets(process.env, ["SLACK_BOT_TOKEN", "JEV_API"]);

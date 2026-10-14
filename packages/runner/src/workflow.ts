@@ -2,12 +2,13 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { stepOutputKey, type WorkflowRun, type WorkflowStep, workflowPrefix } from "@mork/contracts/workflow";
 import { DecisionPanel } from "@mork/decision";
+import { redact } from "@mork/sources";
 import type { Store } from "@mork/store";
 import { Ajv } from "ajv";
 import { killUser, readAgentFile } from "./agentfs.ts";
 import { execAsync, mustExec } from "./git.ts";
 import { egressEnv, type RunnerEnv, runLlmStation } from "./llm.ts";
-import { redact, SessionLog } from "./session.ts";
+import { SessionLog } from "./session.ts";
 
 export function outputParser(schema: Record<string, unknown>): (value: unknown) => unknown {
   const ajv = new Ajv({ strict: true, allErrors: true });

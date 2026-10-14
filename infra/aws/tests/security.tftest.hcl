@@ -330,11 +330,11 @@ run "recovery_and_timeout_policy" {
     error_message = "A timed-out container must go through cleanup instead of overlapping a new attempt."
   }
   assert {
-    condition     = aws_lambda_function_event_invoke_config.slack.destination_config[0].on_failure[0].destination == aws_sqs_queue.slack_failures.arn && aws_sqs_queue.slack_failures.message_retention_seconds == 1209600 && aws_sqs_queue.slack_failures.sqs_managed_sse_enabled
+    condition     = aws_lambda_function_event_invoke_config.slack.destination_config[0].on_failure[0].destination == aws_sqs_queue.slack_failures[0].arn && aws_sqs_queue.slack_failures[0].message_retention_seconds == 1209600 && aws_sqs_queue.slack_failures[0].sqs_managed_sse_enabled
     error_message = "Failed async Slack requests must have an encrypted retained destination."
   }
   assert {
-    condition     = contains([for statement in data.aws_iam_policy_document.slack.statement : statement.actions if statement.sid == "RetainFailedSlackRequests"][0], "sqs:SendMessage") && aws_cloudwatch_metric_alarm.slack_errors.alarm_actions == toset(var.alarm_actions) && length(aws_cloudwatch_metric_alarm.workflow_failures) == 2 && aws_cloudwatch_metric_alarm.slack_failures.metric_name == "ApproximateNumberOfMessagesVisible"
+    condition     = contains([for statement in data.aws_iam_policy_document.slack.statement : statement.actions if statement.sid == "RetainFailedSlackRequests"][0], "sqs:SendMessage") && aws_cloudwatch_metric_alarm.slack_errors[0].alarm_actions == toset(var.alarm_actions) && length(aws_cloudwatch_metric_alarm.workflow_failures) == 2 && aws_cloudwatch_metric_alarm.slack_failures[0].metric_name == "ApproximateNumberOfMessagesVisible"
     error_message = "The destination needs IAM authorization and Slack/workflow failure alarms."
   }
   assert {
@@ -399,4 +399,37 @@ run "reject_large_instructions" {
     } }
   }
   expect_failures = [var.workflows]
+}
+
+run "logs_to_otlp_without_cloudwatch" {
+  command = plan
+  variables {
+    log_destination = "otlp"
+    otlp_endpoint   = "http://otlp.internal.example:4318"
+    otlp_cidr_block = "10.20.0.0/16"
+  }
+  assert {
+    condition     = length(aws_cloudwatch_log_group.lambda) == 0 && length(aws_cloudwatch_log_group.slack) == 0 && length(aws_cloudwatch_log_group.stations) == 0 && length(aws_cloudwatch_log_group.sfn) == 0 && length(aws_sfn_state_machine.this.logging_configuration) == 0
+    error_message = "With log_destination otlp nothing may log to CloudWatch."
+  }
+  assert {
+    condition     = length(aws_iam_role_policy_attachment.lambda_logs) == 0 && length(aws_iam_role_policy_attachment.slack_logs) == 0 && length(aws_iam_role_policy_attachment.lambda_vpc) == 3 && length(aws_lambda_function.steps.vpc_config) == 1 && length(aws_lambda_function.slack.vpc_config) == 1 && aws_lambda_function.steps.environment[0].variables.OTEL_EXPORTER_OTLP_ENDPOINT == var.otlp_endpoint
+    error_message = "Lambdas must reach the internal collector from the VPC, without CloudWatch log permissions."
+  }
+  assert {
+    condition     = alltrue([for phase in ["plan", "build", "check"] : alltrue([for container in jsondecode(aws_ecs_task_definition.phase[phase].container_definitions) : !can(container.logConfiguration)])]) && contains([for env in jsondecode(aws_ecs_task_definition.phase["build"].container_definitions)[1].environment : env.value if env.name == "OTEL_EXPORTER_OTLP_ENDPOINT"], var.otlp_endpoint)
+    error_message = "Containers keep no CloudWatch log; the egress proxy exports its audit over OTLP."
+  }
+  assert {
+    condition     = length(aws_cloudwatch_metric_alarm.slack_errors) == 0 && length(aws_sqs_queue.slack_failures) == 0 && length(aws_lambda_function_event_invoke_config.slack.destination_config) == 0
+    error_message = "Without alarm_actions there are no alarms and no failure queue."
+  }
+}
+
+run "reject_otlp_logs_without_endpoint" {
+  command = plan
+  variables {
+    log_destination = "otlp"
+  }
+  expect_failures = [var.log_destination]
 }

@@ -3,7 +3,7 @@
 // task to a person throws HandoverError, which the state's Catch routes.
 import { DevelopmentPolicy } from "@mork/contracts/development";
 import { panelFromEnv } from "@mork/decision";
-import { githubAuthFromEnv, grafanaLiveUrl, loadSecrets, type SlackSource, slackSourceFromEnv } from "@mork/sources";
+import { eventLog, githubAuthFromEnv, grafanaLiveUrl, loadSecrets, logged, type SlackSource, slackSourceFromEnv } from "@mork/sources";
 import { Store } from "@mork/store";
 import { DynamoStore } from "@mork/timeline/dynamo";
 import { ask, type Deps, decide, type FlowState, handover, start } from "./flow.ts";
@@ -66,14 +66,18 @@ async function getDeps(): Promise<Deps> {
       });
     },
     store: Store.fromEnv(process.env),
-    log: (task, kind, detail) => console.log(JSON.stringify({ ts: new Date().toISOString(), task, kind, ...(detail ? { detail } : {}) })),
+    log: (task, kind, detail) => events.log(kind, { task, ...(detail ? { detail } : {}) }),
     stopStations,
     executionRunning,
   };
   return deps;
 }
 
-export async function handler(event: StepEvent | WorkflowEvent): Promise<unknown> {
+const events = eventLog(process.env, "steps");
+
+export const handler = (event: StepEvent | WorkflowEvent): Promise<unknown> => logged(events, () => handle(event));
+
+async function handle(event: StepEvent | WorkflowEvent): Promise<unknown> {
   if (event.action.startsWith("workflow."))
     return workflowAction({ store: Store.fromEnv(process.env), slack: await workflowSlack() }, event as WorkflowEvent);
   const d = await getDeps();

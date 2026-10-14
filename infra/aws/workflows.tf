@@ -99,25 +99,26 @@ resource "aws_ecs_task_definition" "workflow_step" {
     merge(local.station_template[0], {
       image   = coalesce(var.workflows[each.value.workflow].runner_image, local.station_template[0].image)
       command = ["node", "packages/runner/src/workflow-main.ts"]
-      environment = [
+      environment = concat([
         { name = "MORK_BUCKET", value = aws_s3_bucket.mork.bucket },
         { name = "MORK_WORKFLOW_NAME", value = each.value.workflow },
         { name = "MORK_WORKFLOW_STEP", value = jsonencode(each.value.step) },
         { name = "MORK_MODEL", value = var.model },
         { name = "LLM_BASE_URL", value = var.llm_base_url },
         { name = "AWS_REGION", value = data.aws_region.current.region },
-      ]
+      ], [for name, value in local.otlp_env : { name = name, value = value }])
       secrets = [for name, arn in each.value.step.secrets : { name = "STEP_SECRET_${name}", valueFrom = arn }]
+      }, !local.cloudwatch_logs ? {} : {
       logConfiguration = merge(local.station_template[0].logConfiguration, {
         options = merge(local.station_template[0].logConfiguration.options, { awslogs-stream-prefix = each.key })
       })
     }),
     merge(local.station_template[1], {
-      environment = [
+      environment = concat([
         { name = "MORK_LLM_HOST", value = regex("^https?://([^/:]+)", var.llm_base_url)[0] },
         { name = "MORK_EGRESS_ALLOW", value = join(",", each.value.step.allowed_domains) },
         { name = "MORK_EGRESS_WARN", value = tostring(!var.egress_enforce) },
-      ]
+      ], local.egress_otlp_env)
       secrets = [{ name = "LLM_API_KEY", valueFrom = data.aws_secretsmanager_secret.this["llm_api_key"].arn }]
     })
   ])
@@ -136,6 +137,7 @@ resource "aws_iam_role_policy" "workflow_sfn" {
   name     = "workflow"
   policy = jsonencode({ Version = "2012-10-17", Statement = concat([
     { Effect = "Allow", Action = "lambda:InvokeFunction", Resource = "${aws_lambda_function.steps.arn}:*" },
+    ], !local.cloudwatch_logs ? [] : [
     { Effect = "Allow", Action = ["logs:CreateLogDelivery", "logs:GetLogDelivery", "logs:UpdateLogDelivery", "logs:DeleteLogDelivery",
     "logs:ListLogDeliveries", "logs:PutResourcePolicy", "logs:DescribeResourcePolicies", "logs:DescribeLogGroups"], Resource = "*" },
     ], length([for step in each.value.steps : step if step.kind != "approval"]) == 0 ? [] : [
@@ -259,10 +261,13 @@ resource "aws_sfn_state_machine" "workflow" {
       error_message = "The complete configured workflow including retries must fit within one year."
     }
   }
-  logging_configuration {
-    log_destination        = "${aws_cloudwatch_log_group.sfn.arn}:*"
-    include_execution_data = false
-    level                  = "ERROR"
+  dynamic "logging_configuration" {
+    for_each = local.cloudwatch_logs ? [1] : []
+    content {
+      log_destination        = "${aws_cloudwatch_log_group.sfn[0].arn}:*"
+      include_execution_data = false
+      level                  = "ERROR"
+    }
   }
 }
 

@@ -1,8 +1,10 @@
 // The agent's session (Pi JSONL) is the record of what it did. It is saved to
 // the Mork bucket while the station runs, at the end and on shutdown, with
 // every secret the container holds redacted, plus an HTML export for people.
+
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
+import { redact } from "@mork/sources";
 import type { Store } from "@mork/store";
 import { readAgentFile, writeFresh } from "./agentfs.ts";
 import { exec } from "./git.ts";
@@ -10,16 +12,6 @@ import { exec } from "./git.ts";
 const THROTTLE_MS = 30_000;
 
 /** Replaces every occurrence of a secret value; short values are skipped to avoid mangling text. */
-export function redact(text: string, secrets: string[], minimumLength = 8): string {
-  let out = text;
-  for (const secret of secrets)
-    if (secret && secret.length >= minimumLength) {
-      out = out.split(JSON.stringify(secret).slice(1, -1)).join("[redacted]");
-      out = out.split(secret).join("[redacted]");
-    }
-  return out;
-}
-
 export class SessionLog {
   /** Path Pi writes the session to (inside the agent's home, so never trusted by root). */
   readonly file: string;

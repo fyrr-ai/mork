@@ -11,6 +11,7 @@ import type { Complete, ReportEvent, Reporter, SlackRef, SlackStart, TrackerIssu
 export { deliverAnswer } from "./answers.ts";
 export { GitHubAuth, type GitHubTokenSource, githubAuthFromEnv } from "./github-auth.ts";
 export { adfToText, draftByRules, findIssueKey, Jira } from "./jira.ts";
+export { type EventLog, eventLog, type Logger, logged, noLogger, OtlpLogger, redact, resourceAttributes, type Severity } from "./otlp.ts";
 export { loadSecrets } from "./secrets.ts";
 export { escapeSlack, executionUrl, grafanaLiveUrl, Slack, STATUS, slackText, statusOf } from "./slack.ts";
 export { asksForStatus, statusText, taskKey } from "./status.ts";

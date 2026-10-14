@@ -18,11 +18,11 @@ import {
 } from "@mork/contracts";
 import { DEFAULT_DEVELOPMENT, DevelopmentWorkflow } from "@mork/contracts/development";
 import { DecisionPanel, pickRepairs, prioritizeFindings } from "@mork/decision";
+import { noLogger } from "@mork/sources";
 import { LocalStore } from "@mork/store/local";
 import { z } from "zod";
 import { exec, mustExec, remoteHead, SAFE_GIT } from "./git.ts";
 import { withLocalRun } from "./local-run.ts";
-import { noLogger } from "./otlp.ts";
 import { build, check, type PhaseContext, plan } from "./phases.ts";
 
 const Result = z.object({

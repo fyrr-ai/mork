@@ -1,5 +1,7 @@
+# Alarms and the queue for failed Slack invocations exist only when someone is notified (alarm_actions).
 # Retain failed asynchronous Slack requests for inspection and explicit replay.
 resource "aws_sqs_queue" "slack_failures" {
+  count                     = local.alarms ? 1 : 0
   name                      = "${local.dash}-slack-failures"
   tags                      = local.tags
   message_retention_seconds = 1209600
@@ -7,6 +9,7 @@ resource "aws_sqs_queue" "slack_failures" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "slack_errors" {
+  count               = local.alarms ? 1 : 0
   alarm_name          = "${local.name}-slack-errors"
   alarm_description   = "Slack worker failed. Inspect Lambda logs and the failed-invocation queue."
   namespace           = "AWS/Lambda"
@@ -23,11 +26,12 @@ resource "aws_cloudwatch_metric_alarm" "slack_errors" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "slack_failures" {
+  count               = local.alarms ? 1 : 0
   alarm_name          = "${local.name}-slack-failures"
   alarm_description   = "An asynchronous Slack invocation exhausted retries. Inspect and replay after fixing its cause."
   namespace           = "AWS/SQS"
   metric_name         = "ApproximateNumberOfMessagesVisible"
-  dimensions          = { QueueName = aws_sqs_queue.slack_failures.name }
+  dimensions          = { QueueName = aws_sqs_queue.slack_failures[0].name }
   statistic           = "Maximum"
   period              = 300
   evaluation_periods  = 1
@@ -39,7 +43,7 @@ resource "aws_cloudwatch_metric_alarm" "slack_failures" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "workflow_failures" {
-  for_each            = merge({ development = aws_sfn_state_machine.this.arn }, { for name, machine in aws_sfn_state_machine.workflow : name => machine.arn })
+  for_each            = local.alarms ? merge({ development = aws_sfn_state_machine.this.arn }, { for name, machine in aws_sfn_state_machine.workflow : name => machine.arn }) : {}
   alarm_name          = "${local.name}-${each.key}-failures"
   alarm_description   = "Workflow failed or timed out, including exhausted notification or cleanup. Inspect execution history."
   evaluation_periods  = 1

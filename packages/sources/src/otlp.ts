@@ -1,7 +1,18 @@
-// Live log of a phase for Grafana: one readable line per thing the agent or
-// the gate does, shipped as OTLP/HTTP JSON to the central Alloy, which fans
-// out to Loki. Batched; a failing collector costs log lines, never the phase.
-import { redact } from "./session.ts";
+// Logs for Grafana, shipped as OTLP/HTTP JSON to a collector (e.g. Alloy, which
+// fans out to Loki). The runner's live log has one readable line per thing the
+// agent or the gate does; Lambdas log one JSON line per event. Batched; a
+// failing collector costs log lines, never the work.
+
+/** Replaces every secret value (and its JSON-escaped form) in `text`. */
+export function redact(text: string, secrets: string[], minimumLength = 8): string {
+  let out = text;
+  for (const secret of secrets)
+    if (secret && secret.length >= minimumLength) {
+      out = out.split(JSON.stringify(secret).slice(1, -1)).join("[redacted]");
+      out = out.split(secret).join("[redacted]");
+    }
+  return out;
+}
 
 export type Severity = "INFO" | "WARN" | "ERROR";
 export type LogAttrs = Record<string, string | number | boolean | undefined>;
@@ -30,14 +41,16 @@ export interface Logger {
 
 export class OtlpLogger implements Logger {
   readonly #url: string;
+  readonly #scope: string;
   readonly #resource: unknown[];
   readonly #secrets: () => string[];
   readonly #base: LogAttrs;
   readonly #queue: Record_[];
   readonly #state: { timer?: ReturnType<typeof setTimeout>; sending: Promise<void>; warned: boolean };
 
-  constructor(opts: { endpoint: string; resource: LogAttrs; secrets: () => string[]; base?: LogAttrs }, shared?: OtlpLogger) {
+  constructor(opts: { endpoint: string; resource: LogAttrs; secrets: () => string[]; base?: LogAttrs; scope?: string }, shared?: OtlpLogger) {
     this.#url = shared ? shared.#url : `${opts.endpoint.replace(/\/$/, "")}/v1/logs`;
+    this.#scope = shared ? shared.#scope : (opts.scope ?? "mork.runner");
     this.#resource = shared ? shared.#resource : attributes(opts.resource);
     this.#secrets = opts.secrets;
     this.#base = opts.base ?? {};
@@ -75,7 +88,7 @@ export class OtlpLogger implements Logger {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
-            resourceLogs: [{ resource: { attributes: resource }, scopeLogs: [{ scope: { name: "mork.runner" }, logRecords: batch }] }],
+            resourceLogs: [{ resource: { attributes: resource }, scopeLogs: [{ scope: { name: this.#scope }, logRecords: batch }] }],
           }),
           signal: AbortSignal.timeout(5_000),
         });
@@ -91,3 +104,51 @@ export class OtlpLogger implements Logger {
 
 /** Keeps the call sites unconditional when no collector is configured. */
 export const noLogger: Logger = { log: () => undefined, with: () => noLogger, flush: async () => undefined };
+
+/** OTEL_RESOURCE_ATTRIBUTES (`key=value,key=value`) as resource attributes. */
+export function resourceAttributes(raw: string | undefined): LogAttrs {
+  const pairs = (raw ?? "").split(",").map((pair) => pair.split("=", 2).map((part) => part.trim()));
+  return Object.fromEntries(pairs.filter((pair): pair is [string, string] => pair.length === 2 && pair[0] !== "" && pair[1] !== ""));
+}
+
+export type EventLog = { log(kind: string, detail?: Record<string, unknown>): void; flush(): Promise<void> };
+
+/**
+ * A Lambda's log: one JSON line per event on stdout and, with
+ * OTEL_EXPORTER_OTLP_ENDPOINT set, the same line to the collector. Call
+ * `flush` before the handler returns; a frozen Lambda sends nothing.
+ */
+export function eventLog(env: NodeJS.ProcessEnv, service: string): EventLog {
+  const otlp = env.OTEL_EXPORTER_OTLP_ENDPOINT
+    ? new OtlpLogger({
+        endpoint: env.OTEL_EXPORTER_OTLP_ENDPOINT,
+        resource: { "service.name": "mork", "mork.function": service, ...resourceAttributes(env.OTEL_RESOURCE_ATTRIBUTES) },
+        secrets: () => [],
+        scope: `mork.${service}`,
+      })
+    : noLogger;
+  return {
+    log(kind, detail) {
+      const line = JSON.stringify({ ts: new Date().toISOString(), kind, ...detail });
+      console.log(line);
+      otlp.log(
+        line,
+        { "mork.event": kind, "mork.task": typeof detail?.task === "string" ? detail.task : undefined },
+        kind.endsWith("failed") || kind === "error" ? "ERROR" : "INFO",
+      );
+    },
+    flush: () => otlp.flush(),
+  };
+}
+
+/** Runs one Lambda invocation and sends its log before the Lambda freezes; a failure is logged first. */
+export async function logged<T>(log: EventLog, work: () => Promise<T>): Promise<T> {
+  try {
+    return await work();
+  } catch (error) {
+    log.log("invocation.failed", { error: (error as Error).message?.slice(0, 2_000) });
+    throw error;
+  } finally {
+    await log.flush();
+  }
+}
