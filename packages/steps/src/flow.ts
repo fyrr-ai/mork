@@ -40,7 +40,7 @@ import type { Store } from "@mork/store";
 import { linkPr, recordDecision, recordTakeover, type TimelineStore } from "@mork/timeline";
 import { z } from "zod";
 import { type FixState, MARKER, releasePr, savePr, startFix } from "./fix.ts";
-import type { GitHub } from "./github.ts";
+import { type GitHub, GitHubError } from "./github.ts";
 import { CLARIFY_SYSTEM } from "./llm.ts";
 import { LABELS, naming, type Origin, prLink, type StartInput } from "./origin.ts";
 import { type Recommendation, recommend } from "./recommend.ts";
@@ -466,7 +466,15 @@ export async function handover(deps: Deps, state: FlowState): Promise<{ next: "d
   const task: Task = state.task ?? taskFromStartInput(state as unknown as StartInput);
   const reason = handoverReason(state);
   const stopped = task.started_by ? await deps.stopStations(task.started_by) : 0;
-  await (await deps.reporter(task)).report({ kind: "handover", reason });
+  // The person who takes over starts from a PR, not from a bare branch. A failed PR must not stop the handover.
+  const pr =
+    state.task && state.brief && !state.fix
+      ? await handoverPr(deps, state as FlowState, reason).catch((error: Error) => {
+          deps.log(task.id, "handover.pr_failed", { error: error.message.slice(0, 500) });
+          return undefined;
+        })
+      : undefined;
+  await (await deps.reporter(task)).report({ kind: "handover", reason, ...(pr ? { pr_url: pr.html_url } : {}) });
   if (state.fix && state.brief) {
     await deps.github.comment(
       task.repo,
@@ -481,6 +489,43 @@ export async function handover(deps: Deps, state: FlowState): Promise<{ next: "d
   }
   deps.log(task.id, "task.handover", { reason: reason.slice(0, 500), stopped });
   return { next: "done", outcome: { level: "takeover" } };
+}
+
+/** Opens (or finds) the draft PR of a handed-over task, labelled for a person; none when the branch has no work. */
+async function handoverPr(deps: Deps, state: FlowState, reason: string): Promise<{ number: number; html_url: string } | undefined> {
+  const { task, brief } = state;
+  const head = await deps.github.branchSha(task.repo, brief.branch).catch((error) => {
+    if (error instanceof GitHubError && error.status === 404) return undefined;
+    throw error;
+  });
+  if (!head || head === brief.repo.base_sha) return undefined;
+  const issue = IssueDoc.parse(await deps.store.json(keys.issue(brief.prefix)));
+  const link = prLink(task.origin, issue.title);
+  const transcripts = transcriptsUrl(deps.store.bucket, brief.prefix);
+  const pr =
+    (await deps.github.openPr(task.repo, brief.branch)) ??
+    (await deps.github.createDraftPr(task.repo, {
+      title: link.title,
+      head: brief.branch,
+      base: brief.repo.default_branch,
+      body: `## Recommendation: ${REVIEW_LEVEL_TEXT.takeover}
+
+Mork hands this change to a person:
+
+${reason}
+
+The branch holds Mork's last attempt (\`${head.slice(0, 7)}\`); it may not pass its checks. Take it over, or comment \`@mork\` with what to change to let Mork continue.
+
+Agent transcripts (AWS console, secrets redacted): ${transcripts}
+
+${link.footer}
+
+<sub>Mork task ${task.id}</sub>`,
+    }));
+  await linkPr(deps.timeline, task.id, task.repo, pr.number, brief.prefix);
+  await savePr(deps, state, { number: pr.number, url: pr.html_url });
+  await deps.github.addLabels(task.repo, pr.number, [LABELS.takeover.name]);
+  return pr;
 }
 
 /** A failing Start has no task yet; its input is all there is. */

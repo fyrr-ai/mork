@@ -73,7 +73,11 @@ export function githubReporter(github: GitHub, repo: string, issue: number, task
         case "handover":
           await github.addLabels(repo, issue, [LABELS.takeover.name]);
           await github.removeLabel(repo, issue, LABELS.working.name);
-          await github.comment(repo, issue, `**Mork hands this task to a person.**\n\n${event.reason}\n\n<sub>task ${taskId}</sub>`);
+          await github.comment(
+            repo,
+            issue,
+            `**Mork hands this task to a person.**${event.pr_url ? ` Its work is in draft PR ${event.pr_url}.` : ""}\n\n${event.reason}\n\n<sub>task ${taskId}</sub>`,
+          );
           return;
         default:
           // plan, build and check progress only goes to chat sources.

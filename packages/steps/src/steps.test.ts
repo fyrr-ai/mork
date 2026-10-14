@@ -523,6 +523,22 @@ describe("handover", () => {
     const cause = JSON.stringify({ errorType: "Handover", errorMessage: "The analyst produced no plan", trace: [] });
     expect(handoverReason({ ...baseState, error: { Error: "Handover", Cause: cause } })).toBe("The analyst produced no plan");
   });
+  test("a handover opens a draft PR labelled for a person when the branch has work", async () => {
+    calls.length = 0;
+    const store = await checkedStore(true);
+    const cause = JSON.stringify({ errorType: "Handover", errorMessage: "The change touches a protected path", trace: [] });
+    const done = await handover(makeDeps(store), { ...baseState, error: { Error: "Handover", Cause: cause } });
+    expect(done).toMatchObject({ next: "done", outcome: { level: "takeover" } });
+    expect(calls).toEqual(["pr", "label:needs-human", "label:needs-human", "unlabel:mork:working", "comment"]);
+    expect(await store.json(keys.pr(prefix))).toMatchObject({ number: 7, fix_rounds: 0 });
+  });
+  test("a handover without pushed work opens no PR", async () => {
+    calls.length = 0;
+    headOf.set("mork/issue-1-abc", "a".repeat(40));
+    await handover(makeDeps(await checkedStore(true)), { ...baseState, error: { Error: "States.Timeout", Cause: "" } });
+    expect(calls).not.toContain("pr");
+    headOf.clear();
+  });
   test("any other error is reported as unexpected", () => {
     expect(handoverReason({ ...baseState, error: { Error: "States.Timeout", Cause: "" } })).toContain("Unexpected error (States.Timeout)");
   });

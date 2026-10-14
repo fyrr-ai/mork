@@ -70,7 +70,7 @@ Whether the code works is decided by tests, not by a model.
    | --- | --- | --- |
    | **Quick look** | Gate green, small low-risk diff, clean review, confident model | Draft PR, label `review:quick` |
    | **Careful review** (default) | Moderate risk, larger diff, findings the decision model rates must-fix, or an unsure model | Draft PR, label `review:careful` |
-   | **Take over** | Gate still failing, security change, protected paths | No PR; label `needs-human` and the reason; the branch stays |
+   | **Take over** | Gate still failing, security change, protected paths | Draft PR of the last attempt labelled `needs-human` with the reason (none when the branch has no work); `@mork` on it starts a fix run |
 
    The PR starts with the recommendation, the checks table (everything that ran), where to start reading, and links to the agents' transcripts.
 

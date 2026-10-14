@@ -111,10 +111,10 @@ The value of a recommendation: `quick`, `careful` (the safe default) or `takeove
 _Avoid_: risk score, priority
 
 **Takeover**:
-The highest review level: a person should take the task over. It opens no PR and always ends in a handover.
+The highest review level: a person should take the task over. It always ends in a handover.
 
 **Handover**:
-Mork stops working on a task and gives it to a person: a comment with the reason, the `needs-human` label, its containers stopped, the branch kept. Caused by a takeover, exhausted attempts, an error or a failed integrity check. Mork hands over; a person takes over.
+Mork stops working on a task and gives it to a person: a comment with the reason, the `needs-human` label, its containers stopped, the branch kept and, when the branch has work, a draft PR labelled `needs-human`. Caused by a takeover, exhausted attempts, an error or a failed integrity check. Mork hands over; a person takes over, or asks Mork to continue with `@mork` on that PR.
 _Avoid_: escalation, failure, abort
 
 **Decision model**:

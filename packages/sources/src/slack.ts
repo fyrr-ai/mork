@@ -203,7 +203,7 @@ export function slackText(event: ReportEvent): string {
     case "pr":
       return `*Draft PR ready:* ${link(event.url, prLabel(event.url))}\n*Recommendation:* ${REVIEW_LEVEL_TEXT[event.level]}${event.reasons.length ? `\n${bullets(event.reasons)}` : ""}${event.transcripts_url ? `\n${link(event.transcripts_url, "Agent transcripts")}` : ""}`;
     case "handover":
-      return `*Handed over to a person:* ${escapeSlack(event.reason.split("\n")[0]?.slice(0, 300) ?? "")}`;
+      return `*Handed over to a person:* ${escapeSlack(event.reason.split("\n")[0]?.slice(0, 300) ?? "")}${event.pr_url ? `\n*Draft PR:* ${link(event.pr_url, prLabel(event.pr_url))}` : ""}`;
     case "fix":
       return `*Fixing ${link(event.pr_url, prLabel(event.pr_url))}:* ${escapeSlack(event.trigger)} (round ${event.round} of ${event.max})`;
     case "fixed":
