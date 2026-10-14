@@ -152,7 +152,7 @@ export async function runLocalWorkflow(options: LocalOptions): Promise<LocalResu
       signal.throwIfAborted();
       // As in Decide: the reviewer's proven defects get the configured repairs before the result counts.
       const candidates =
-        checked.ok && checked.passed && manifest.repairs < manifest.definition.repairs.rounds && ctx.brief.attempt < lastAttempt(ctx.brief)
+        checked.ok && checked.passed && manifest.repairs < manifest.definition.repairs.rounds
           ? repairCandidates(Review.parse(await store.json(keys.review(ctx.brief.prefix, ctx.brief.attempt))))
           : [];
       const { chosen } = await chooseRepairs(
@@ -166,6 +166,8 @@ export async function runLocalWorkflow(options: LocalOptions): Promise<LocalResu
           repairFeedback(chosen.map((index) => candidates[index] as Review["findings"][number])),
         );
         manifest.repairs += 1;
+        // A repair brings its own Build attempt.
+        ctx.brief = { ...ctx.brief, last_attempt: lastAttempt(ctx.brief) + 1 };
       } else if (checked.ok && checked.passed) {
         const head = remoteHead(ctx.brief.repo.full_name, "", ctx.brief.branch, remote);
         const result: LocalResult = { ok: true, branch: ctx.brief.branch, attempt: ctx.brief.attempt, head_sha: head };

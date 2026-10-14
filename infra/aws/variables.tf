@@ -202,7 +202,7 @@ variable "workflows" {
     runner_image = optional(string)
     questions    = optional(object({ timeout_seconds = optional(number, 259200), max = optional(number, 3) }), {})
     fixes        = optional(object({ rounds = optional(number, 2), attempts = optional(number, 2) }), {})
-    repairs      = optional(object({ rounds = optional(number, 1) }), {})
+    repairs      = optional(object({ rounds = optional(number, 3) }), {})
     steps = list(object({
       name            = string
       kind            = string
@@ -318,7 +318,7 @@ variable "grafana_loki_uid" {
 variable "bucket_expiration_days" {
   description = "Days task outputs and agent sessions are kept in the bucket."
   type        = number
-  default     = 90
+  default     = 120
 
   validation {
     condition     = var.bucket_expiration_days >= 1 && var.bucket_expiration_days == floor(var.bucket_expiration_days)

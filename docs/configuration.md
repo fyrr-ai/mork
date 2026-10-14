@@ -29,7 +29,7 @@ Required: `vpc_id`, `vpc_cidr_block`, `vpc_private_subnet_ids`, `repo_allowlist`
 | `otlp_endpoint`, `otlp_cidr_block` | `null` | Live log over OTLP/HTTP |
 | `otel_resource_attributes` | `""` | Extra attributes on the live log |
 | `grafana_url`, `grafana_loki_uid` | `null`, `loki` | Link to the live log in Grafana and its Loki data source |
-| `bucket_expiration_days` | 90 | Retention of task outputs and sessions |
+| `bucket_expiration_days` | 120 | Retention of task outputs and sessions |
 | `image_digests` | `{}` for ECR bootstrap only | Required runner, egress and lambda sha256 digests for full apply |
 | `tags` | `{}` | Extra resource tags, merged with Service and Environment |
 

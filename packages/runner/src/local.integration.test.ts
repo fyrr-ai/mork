@@ -64,7 +64,7 @@ integration(
     writeFileSync(issueFile, JSON.stringify({ ref: "LOCAL-1", title: "Fix addition", body: "add must return the sum of its two inputs." }));
     const definitionFile = join(directory, "development.json");
     const definition = structuredClone(DEFAULT_DEVELOPMENT);
-    definition.steps[1].attempts = 3;
+    definition.steps[1].attempts = 2;
     for (const step of definition.steps) {
       step.instructions += `\nCONFIGURED_${step.kind.toUpperCase()}_PROMPT`;
       step.model = `fixture-${step.kind}`;

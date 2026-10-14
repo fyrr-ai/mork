@@ -60,7 +60,7 @@ workflows = {
     ]
     questions = { max = 3, timeout_seconds = 259200 }
     fixes = { rounds = 2, attempts = 2 }
-    repairs = { rounds = 1 }
+    repairs = { rounds = 3 }
     delivery = { kind = "draft_pr", step = "verify" }
   }
 }
@@ -71,7 +71,8 @@ operations with fixed output contracts and credential boundaries. `attempts` in
 Plan bounds analyst corrections; in Build it bounds the Build/Check loop. Check
 runs once per Build attempt. `fixes` bounds post-PR fix rounds and their Build
 attempts. `repairs.rounds` bounds how often reviewer findings go back to Build
-before the PR (default 1, 0 turns repairs off); each repair uses a Build attempt. Step names, prompts, optional model overrides, tools and trusted Pi
+before the PR (default 3, 0 turns repairs off); each repair adds a Build attempt
+of its own. Step names, prompts, optional model overrides, tools and trusted Pi
 extensions are configurable. `submit_result`, Build's `verify`, and Slack's
 `ask_human` remain available when the operation requires them. Instructions append
 to Pi's system prompt. Gate policy still comes from the base commit's

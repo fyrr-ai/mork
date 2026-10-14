@@ -157,7 +157,7 @@ A defect the reviewer reports, with a severity (P0, P1, P2), a category and a qu
 _Avoid_: comment, issue
 
 **Repair**:
-Decide sending located bug and security findings back to Build after a green gate, when the decision model rates them must-fix. A run has `repairs.rounds` of them (1 by default), each using an attempt from the run's budget.
+Decide sending located bug and security findings back to Build after a green gate, when the decision model rates them must-fix. A run has `repairs.rounds` of them (3 by default), each with a Build attempt of its own.
 _Avoid_: fix (that is a fix run), retry
 
 **Fix round**:

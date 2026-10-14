@@ -279,7 +279,7 @@ describe("repair before the PR", () => {
     calls.length = 0;
     const store = await reviewed([finding, { ...finding, category: "style" }, { ...finding, located: null }]);
     const next = await decide(makeDeps(store, urgent(0.95)), passed);
-    expect(next).toMatchObject({ next: "build", brief: { attempt: 2 }, repair: { rounds: 1, findings: 1 } });
+    expect(next).toMatchObject({ next: "build", brief: { attempt: 2, last_attempt: MAX_BUILD_ATTEMPTS + 1 }, repair: { rounds: 1, findings: 1 } });
     expect(calls).not.toContain("pr");
     const feedback = await store.text(keys.feedback(prefix, 2));
     expect(feedback).toContain("The reviewer found defects in your change");
@@ -302,7 +302,7 @@ describe("repair before the PR", () => {
   });
   test("used-up repair rounds send the review to the PR", async () => {
     calls.length = 0;
-    const next = await decide(makeDeps(await reviewed([finding])), { ...passed, repair: { rounds: 1, findings: 1 } });
+    const next = await decide(makeDeps(await reviewed([finding])), { ...passed, repair: { rounds: 3, findings: 3 } });
     expect(next).toMatchObject({ next: "done", outcome: { level: "careful" } });
     expect(calls).toContain("pr");
     const twice = { ...passed, repair: { rounds: 1, findings: 1 }, policy: { ...DEFAULT_DEVELOPMENT_POLICY, repairs: { rounds: 2 } } };
@@ -310,9 +310,9 @@ describe("repair before the PR", () => {
     const off = { ...passed, policy: { ...DEFAULT_DEVELOPMENT_POLICY, repairs: { rounds: 0 } } };
     expect((await decide(makeDeps(await reviewed([finding])), off)).next).toBe("done");
   });
-  test("the last attempt and changes the rules hand to a person are not repaired", async () => {
+  test("a repair brings its own attempt, also after the last one; changes the rules hand to a person are not repaired", async () => {
     const last = await decide(makeDeps(await reviewed([finding])), { ...passed, brief: { ...baseState.brief, last_attempt: 1 } });
-    expect(last.next).toBe("done");
+    expect(last).toMatchObject({ next: "build", brief: { attempt: 2, last_attempt: 2 } });
     const store = await reviewed([{ ...finding, severity: "P0" }]);
     await store.putJson(keys.plan(prefix), { ...publicPlan, security_sensitive: true });
     await expect(decide(makeDeps(store), passed)).rejects.toMatchObject({ name: "Handover" });
@@ -711,7 +711,8 @@ describe("fix run replays and bookkeeping", () => {
       return false;
     };
     const next = await start(deps, { ...input, execution: "fix-b", execution_arn: "arn:fix-b" });
-    expect(next).toMatchObject({ next: "build", fix: { round: 2 }, brief: { attempt: 4 } });
+    // Round 1 reserved attempts 2-3 plus three repair attempts.
+    expect(next).toMatchObject({ next: "build", fix: { round: 2 }, brief: { attempt: 7 } });
     expect(inspected).toEqual([input.execution_arn]);
     // Delayed completion of the first owner must preserve its successor.
     await handover(deps, {
@@ -720,7 +721,7 @@ describe("fix run replays and bookkeeping", () => {
       fix: { pr: 7, url: "https://github.com/o/r/pull/7", round: 1, trigger: "comment" },
       error: { Error: "Handover", Cause: "late" },
     });
-    expect(await store.json(keys.pr(prefix))).toMatchObject({ running: "arn:fix-b", fix_rounds: 2, state: { brief: { attempt: 4 } } });
+    expect(await store.json(keys.pr(prefix))).toMatchObject({ running: "arn:fix-b", fix_rounds: 2, state: { brief: { attempt: 7 } } });
   });
 
   test("late completion cannot replace a finished successor or reuse its attempts", async () => {

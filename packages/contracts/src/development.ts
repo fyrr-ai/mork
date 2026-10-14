@@ -18,8 +18,8 @@ export type DevelopmentStep = z.infer<typeof DevelopmentStep>;
 export const DevelopmentLimits = z.object({
   questions: z.object({ timeout_seconds: z.number().int().min(1).max(31536000), max: z.number().int().min(0).max(8) }),
   fixes: z.object({ rounds: z.number().int().min(0).max(8), attempts: z.number().int().min(1).max(8) }),
-  /** Times per run that proven reviewer findings go back to Build before the PR; 0 turns repairs off. */
-  repairs: z.object({ rounds: z.number().int().min(0).max(8) }).default({ rounds: 1 }),
+  /** Times per run that proven reviewer findings go back to Build before the PR, each with a Build attempt of its own; 0 turns repairs off. */
+  repairs: z.object({ rounds: z.number().int().min(0).max(8) }).default({ rounds: 3 }),
 });
 export type DevelopmentLimits = z.infer<typeof DevelopmentLimits>;
 export const DevelopmentWorkflow = DevelopmentLimits.extend({

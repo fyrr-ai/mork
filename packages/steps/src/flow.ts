@@ -313,12 +313,13 @@ export async function decide(deps: Deps, state: FlowState): Promise<FlowState> {
   const impl = ImplementerOutput.parse(await store.json(keys.impl(brief.prefix, brief.attempt)));
   const issue = IssueDoc.parse(await store.json(keys.issue(brief.prefix)));
   const attempt = `check-${brief.attempt}`;
-  // Proven defects go back to Build before a person sees the PR, as many times as the policy allows.
-  // The decision model sets their priority. Changes the rules hand to a person anyway are not repaired first.
+  // Proven defects go back to Build before a person sees the PR, as many times as the policy allows; each
+  // repair adds a Build attempt of its own. The decision model sets their priority. Changes the rules hand
+  // to a person anyway are not repaired first.
   const repairs = state.repair ?? { rounds: 0, findings: 0 };
   const takeover = (gate.diff_policy?.protected_hits ?? []).length > 0 || plan.security_sensitive || state.security === true;
   const allowed = (state.policy ?? DEFAULT_DEVELOPMENT_POLICY).repairs.rounds;
-  const candidates = repairs.rounds >= allowed || takeover || brief.attempt >= lastAttempt(brief) ? [] : repairCandidates(review);
+  const candidates = repairs.rounds >= allowed || takeover ? [] : repairCandidates(review);
   if (candidates.length) {
     const { chosen, priorities, trace } = await chooseRepairs(
       deps.panel,
@@ -335,8 +336,13 @@ export async function decide(deps: Deps, state: FlowState): Promise<FlowState> {
       await store.put(keys.feedback(brief.prefix, brief.attempt + 1), repairFeedback(defects), "text/markdown");
       await reporter.report({ kind: "repair", attempt: brief.attempt, findings: defects.map((f) => `\`${f.where}\`: ${f.what.slice(0, 200)}`) });
       deps.log(task.id, "review.repair", { attempt: brief.attempt, round: repairs.rounds + 1, findings });
-      const next = await retryBuild(deps, state, findings.join("\n"));
-      return { ...next, repair: { rounds: repairs.rounds + 1, findings: repairs.findings + defects.length } };
+      return {
+        ...state,
+        brief: { ...brief, attempt: brief.attempt + 1, last_attempt: lastAttempt(brief) + 1 },
+        next: "build",
+        last: undefined,
+        repair: { rounds: repairs.rounds + 1, findings: repairs.findings + defects.length },
+      };
     }
   }
   const untestable = plan.acceptance_criteria.filter((c) => !c.testable);
