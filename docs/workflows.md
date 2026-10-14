@@ -94,7 +94,9 @@ The old module-level `phase_seconds`, `spot_attempts`, `answer_seconds` and
 
 Slack acknowledges a signed event after enqueueing an asynchronous invocation of
 the same Lambda. A channel with one allowed workflow selects it directly;
-Start still triages the task and resolves its Jira issue. With multiple allowed
+Start still triages the task and resolves its Jira issue. The original Slack
+request is retained alongside the Jira description, including supplied context
+and constraints. With multiple allowed
 workflows, the worker asks Jev to select one, including messages that explicitly
 name one. Jev receives the request, workflow descriptions and the channel's
 allowed options. `default_workflow` is a hint to Jev; it never acts as a fallback
