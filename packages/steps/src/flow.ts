@@ -156,6 +156,14 @@ export async function start(deps: Deps, input: StartInput): Promise<FlowState | 
       if ((error as Error).name === "NotARequest") return { next: "done", dismissed: (error as Error).message };
       throw error;
     }
+    work = {
+      ...work,
+      body: `${work.body}
+
+## Slack request
+
+${slack.ask}`,
+    };
     origin = { kind: "slack", start: slack, work: { key: work.key, url: work.url, title: work.title, created: work.created } };
   } else {
     const issue = await github.issue(repo, input.issue);
@@ -312,7 +320,6 @@ export async function decide(deps: Deps, state: FlowState): Promise<FlowState> {
 
   const review = Review.parse(await store.json(keys.review(brief.prefix, brief.attempt)));
   const impl = ImplementerOutput.parse(await store.json(keys.impl(brief.prefix, brief.attempt)));
-  const issue = IssueDoc.parse(await store.json(keys.issue(brief.prefix)));
   const attempt = `check-${brief.attempt}`;
   // The decision model sets each finding's priority. Proven defects it rates must-fix go back to Build before
   // a person sees the PR, as many times as the policy allows; each repair adds a Build attempt of its own.

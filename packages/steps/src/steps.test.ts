@@ -381,6 +381,14 @@ describe("slack origin", () => {
     expect(next.brief).toMatchObject({ prefix: "tasks/o/r/PROJ-7/abcdef12", branch: "mork/proj-7-abcdef12", report: slackStart.ref });
     expect(events.map((e) => e.kind)).toEqual(["started"]);
   });
+  test("Slack request context is kept alongside the referenced Jira issue", async () => {
+    const store = memory();
+    const ask = "Implement PROJ-7. Finance inputs are external S3 tables; never commit their data rows.";
+    const next = await start(makeDeps(store), { ...slackStart, ask, execution: "slack-EvPILOTCONTEXT" });
+    const issue = (await store.json(keys.issue(next.brief.prefix))) as { body: string };
+    expect(issue.body).toContain("sum two numbers");
+    expect(issue.body).toContain(ask);
+  });
   test("Jev triages the raw message first: a greeting ends the run before any Jira issue is drafted", async () => {
     told.length = 0;
     let resolved = false;
