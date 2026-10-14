@@ -158,7 +158,7 @@ export async function runLocalWorkflow(options: LocalOptions): Promise<LocalResu
       const findings = review?.findings ?? [];
       const { priorities } = await prioritizeFindings(
         ctx.panel,
-        findings.map((f) => ({ severity: f.severity, category: f.category, where: f.where, what: f.what, excerpt: f.located?.excerpt ?? f.quote })),
+        findings.map((f) => ({ severity: f.severity, category: f.category, where: f.where, verification: f.verification })),
       );
       const chosen = pickRepairs(
         findings.map((f) => ({ severity: f.severity, repairable: repairCandidate(f) })),

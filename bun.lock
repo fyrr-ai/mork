@@ -19,6 +19,9 @@
     },
     "packages/decision": {
       "name": "@mork/decision",
+      "dependencies": {
+        "@mork/contracts": "workspace:*",
+      },
     },
     "packages/runner": {
       "name": "@mork/runner",

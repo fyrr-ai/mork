@@ -181,13 +181,45 @@ describe("policies", () => {
   });
   test("a finding's priority comes from the decision model when it is confident, otherwise from the reviewer", () => {
     const answer = (p: number) => ({ type: "choice" as const, choice: "P1", confidence: 0.5, probabilities: { P0: p / 2, P1: p / 2, P2: 1 - p } });
-    expect(findingPriority({ severity: "P2" }, answer(0.9))).toMatchObject({ fix: true, decidedBy: "decision model" });
-    expect(findingPriority({ severity: "P0" }, answer(0.1))).toMatchObject({ fix: false, decidedBy: "decision model" });
-    expect(findingPriority({ severity: "P1" }, answer(0.5))).toMatchObject({ fix: true, decidedBy: "reviewer" });
-    expect(findingPriority({ severity: "P2" }, { type: "undecided", reason: "jev 500" })).toMatchObject({ fix: false, decidedBy: "reviewer" });
+    expect(
+      findingPriority(
+        {
+          verification: { status: "confirmed", reason: "regression", expected: "works", scenario: "regular use fails", evidence: [] },
+          severity: "P2",
+        },
+        answer(0.9),
+      ),
+    ).toMatchObject({ fix: true, decidedBy: "decision model" });
+    expect(
+      findingPriority(
+        {
+          verification: { status: "confirmed", reason: "regression", expected: "works", scenario: "regular use fails", evidence: [] },
+          severity: "P0",
+        },
+        answer(0.1),
+      ),
+    ).toMatchObject({ fix: false, unresolved: false, decidedBy: "decision model" });
+    expect(
+      findingPriority(
+        {
+          verification: { status: "confirmed", reason: "regression", expected: "works", scenario: "regular use fails", evidence: [] },
+          severity: "P1",
+        },
+        answer(0.5),
+      ),
+    ).toMatchObject({ fix: true, decidedBy: "verification" });
+    expect(
+      findingPriority(
+        {
+          verification: { status: "confirmed", reason: "regression", expected: "works", scenario: "regular use fails", evidence: [] },
+          severity: "P2",
+        },
+        { type: "undecided", reason: "jev 500" },
+      ),
+    ).toMatchObject({ fix: false, unresolved: true, decidedBy: "verification" });
   });
   test("repairs take the most urgent repairable findings first and stop at the limit", () => {
-    const urgent = (p?: number) => ({ fix: true, p, decidedBy: "decision model" as const, reason: "" });
+    const urgent = (p?: number) => ({ fix: true, unresolved: false, p, decidedBy: "decision model" as const, reason: "" });
     const findings = [
       { severity: "P1" as const, repairable: true },
       { severity: "P0" as const, repairable: false },
@@ -195,7 +227,9 @@ describe("policies", () => {
       { severity: "P0" as const, repairable: true },
     ];
     expect(pickRepairs(findings, [urgent(0.85), urgent(1), urgent(0.95), urgent()], 2)).toEqual([3, 2]);
-    expect(pickRepairs(findings, [urgent(0.85), urgent(1), { fix: false, decidedBy: "reviewer", reason: "" }, urgent()], 5)).toEqual([3, 0]);
+    expect(
+      pickRepairs(findings, [urgent(0.85), urgent(1), { fix: false, unresolved: false, decidedBy: "verification", reason: "" }, urgent()], 5),
+    ).toEqual([3, 0]);
   });
   test("supervision steers once, waits out the grace, then stops", () => {
     const stuck = { worker_stuck: { type: "noul" as const, p: 0.9 } };
@@ -213,4 +247,23 @@ describe("message triage", () => {
     expect(triageFrom({ is_request: { type: "noul", p: 0.5 }, actionable: { type: "noul", p: 0.9 } }).route).toBe("proceed");
     expect(triageFrom({ is_request: { type: "undecided", reason: "down" }, actionable: { type: "noul", p: 0.1 } }).route).toBe("clarify");
   });
+});
+
+test("unknown P0 and refuted P1 never become repairs from a confident priority answer", () => {
+  const answer = { type: "choice" as const, choice: "P0", confidence: 1, probabilities: { P0: 1 } };
+  expect(findingPriority({ severity: "P0", verification: { status: "unknown", reason: "No reachable scenario" } }, answer)).toMatchObject({
+    fix: false,
+    unresolved: true,
+  });
+  expect(
+    findingPriority({ severity: "P1", verification: { status: "refuted", reason: "Intentional behaviour", evidence: [] } }, answer),
+  ).toMatchObject({ fix: false, unresolved: false });
+});
+
+test("missing probability mass cannot declare a confirmed defect safe to defer", () => {
+  const f = {
+    severity: "P1" as const,
+    verification: { status: "confirmed" as const, reason: "regression", expected: "works", scenario: "fails", evidence: [] },
+  };
+  expect(findingPriority(f, { type: "choice", choice: "P2", confidence: 1, probabilities: {} })).toMatchObject({ fix: true, unresolved: true });
 });

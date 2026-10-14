@@ -55,18 +55,18 @@ _Avoid_: stage
 A phase while it runs: one Fargate task from the shared image, next to an egress sidecar. Say "Fargate task" or "ECS task" only when talking about AWS, never "task".
 
 **Station**:
-One worker inside a phase, with its own input and output: the analyst and the gate before (Plan), the implementer (Build), the gate after and the reviewer (Check).
+One worker inside a phase, with its own input and output: the analyst and the gate before (Plan), the implementer (Build), the gate after, OCR, finding verification and criteria evidence (Check).
 _Avoid_: agent (for the gate), role
 
 **LLM station**:
-A station driven by the LLM through Pi: the analyst, the implementer or the reviewer. Every LLM station is supervised while it runs.
+A station driven by the LLM through Pi: the analyst, the implementer, the finding verifier or the criteria checker. Every LLM station is supervised while it runs.
 
 **Gate**:
 The station without an LLM. Before the change it proves the hidden tests fail; after it, it judges the pushed commit.
 _Avoid_: CI, validator
 
 **Acceptance criterion**:
-One thing the change must achieve, written by the analyst (`AC1`, `AC2`…). A testable criterion gets a hidden test; an untestable one (docs, wording, readability) is judged by the reviewer from quotes and by the decision model.
+One thing the change must achieve, written by the analyst (`AC1`, `AC2`…). A testable criterion gets a hidden test; an untestable one (docs, wording, readability) is judged from code quotes supplied by the criteria checker and by the decision model.
 _Avoid_: requirement, AC (in prose)
 
 **Hidden test**:
@@ -153,11 +153,11 @@ One pass through Build and Check. A first run has up to 3; each fix run has 2 mo
 _Avoid_: retry, iteration
 
 **Finding**:
-A defect the reviewer reports, with a severity (P0, P1, P2), a category and a quote. The runner locates the quote in the reviewed commit; a finding without one stays an opinion in the PR text.
+A claim about a defect reported by OCR. It may be confirmed, refuted, unknown or a duplicate of another claim. Reported severity is separate from verified evidence and repair priority.
 _Avoid_: comment, issue
 
 **Repair**:
-Decide sending located bug and security findings back to Build after a green gate, when the decision model rates them must-fix. A run has `repairs.rounds` of them (3 by default), each with a Build attempt of its own.
+Sending confirmed defects back for correction before delivery, when their priority requires it. A run has `repairs.rounds` of them (3 by default), each with a Build attempt of its own.
 _Avoid_: fix (that is a fix run), retry
 
 **Fix round**:

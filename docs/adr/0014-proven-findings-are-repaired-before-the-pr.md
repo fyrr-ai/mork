@@ -1,6 +1,6 @@
 # 14. Proven findings are repaired before the PR
 
-Date: 2026-10-14 · Status: Accepted
+Date: 2026-10-14 · Status: Superseded for review and priority by [ADR 17](0017-ocr-finds-verification-establishes-defects.md)
 
 ## Context
 

@@ -35,7 +35,7 @@ RUN mkdir -p /pi/dist/core /pi/dist/modes/interactive /pi/node_modules/@silvia-o
 
 # The runner needs actual repository tools. Copy their files and transitive ELF
 # libraries from a pinned Debian/Node builder, rather than shipping apt and a distro.
-FROM node:24.21.0-bookworm-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20 AS runner-rootfs
+FROM node:24.21.0-trixie-slim@sha256:173f125896c3b47ddf056734c7ea789d04595a6a08769a8f78e0df642781fb66 AS runner-rootfs
 RUN apt-get update \
  && apt-get install -y --no-install-recommends git ca-certificates bash python3 ripgrep fd-find binutils \
  && rm -rf /var/lib/apt/lists/* \
@@ -46,8 +46,13 @@ COPY images/runner/rootfs.py /build-rootfs.py
 RUN python3 /build-rootfs.py \
  && ln -s /opt/pi/dist/bundle/cli.js /rootfs/usr/local/bin/pi
 
+# Release binary pinned to the publisher's SHA-256, with no runtime installer.
+ADD --checksum=sha256:879d6eda27d136473f7af680ed5009516baf6236d8a0e5f5f14f3e6dececdd1f https://github.com/alibaba/open-code-review/releases/download/v1.13.0/opencodereview-linux-amd64 /ocr
+RUN chmod 755 /ocr && strip --strip-unneeded /ocr
+
 FROM scratch AS runner
 COPY --from=runner-rootfs /rootfs/ /
+COPY --from=runner-rootfs /ocr /usr/local/bin/ocr
 COPY --from=agent-deps /pi /opt/pi
 COPY --from=agent-deps /pi-notices /usr/share/licenses/pi/npm
 COPY --from=agent-deps /agent/bun.lock /usr/share/licenses/pi/bun.lock
@@ -93,4 +98,4 @@ ENTRYPOINT ["/usr/local/bin/mork-egress"]
 FROM runner AS runner-test
 COPY --from=deps /bundles/runner-test /opt/mork
 COPY --from=deps /usr/local/bin/bun /usr/local/bin/bun
-CMD ["bun", "test", "packages/runner/src/gate.runtime.test.ts", "packages/runner/src/agentfs.test.ts", "packages/runner/src/git.test.ts", "packages/runner/src/phases.test.ts", "packages/runner/src/github-auth.test.ts", "packages/sources/src/github-auth.test.ts"]
+CMD ["bun", "test", "/opt/mork/packages/runner/src/gate.runtime.test.ts", "/opt/mork/packages/runner/src/agentfs.test.ts", "/opt/mork/packages/runner/src/git.test.ts", "/opt/mork/packages/runner/src/phases.test.ts", "/opt/mork/packages/runner/src/github-auth.test.ts", "/opt/mork/packages/sources/src/github-auth.test.ts"]

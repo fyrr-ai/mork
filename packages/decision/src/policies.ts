@@ -1,3 +1,4 @@
+import type { FindingVerification } from "@mork/contracts";
 // The three places the decision model is asked something besides the final
 // recommendation. Each policy is a fixed question set plus a pure function
 // from answers to an action; the code, not the model, owns the thresholds and
@@ -124,45 +125,65 @@ export const REPAIR_AT = 0.8;
 export const PRIORITY_QUESTION = {
   type: "choice",
   instructions:
-    "A code reviewer reported this finding about a pull request. Judged from the finding and the code excerpt, how urgent is it to fix before the change is merged? Choose none if the excerpt does not show the described defect.",
+    "Repository verification established this regression. Using only the verified expected behaviour, scenario and base/head evidence, how urgent is fixing it before merge? Decide urgency, not whether the verifier should have found more bugs.",
   options: {
-    P0: "Must not merge: breaks the feature in normal use, a security hole, data loss or a crash",
-    P1: "Should be fixed before merge: wrong behaviour in a realistic case",
-    P2: "Minor: style, naming, documentation, missing tests or an unlikely edge case",
-    none: "The excerpt does not show the described defect",
+    P0: "Must not merge: breaks normal use, security breach, data loss or crash",
+    P1: "Fix before merge: wrong behaviour in a realistic case, including normal deployment or retries",
+    P2: "Can wait: minor impact",
+    none: "The verified evidence is insufficient to judge urgency",
   },
 } as const satisfies Question;
 
-export type FindingEvidence = { severity: "P0" | "P1" | "P2"; category: string; where: string; what: string; excerpt: string };
-export type Priority = { fix: boolean; p?: number; decidedBy: "decision model" | "reviewer"; reason: string };
+export type FindingEvidence = { severity: "P0" | "P1" | "P2"; category: string; where: string; verification: FindingVerification };
+export type Priority = { fix: boolean; unresolved: boolean; p?: number; decidedBy: "decision model" | "verification"; reason: string };
 
-export function findingPriority(finding: Pick<FindingEvidence, "severity">, answer: Answer | undefined): Priority {
+export function findingPriority(finding: Pick<FindingEvidence, "severity" | "verification">, answer: Answer | undefined): Priority {
+  const v = finding.verification;
+  if (v.status !== "confirmed")
+    return {
+      fix: false,
+      unresolved: v.status === "unknown",
+      decidedBy: "verification",
+      reason: `${v.status}: ${v.reason}`,
+    };
   if (answer?.type === "choice") {
     const p = (answer.probabilities.P0 ?? 0) + (answer.probabilities.P1 ?? 0);
-    if (p >= REPAIR_AT) return { fix: true, p, decidedBy: "decision model", reason: `must be fixed, p=${p.toFixed(2)}` };
-    if (p <= 1 - REPAIR_AT) return { fix: false, p, decidedBy: "decision model", reason: `can wait, p=${p.toFixed(2)}` };
+    if (p >= REPAIR_AT) return { fix: true, unresolved: false, p, decidedBy: "decision model", reason: `must be fixed, p=${p.toFixed(2)}` };
+    const unallocated = Math.max(0, 1 - Object.values(answer.probabilities).reduce((sum, probability) => sum + probability, 0));
+    if (answer.choice !== "none" && p + unallocated <= 1 - REPAIR_AT)
+      return { fix: false, unresolved: false, p, decidedBy: "decision model", reason: `can wait, p=${p.toFixed(2)}` };
   }
-  const fix = finding.severity !== "P2";
-  return { fix, decidedBy: "reviewer", reason: `decision model unsure; reviewer says ${finding.severity}` };
+  return {
+    fix: finding.severity !== "P2",
+    unresolved: true,
+    decidedBy: "verification",
+    reason: "Priority undecided; confirmed evidence and OCR severity used for repair, human review required",
+  };
 }
 
-/** Priorities in the order of `findings`, plus the trace when the decision model was asked. */
+/** Ask only about confirmed defects, in bounded batches. Unknown is never cleared by a model answer. */
 export async function prioritizeFindings(
   panel: DecisionPanel,
   findings: FindingEvidence[],
-): Promise<{ priorities: Priority[]; trace?: DecisionTrace }> {
-  if (!panel.enabled || !findings.length) return { priorities: findings.map((f) => findingPriority(f, undefined)) };
-  const ids = findings.map((_, index) => `F${index + 1}`);
-  const questions: Record<string, Question> = Object.fromEntries(
-    ids.map((id) => [id, { ...PRIORITY_QUESTION, instructions: `${PRIORITY_QUESTION.instructions} Answer for ${id} only.` }]),
-  );
-  const state = {
-    findings: Object.fromEntries(
-      findings.map((f, index) => [ids[index], boundEvidence({ finding: `${f.category}: ${f.what}`, where: f.where, excerpt: f.excerpt })]),
-    ),
-  };
-  const { answers, trace } = await panel.decide(state, questions);
-  return { priorities: findings.map((f, index) => findingPriority(f, answers[ids[index] as string])), trace };
+): Promise<{ priorities: Priority[]; traces: DecisionTrace[] }> {
+  const priorities = findings.map((finding) => findingPriority(finding, undefined));
+  const traces: DecisionTrace[] = [];
+  if (!panel.enabled) return { priorities, traces };
+  const confirmed = findings.map((f, index) => ({ f, index })).filter(({ f }) => f.verification.status === "confirmed");
+  for (let offset = 0; offset < confirmed.length; offset += 3) {
+    const batch = confirmed.slice(offset, offset + 3);
+    const questions: Record<string, Question> = Object.fromEntries(
+      batch.map(({ index }) => {
+        const id = `F${index + 1}`;
+        return [id, { ...PRIORITY_QUESTION, instructions: `${PRIORITY_QUESTION.instructions} Answer for ${id} only.` }];
+      }),
+    );
+    const state = { findings: Object.fromEntries(batch.map(({ f, index }) => [`F${index + 1}`, boundEvidence(f.verification, 1000)])) };
+    const { answers, trace } = await panel.decide(state, questions);
+    traces.push(trace);
+    for (const { f, index } of batch) priorities[index] = findingPriority(f, answers[`F${index + 1}`]);
+  }
+  return { priorities, traces };
 }
 
 /** The findings to repair, most urgent first, at most `max`, as indexes into `findings`. */

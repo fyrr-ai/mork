@@ -2,5 +2,10 @@
   "name": "@mork/decision",
   "private": true,
   "type": "module",
-  "exports": { ".": "./src/index.ts" }
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@mork/contracts": "workspace:*"
+  }
 }

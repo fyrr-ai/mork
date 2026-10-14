@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { pushDenied } from "./guard.ts";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { pushDenied, readDenied } from "./guard.ts";
 
 const branch = "mork/issue-7-abc12345";
 
@@ -30,4 +33,26 @@ describe("guard: push", () => {
     expect(pushDenied(`git push origin ${branch}`, undefined)).toBe("This station never pushes.");
     expect(pushDenied("git status", undefined)).toBeUndefined();
   });
+});
+
+// Evidence workers may inspect the baseline sibling, but not another checkout
+// or a symlink that escapes their two explicitly supplied roots.
+test("evidence reads stay inside supplied roots after resolving symlinks", () => {
+  const directory = mkdtempSync(join(tmpdir(), "mork-read-scope-"));
+  try {
+    const head = join(directory, "head");
+    const base = join(directory, "base");
+    mkdirSync(head);
+    mkdirSync(base);
+    writeFileSync(join(head, "code.ts"), "head");
+    writeFileSync(join(base, "code.ts"), "base");
+    writeFileSync(join(directory, "secret"), "outside");
+    symlinkSync(join(directory, "secret"), join(head, "escape"));
+    expect(readDenied(join(head, "code.ts"), [head, base])).toBe(false);
+    expect(readDenied(join(base, "code.ts"), [head, base])).toBe(false);
+    expect(readDenied(join(head, "escape"), [head, base])).toBe(true);
+    expect(readDenied(directory, [head, base])).toBe(true);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });

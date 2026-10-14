@@ -1,3 +1,6 @@
+import { realpathSync } from "node:fs";
+import { isAbsolute, relative, resolve } from "node:path";
+
 // Pi extension loaded into every LLM station. Blocks actions the station must
 // never take, with a reason the model can read. The real limits are the
 // container, the narrowed push token and the repository rulesets; this keeps
@@ -33,8 +36,27 @@ const DENY_BASH: Array<[RegExp, string]> = [
 
 const PROTECTED_PATH = /(^|\/)(\.git|\.mork|\.github|\.pi)(\/|$)/;
 
+/** Prevent evidence workers from reading outside their head/base checkouts, including through symlinks. */
+export function readDenied(path: string, roots: string[]): boolean {
+  try {
+    const target = realpathSync(resolve(path));
+    return !roots.some((root) => {
+      const rel = relative(realpathSync(root), target);
+      return rel !== ".." && !rel.startsWith("../") && !isAbsolute(rel);
+    });
+  } catch {
+    return true;
+  }
+}
+
 export default function guard(pi: any) {
+  const roots = process.env.MORK_READ_ROOTS ? (JSON.parse(process.env.MORK_READ_ROOTS) as string[]) : undefined;
   pi.on("tool_call", async (event: any) => {
+    if (roots) {
+      if (["bash", "write", "edit"].includes(event.toolName)) return { block: true, reason: "Evidence checking is read-only and has no shell." };
+      if (["read", "grep", "find", "ls"].includes(event.toolName) && readDenied(String(event.input?.path ?? "."), roots))
+        return { block: true, reason: "Read only the supplied repository checkouts. Outside paths and escaping symlinks are not evidence." };
+    }
     if (event.toolName === "bash") {
       const command = String(event.input?.command ?? "");
       const push = pushDenied(command);

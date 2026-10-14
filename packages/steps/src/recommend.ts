@@ -52,6 +52,10 @@ export async function recommend(input: {
     if (v.verdict === "review") hit("careful", `${v.id} unconfirmed (${v.reason})`);
   }
   if (review.unreviewed_files.length) hit("careful", `The reviewer did not read ${review.unreviewed_files.length} changed file(s)`);
+  for (const reason of review.incomplete) hit("careful", reason);
+  const unknown = review.findings.filter((f) => f.verification.status === "unknown");
+  if (unknown.length) hit("careful", `${unknown.length} unresolved finding(s): ${unknown.map((f) => f.where).join(", ")}`);
+  if (input.priorities.some((p) => p.unresolved)) hit("careful", "Finding priority remains undecided");
   // A finding's priority, not the reviewer's severity, decides: reviewers often call a P1 or a non-issue P0.
   const mustFix = review.findings.filter((_, index) => input.priorities[index]?.fix);
   if (mustFix.length) hit("careful", `${mustFix.length} finding(s) should be fixed before merge: ${mustFix.map((f) => f.where).join(", ")}`);
@@ -71,7 +75,7 @@ export async function recommend(input: {
       changed_files: gate.diff_policy?.changed_files,
       diff_size: size,
       review_summary: review.summary,
-      findings: review.findings,
+      findings: review.findings.filter((f) => f.verification.status === "confirmed"),
     }),
     LEVEL_QUESTION,
   );
