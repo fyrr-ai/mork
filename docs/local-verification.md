@@ -46,3 +46,13 @@ This builds the runner test image, then runs the gate and filesystem regression 
 `test:sandbox` also runs its compiled CLI through production Node/Pi with a deterministic loopback model fixture, two Build attempts and a passing Check. `mise run workflow:configured -- --help` describes local generic workflows, including command execution, persisted results and approval resumption. Local runs execute with the host user's permissions and require trusted repositories and commands.
 
 SIGINT and SIGTERM stop the local run's owned subprocesses and release `.run.lock` before exit. Resume uses the saved manifest and completed outputs. SIGKILL or a machine crash cannot run cleanup. Before removing a stale `.run.lock`, confirm that its original runner and descendants have stopped. Never remove the lock of an active run.
+
+Local development Check requires `ocr` 1.13.0 and Git >= 2.41 in addition to Pi.
+The runner image includes both. Check uses OCR medium, then a read-only verifier;
+the criteria checker runs only for non-testable criteria.
+
+The opt-in paid-model regression test is `packages/runner/src/review.live.test.ts`.
+Set `MORK_REVIEW_LIVE_OUTPUT`, `MORK_REVIEW_LIVE_LLM_URL`, and
+`MORK_LOCAL_API_KEY`, then run it inside the runner-test image. An optional
+`JEV_API` also exercises urgency from the verified evidence. The test retains
+artifacts and removes the temporary Pi key configuration.

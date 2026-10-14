@@ -12,6 +12,7 @@ import {
   type Brief,
   type BuildResult,
   BuildResult as BuildResultSchema,
+  CriteriaOutput,
   type GateReport,
   HandoverError,
   HiddenTest,
@@ -24,9 +25,10 @@ import {
   PublicPlan,
   parseRepoConfig,
   type RepoConfig,
-  ReviewerOutput,
+  type Review,
   type RunResult,
   StationOutput,
+  VerificationOutput,
 } from "@mork/contracts";
 import type { DevelopmentStep } from "@mork/contracts/development";
 import type { DecisionPanel } from "@mork/decision";
@@ -37,8 +39,9 @@ import { killUser } from "./agentfs.ts";
 import { runGate, type Sandbox } from "./gate.ts";
 import { fetchRepo, mustExec, remoteHead, repoUrl, SAFE_GIT } from "./git.ts";
 import { type LlmJob, type LlmOutcome, type RunnerEnv, runLlmStation } from "./llm.ts";
+import { ocrReview, runOcr } from "./ocr.ts";
 import * as prompts from "./prompts.ts";
-import { changedFiles, checkReview, readAt, reviewRules } from "./review.ts";
+import { changedFiles, locate, locateFindings, readAt, verifyReview } from "./review.ts";
 import { checkPlan, gateFailures, gateFeedback, gatePassed } from "./rules.ts";
 import { SessionLog } from "./session.ts";
 import { onShutdown } from "./shutdown.ts";
@@ -156,9 +159,22 @@ async function llm(
   const outcome = await runLlmStation(
     {
       station,
-      instructions: ctx.step.instructions,
-      tools: ctx.step.tools,
+      instructions:
+        ctx.step.instructions +
+        (station === "verifier"
+          ? "\nYou are the finding verifier. Assess only supplied findings; never edit files or perform a full review."
+          : station === "criteria"
+            ? "\nYou check only the supplied acceptance criteria. Never edit files or search for bugs."
+            : ""),
+      tools:
+        station === "verifier" || station === "criteria"
+          ? (ctx.step.tools?.filter((tool) => ["read", "grep", "find", "ls"].includes(tool)) ?? ["read", "grep", "find", "ls"])
+          : ctx.step.tools,
       extensions: ctx.step.extensions,
+      environment:
+        station === "verifier" || station === "criteria"
+          ? { MORK_READ_ROOTS: JSON.stringify([repoDir, ...(typeof task.baselineDir === "string" ? [task.baselineDir] : [])]) }
+          : undefined,
       message: !resumed
         ? message + prompts.clarifications(answers)
         : pending.interrupted
@@ -167,7 +183,7 @@ async function llm(
       resumed,
       session,
       log: ctx.logger.with({ "mork.station": station }),
-      ask: ctx.brief.report !== undefined,
+      ask: ctx.brief.report !== undefined && (station === "analyst" || station === "implementer"),
       output_schema: z.toJSONSchema(StationOutput[station]) as Record<string, unknown>,
       model: ctx.step.model ?? ctx.model,
       repo: ctx.brief.repo,
@@ -348,23 +364,76 @@ async function checkWith(ctx: PhaseContext, records: SupervisionRecord[]): Promi
   }
   await ctx.reporter.report({ kind: "check", attempt: brief.attempt, passed: true });
   const issue = IssueDoc.parse(await store.json(keys.issue(brief.prefix)));
-  const impl = ImplementerOutput.parse(await store.json(keys.impl(brief.prefix, brief.attempt)));
-  const repoDir = await checkout(ctx, "reviewer", true);
+  const repoDir = await checkout(ctx, "ocr", true);
+  mustExec("git", [...SAFE_GIT, "-C", repoDir, "checkout", "-q", built.head_sha]);
   const files = changedFiles(repoDir, brief.repo.base_sha, built.head_sha);
   const stats: Stats = [];
-  const outcome = await llm(
-    ctx,
-    `check-${brief.attempt}-reviewer`,
-    "reviewer",
-    repoDir,
-    prompts.reviewerMessage(issue, thePlan, brief.repo.base_sha, report, impl, files, reviewRules(files)),
-    stats,
-    records,
-    { title: issue.title, reviewing: brief.branch },
-  );
-  if (outcome.question) return { ok: true, question: outcome.question, resume: "check", stats };
-  if (!outcome.ok) throw new HandoverError(`The reviewer failed: ${outcome.error}. Branch \`${brief.branch}\` passed the gate.`);
-  const review = checkReview(ReviewerOutput.parse(outcome.output), files, readAt(repoDir, built.head_sha));
+  let review: Review;
+  try {
+    const ocr = await runOcr(ctx.env, repoDir, brief.repo.base_sha, built.head_sha, ctx.step.model ?? ctx.model);
+    await store.putJson(keys.ocr(brief.prefix, brief.attempt), ocr);
+    stats.push({ station: "ocr", turns: ocr.tool_calls.total, tokens: ocr.summary.total_tokens });
+    review = ocrReview(ocr, files);
+    ctx.logger.log(`OCR ${ocr.status}: ${ocr.comments.length} findings`, { "mork.station": "ocr" });
+  } catch (error) {
+    throw new HandoverError(`OCR failed: ${(error as Error).message}. Branch \`${brief.branch}\` passed the gate.`);
+  }
+  // A separate root-owned clone is never passed to an agent. Quotes are checked
+  // against this copy after each agent has exited, not its writable checkout.
+  const evidenceDir = await checkout(ctx, "review-evidence", true);
+  const read = { base: readAt(evidenceDir, brief.repo.base_sha), head: readAt(evidenceDir, built.head_sha) };
+  review = locateFindings(review, read.head);
+  if (review.findings.length) {
+    const baselineDir = await checkout(ctx, "review-base", false);
+    const verifierDir = await checkout(ctx, "verifier", true);
+    mustExec("git", [...SAFE_GIT, "-C", verifierDir, "checkout", "-q", built.head_sha]);
+    const outcome = await llm(
+      ctx,
+      `check-${brief.attempt}-verifier`,
+      "verifier",
+      verifierDir,
+      prompts.verifierMessage(issue, thePlan, brief.repo.base_sha, built.head_sha, review.findings, baselineDir),
+      stats,
+      records,
+      { title: issue.title, verifying: brief.branch, baselineDir },
+    );
+    if (outcome.ok) review = verifyReview(review, VerificationOutput.parse(outcome.output), read);
+    else review.incomplete.push(`Finding verifier failed: ${outcome.error ?? "no result"}`);
+  }
+  const untestable = thePlan.acceptance_criteria.filter((criterion) => !criterion.testable);
+  if (untestable.length) {
+    const criteriaDir = await checkout(ctx, "criteria", true);
+    mustExec("git", [...SAFE_GIT, "-C", criteriaDir, "checkout", "-q", built.head_sha]);
+    const outcome = await llm(
+      ctx,
+      `check-${brief.attempt}-criteria`,
+      "criteria",
+      criteriaDir,
+      prompts.criteriaMessage(issue, thePlan, brief.repo.base_sha),
+      stats,
+      records,
+      { title: issue.title, criteria: untestable.map((c) => c.id) },
+    );
+    if (outcome.ok) {
+      const output = CriteriaOutput.parse(outcome.output);
+      const ids = new Set<string>();
+      review.criteria = output.criteria
+        .filter((c) => {
+          if (!untestable.some((expected) => expected.id === c.id) || ids.has(c.id)) return false;
+          ids.add(c.id);
+          return true;
+        })
+        .map((c) => ({
+          ...c,
+          evidence: c.evidence.filter((e) => {
+            const where = /^(.+?):(\d+)$/.exec(e.where);
+            const content = where && read.head(where[1] as string);
+            return typeof content === "string" && !!where && locate(content, e.quote, Number(where[2]))?.line === Number(where[2]);
+          }),
+        }));
+      if (ids.size !== untestable.length) review.incomplete.push("Acceptance criteria checker omitted criteria");
+    } else review.incomplete.push(`Acceptance criteria checker failed: ${outcome.error ?? "no result"}`);
+  }
   await store.putJson(keys.review(brief.prefix, brief.attempt), review);
   return { ok: true, passed: true, stats };
 }

@@ -323,8 +323,7 @@ export async function decide(deps: Deps, state: FlowState): Promise<FlowState> {
       severity: f.severity,
       category: f.category,
       where: f.where,
-      what: f.what,
-      excerpt: f.located?.excerpt ?? f.quote,
+      verification: f.verification,
     })),
   );
   const repairs = state.repair ?? { rounds: 0, findings: 0 };
@@ -340,13 +339,13 @@ export async function decide(deps: Deps, state: FlowState): Promise<FlowState> {
         );
   const defects = chosen.map((index) => review.findings[index] as Review["findings"][number]);
   const findings = defects.map((f) => `${f.severity} ${f.category} ${f.where}: ${f.what}`);
-  if (prioritized.trace) {
+  for (const [batch, trace] of prioritized.traces.entries()) {
     const decided = review.findings.map((f, index) => ({ where: f.where, severity: f.severity, ...prioritized.priorities[index] }));
     await recordDecision(deps.timeline, {
       task: task.id,
       point: "findings",
-      attempt,
-      trace: prioritized.trace,
+      attempt: `${attempt}-findings-${batch + 1}`,
+      trace,
       action: { priorities: decided, repair: findings },
     });
   }
@@ -582,7 +581,15 @@ export function checksTable(c: ChecksEvidence): string {
   ]);
   const bySeverity = (sev: string) => c.review.findings.filter((f) => f.severity === sev).length;
   const [p0, p1, p2] = [bySeverity("P0"), bySeverity("P1"), bySeverity("P2")];
-  rows.push(["Code review", "reviewer (LLM)", p0 + p1 + p2 === 0 ? "✅ no findings" : `${p0 ? "❌" : "⚠️"} ${p0}× P0, ${p1}× P1, ${p2}× P2`]);
+  rows.push(["Code review", "Open Code Review", p0 + p1 + p2 === 0 ? "✅ no findings" : `⚠️ ${p0}× P0, ${p1}× P1, ${p2}× P2`]);
+  const statuses = ["confirmed", "refuted", "unknown", "duplicate"] as const;
+  if (c.review.findings.length)
+    rows.push([
+      "Finding verification",
+      "repository evidence",
+      statuses.map((status) => `${c.review.findings.filter((f) => f.verification.status === status).length} ${status}`).join(", "),
+    ]);
+  for (const reason of c.review.incomplete) rows.push(["Incomplete review", "Check", reason]);
   if (c.verdicts.length) {
     const passed = c.verdicts.filter((v) => v.verdict === "pass").length;
     rows.push([
@@ -640,7 +647,7 @@ ${checksTable(checks)}
 ## Review
 
 ${review.summary}
-${review.findings.length ? `\n${review.findings.map((f) => `- ${f.severity} ${f.category} \`${f.where}\`${f.located ? "" : " (quote not found in the commit)"}: ${f.what}`).join("\n")}\n` : ""}${impl.deviations.length ? `\n## Deviations from the plan\n\n${impl.deviations.map((d) => `- ${d}`).join("\n")}\n` : ""}
+${review.findings.length ? `\n${review.findings.map((f) => `- ${f.severity} ${f.category} \`${f.where}\`${f.located ? "" : " (quote not found in the commit)"}: ${f.what}\n  Verification: ${f.verification.status}, ${f.verification.reason}${f.verification.status === "duplicate" ? ` (${f.verification.of})` : ""}`).join("\n")}\n` : ""}${impl.deviations.length ? `\n## Deviations from the plan\n\n${impl.deviations.map((d) => `- ${d}`).join("\n")}\n` : ""}
 ${liveUrl ? `Live log (Grafana): ${liveUrl}\n` : ""}${transcripts ? `Agent transcripts (AWS console, secrets redacted): ${transcripts}\n\n` : ""}${footer}
 
 <sub>Mork task ${task.id}</sub>`;

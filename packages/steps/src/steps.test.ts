@@ -36,6 +36,7 @@ const review: Review = {
   summary: "ok",
   files_reviewed: ["math.mjs"],
   unreviewed_files: [],
+  incomplete: [],
   criteria: [{ id: "AC2", pass: true, evidence: [{ where: "README.md:3", quote: "add(a, b) returns the sum" }] }],
   findings: [],
   read_first: [],
@@ -47,6 +48,16 @@ const finding: Review["findings"][number] = {
   quote: "return a - b;",
   what: "add subtracts",
   located: { line: 2, excerpt: "2:   return a - b;" },
+  verification: {
+    status: "confirmed",
+    reason: "Addition regressed",
+    expected: "Return the sum",
+    scenario: "add(2,3) returns -1",
+    evidence: [
+      { revision: "base", path: "math.mjs", line: 2, quote: "return a + b;" },
+      { revision: "head", path: "math.mjs", line: 2, quote: "return a - b;" },
+    ],
+  },
 };
 /** Answers the level question with `choice` and every yes/no question with `p`. */
 const fixedDecider = (choice: string, confidence: number, p = 0.95): Decider => ({
@@ -108,8 +119,8 @@ describe("recommendation", () => {
   test("a finding's priority decides, not the reviewer's severity, and a P0 never takes the task over by itself", async () => {
     const q = live(fixedDecider("quick", 0.99));
     const p0 = { ...review, findings: [{ ...finding, severity: "P0" as const }] };
-    const minor = { fix: false, decidedBy: "decision model" as const, reason: "can wait" };
-    const urgent = { fix: true, decidedBy: "decision model" as const, reason: "must be fixed" };
+    const minor = { fix: false, unresolved: false, decidedBy: "decision model" as const, reason: "can wait" };
+    const urgent = { fix: true, unresolved: false, decidedBy: "decision model" as const, reason: "must be fixed" };
     expect(await rec({ panel: q, review: p0, priorities: [minor] })).toBe("quick");
     expect(await rec({ panel: q, review: p0, priorities: [urgent] })).toBe("careful");
     expect(await rec({ panel: q, review: { ...review, findings: [{ ...finding, severity: "P2" as const }] }, priorities: [urgent] })).toBe("careful");
@@ -296,9 +307,9 @@ describe("repair before the PR", () => {
     expect(feedback).toContain("The reviewer found defects in your change");
     expect(feedback).toContain("2:   return a - b;");
     expect(feedback.match(/^## /gm)).toHaveLength(1);
-    expect(await timeline.get("task#o/r#1/abc", "decision#findings#check-1")).toMatchObject({
+    expect(await timeline.get("task#o/r#1/abc", "decision#findings#check-1-findings-1")).toMatchObject({
       action: {
-        priorities: expect.arrayContaining([expect.objectContaining({ fix: true, decidedBy: "decision model" })]),
+        priorities: expect.arrayContaining([expect.objectContaining({ fix: true, unresolved: false, decidedBy: "decision model" })]),
         repair: [expect.stringContaining("math.mjs:2")],
       },
     });
@@ -563,7 +574,7 @@ describe("checks table", () => {
     expect(table).toContain("| Hidden tests fail on the base commit | gate | ✅ 1/1 failed before the change |");
     expect(table).toContain("| Repository tests | gate | ✅ `npm test` |");
     expect(table).toContain("| Repository check | gate | ❌ `npm run lint` (exit 1) |");
-    expect(table).toContain("| Code review | reviewer (LLM) | ⚠️ 0× P0, 1× P1, 0× P2 |");
+    expect(table).toContain("| Code review | Open Code Review | ⚠️ 0× P0, 1× P1, 0× P2 |");
     expect(table).toContain("| Build attempts | workflow | 2 of 3 |");
     expect(table).toContain("`bbbbbbb`");
     expect(table.split("\n").every((row) => row.startsWith("| ") && row.endsWith(" |"))).toBe(true);
@@ -823,4 +834,16 @@ describe("fix run replays and bookkeeping", () => {
     const r = await start(makeDeps(memory()), { ...input, fix: { ...input.fix, pr: 9 } });
     expect(r).toMatchObject({ next: "done", dismissed: "the task's data has expired" });
   });
+});
+
+test("unresolved and incomplete reviews cannot become quick even with a confident model", async () => {
+  const q = live(fixedDecider("quick", 1));
+  expect(
+    await rec({
+      panel: q,
+      review: { ...review, findings: [{ ...finding, verification: { status: "unknown", reason: "Prerequisite not established" } }] },
+      priorities: [],
+    }),
+  ).toBe("careful");
+  expect(await rec({ panel: q, review: { ...review, incomplete: ["OCR partial"] } })).toBe("careful");
 });

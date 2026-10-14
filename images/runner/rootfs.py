@@ -44,8 +44,8 @@ def copy(path):
 
 packages = [
     "bash", "coreutils", "diffutils", "findutils", "grep", "sed", "mawk", "tar", "gzip",
-    "git", "python3-minimal", "python3.11-minimal", "python3.11",
-    "libpython3.11-minimal", "libpython3.11-stdlib", "ripgrep", "fd-find", "tzdata",
+    "git", "python3-minimal", "python3.13-minimal", "python3.13",
+    "libpython3.13-minimal", "libpython3.13-stdlib", "ripgrep", "fd-find", "tzdata",
 ]
 for package in packages:
     for path in subprocess.check_output(["dpkg-query", "-L", package], text=True).splitlines():

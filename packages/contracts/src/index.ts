@@ -84,7 +84,7 @@ export type ImplementerOutput = z.infer<typeof ImplementerOutput>;
 
 export const FINDING_CATEGORIES = ["bug", "security", "performance", "maintainability", "test", "style", "documentation"] as const;
 
-const Finding = z.object({
+export const Finding = z.object({
   severity: z.enum(["P0", "P1", "P2"]),
   category: z.enum(FINDING_CATEGORIES),
   /** `path:line` in the reviewed commit. */
@@ -94,35 +94,58 @@ const Finding = z.object({
   what: z.string(),
 });
 
-export const ReviewerOutput = z.object({
-  summary: z.string().min(1),
-  /** Changed files the reviewer read. */
-  files_reviewed: z.array(z.string()),
-  /** Judgments for criteria a test cannot decide. */
+/** Quotes are checked against the exact base/head commits, never the working tree. */
+export const ReviewEvidence = z.union([
+  z.object({ revision: z.enum(["base", "head"]), path: z.string().min(1), line: z.number().int().positive(), quote: z.string().min(1).max(4000) }),
+  z.object({ revision: z.literal("base"), path: z.string().min(1), absent: z.literal(true) }),
+]);
+export type ReviewEvidence = z.infer<typeof ReviewEvidence>;
+
+export const FindingVerification = z.discriminatedUnion("status", [
+  z.object({
+    status: z.literal("confirmed"),
+    reason: z.string().min(1),
+    expected: z.string().min(1),
+    scenario: z.string().min(1),
+    evidence: z.array(ReviewEvidence).min(2).max(6),
+  }),
+  z.object({ status: z.literal("refuted"), reason: z.string().min(1), evidence: z.array(ReviewEvidence).min(1).max(6) }),
+  z.object({ status: z.literal("unknown"), reason: z.string().min(1) }),
+  z.object({ status: z.literal("duplicate"), of: z.string().regex(/^F[1-9]\d*$/), reason: z.string().min(1) }),
+]);
+export type FindingVerification = z.infer<typeof FindingVerification>;
+
+export const VerificationOutput = z.object({
+  findings: z.array(z.object({ id: z.string().regex(/^F[1-9]\d*$/), verification: FindingVerification })),
+});
+export type VerificationOutput = z.infer<typeof VerificationOutput>;
+
+/** Only evidence for acceptance criteria that tests cannot decide. No bug review. */
+export const CriteriaOutput = z.object({
   criteria: z.array(
     z.object({
       id: z.string().regex(/^AC\d+$/),
       pass: z.boolean(),
-      /** Exact quotes from the diff or files; the decision model judges the criterion only from these. */
       evidence: z.array(z.object({ where: z.string().min(1), quote: z.string().min(1) })),
     }),
   ),
-  findings: z.array(Finding),
-  /** Hunks a human should read first, as `path:line` strings. */
-  read_first: z.array(z.string()),
 });
-export type ReviewerOutput = z.infer<typeof ReviewerOutput>;
+export type CriteriaOutput = z.infer<typeof CriteriaOutput>;
 
-/** The stored review: the reviewer's output plus what the runner checked itself. */
-export const Review = ReviewerOutput.extend({
+export const Review = z.object({
+  summary: z.string().min(1),
+  files_reviewed: z.array(z.string()),
+  criteria: CriteriaOutput.shape.criteria,
   findings: z.array(
     Finding.extend({
-      /** Where the runner found the quote in the reviewed commit, with the lines around it; null when it is not there. */
       located: z.object({ line: z.number().int().positive(), excerpt: z.string() }).nullable(),
+      // Old stored reviews may be read after an image update. They require a human, not automatic repairs.
+      verification: FindingVerification.default({ status: "unknown", reason: "No verified evidence" }),
     }),
   ),
-  /** Changed files missing from `files_reviewed`. */
+  read_first: z.array(z.string()),
   unreviewed_files: z.array(z.string()),
+  incomplete: z.array(z.string()).default([]),
 });
 export type Review = z.infer<typeof Review>;
 
@@ -130,13 +153,14 @@ export const MAX_REPAIR_FINDINGS = 3;
 
 /** Whether a repair may take on a finding: a bug or security issue whose quote the runner found in the commit. */
 export function repairCandidate(finding: Review["findings"][number]): boolean {
-  return finding.located !== null && (finding.category === "bug" || finding.category === "security");
+  return finding.located !== null && finding.verification.status === "confirmed" && ["bug", "security", "performance"].includes(finding.category);
 }
 
 /** Feedback that sends the chosen findings back to Build. */
 export function repairFeedback(findings: Review["findings"]): string {
   const items = findings.map(
-    (f, i) => `## ${i + 1}. ${f.severity} ${f.category} at \`${f.where}\`\n\n${f.what}\n\n\`\`\`\n${f.located?.excerpt ?? f.quote}\n\`\`\``,
+    (f, i) =>
+      `## ${i + 1}. ${f.severity} ${f.category} at \`${f.where}\`\n\n${f.what}\n\n${f.verification.status === "confirmed" ? `Expected: ${f.verification.expected}\nScenario: ${f.verification.scenario}\nEvidence: ${f.verification.reason}` : ""}\n\n\`\`\`\n${f.located?.excerpt ?? f.quote}\n\`\`\``,
   );
   return `# The reviewer found defects in your change
 
@@ -149,7 +173,8 @@ ${items.join("\n\n")}`;
 export const StationOutput = {
   analyst: AnalystOutput,
   implementer: ImplementerOutput,
-  reviewer: ReviewerOutput,
+  criteria: CriteriaOutput,
+  verifier: VerificationOutput,
 } as const;
 export type LlmStation = keyof typeof StationOutput;
 
@@ -224,6 +249,7 @@ export const keys = {
   /** Feedback for build attempt `attempt`, written by whoever sent the work back. */
   feedback: (prefix: string, attempt: number) => `${prefix}/build/${attempt}/feedback.md`,
   gate: (prefix: string, attempt: number) => `${prefix}/check/${attempt}/gate.json`,
+  ocr: (prefix: string, attempt: number) => `${prefix}/check/${attempt}/ocr.json`,
   review: (prefix: string, attempt: number) => `${prefix}/check/${attempt}/review.json`,
   /** What the supervisor asked and did while the phase's LLM station ran. */
   supervision: (prefix: string, phase: Phase, attempt: number) => `${prefix}/${phase}/${attempt}/supervision.json`,

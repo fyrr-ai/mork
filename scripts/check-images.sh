@@ -81,8 +81,9 @@ if docker run --rm --network none -e MORK_LLM_HOST=llm.example.test \
   exit 1
 fi
 # Compare the same local Docker size metric across rebuilds.
+# OCR adds a pinned ~56 MB binary to the runner; retain a 460 MB total budget.
 for target in runner lambda egress; do
-  case "$target" in runner) limit=400000000 ;; lambda) limit=230000000 ;; egress) limit=80000000 ;; esac
+  case "$target" in runner) limit=460000000 ;; lambda) limit=230000000 ;; egress) limit=80000000 ;; esac
   size="$(docker image inspect "mork-${target}:dev" --format '{{.Size}}')"
   echo "${target}: ${size} bytes (budget ${limit})"
   if (( size > limit )); then echo "${target} exceeds its image size budget" >&2; exit 1; fi

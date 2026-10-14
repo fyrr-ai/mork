@@ -37,8 +37,30 @@ function completion(model: string, tool?: { name: string; arguments: unknown }):
 }
 
 integration(
-  "real Pi resumes after SIGTERM, plans hidden tests, retries a red gate, repairs a reviewer finding and passes Check without AWS",
+  "real Pi resumes after SIGTERM, plans hidden tests, retries a red gate, repairs an OCR finding after verification and passes Check without AWS",
   async () => {
+    const ocrCompletion = (model: string, name: string, args: unknown) =>
+      new Response(
+        JSON.stringify({
+          id: "ocr-fixture",
+          object: "chat.completion",
+          created: 1,
+          model,
+          choices: [
+            {
+              index: 0,
+              message: {
+                role: "assistant",
+                content: null,
+                tool_calls: [{ id: "ocr-call", type: "function", function: { name, arguments: JSON.stringify(args) } }],
+              },
+              finish_reason: "tool_calls",
+            },
+          ],
+          usage: { prompt_tokens: 8, completion_tokens: 8, total_tokens: 16 },
+        }),
+        { headers: { "content-type": "application/json" } },
+      );
     const directory = mkdtempSync(join(tmpdir(), "mork-local-workflow-"));
     const source = join(directory, "source");
     mkdirSync(source);
@@ -48,6 +70,7 @@ integration(
     mkdirSync(join(source, ".mork"));
     mkdirSync(join(source, "test"));
     writeFileSync(join(source, "math.mjs"), "export const add = (a, b) => a - b;\n");
+    writeFileSync(join(source, "README.md"), "add returns a numeric sum, including numeric strings.\n");
     writeFileSync(join(source, ".gitignore"), ".fixture-ready\n");
     writeFileSync(
       join(source, "test", "smoke.test.mjs"),
@@ -61,7 +84,14 @@ integration(
     git("commit", "-qm", "base");
     const original = git("rev-parse", "HEAD");
     const issueFile = join(directory, "issue.json");
-    writeFileSync(issueFile, JSON.stringify({ ref: "LOCAL-1", title: "Fix addition", body: "add must return the sum of its two inputs." }));
+    writeFileSync(
+      issueFile,
+      JSON.stringify({
+        ref: "LOCAL-1",
+        title: "Fix addition",
+        body: "add must return the numeric sum of its two inputs, including numeric strings.",
+      }),
+    );
     const definitionFile = join(directory, "development.json");
     const definition = structuredClone(DEFAULT_DEVELOPMENT);
     definition.steps[1].attempts = 2;
@@ -82,17 +112,62 @@ integration(
       port: 0,
       fetch: async (request) => {
         if (request.headers.get("authorization") !== "Bearer local-fixture-key") return new Response("Wrong fixture key", { status: 401 });
-        const body = (await request.json()) as { model: string; messages: Message[] };
+        const body = (await request.json()) as { model: string; messages: Message[]; tools?: { function: { name: string } }[] };
         if (firstRequest) {
           firstRequest = false;
           modelStarted();
           return new Response(new ReadableStream(), { headers: { "content-type": "text/event-stream" } });
         }
         const system = JSON.stringify(body.messages.filter((message) => message.role === "system"));
-        const station = system.includes("You are the analyst") ? "analyst" : system.includes("You are the implementer") ? "implementer" : "reviewer";
+        const toolNames = body.tools?.map((t) => t.function.name) ?? [];
+        const station =
+          toolNames.includes("code_comment") || toolNames.includes("approve_all_comments") || toolNames.includes("task_done")
+            ? "ocr"
+            : system.includes("You are the analyst")
+              ? "analyst"
+              : system.includes("You are the implementer")
+                ? "implementer"
+                : system.includes("You are the finding verifier")
+                  ? "verifier"
+                  : "criteria";
+        if (process.env.MORK_E2E_VERBOSE) console.log("fixture", station, toolNames.join(","));
         seen.push({ station, model: body.model, messages: body.messages });
         const turns = body.messages.filter((message) => message.role === "tool").length;
         const users = JSON.stringify(body.messages.filter((message) => message.role === "user"));
+        if (station === "ocr") {
+          if (toolNames.includes("approve_all_comments")) return ocrCompletion(body.model, "approve_all_comments", {});
+          if (
+            !JSON.stringify(body.messages).includes("Number(a)") &&
+            toolNames.includes("code_comment") &&
+            !body.messages.some((m) => m.role === "assistant" && JSON.stringify(m).includes('"name":"code_comment"'))
+          )
+            return ocrCompletion(body.model, "code_comment", {
+              comments: [
+                {
+                  path: "math.mjs",
+                  start_line: 1,
+                  end_line: 1,
+                  existing_code: "export const add = (a, b) => a + b;",
+                  content: "Strings are concatenated instead of added",
+                  category: "bug",
+                  severity: "high",
+                },
+              ],
+            });
+          return ocrCompletion(body.model, "task_done", {});
+        }
+        if (station === "criteria" && turns === 0)
+          return completion(body.model, {
+            name: "submit_result",
+            arguments: {
+              json: JSON.stringify({
+                criteria: [
+                  { id: "AC2", pass: true, evidence: [{ where: "README.md:1", quote: "add returns a numeric sum, including numeric strings." }] },
+                ],
+              }),
+            },
+          });
+        if (station === "criteria") return completion(body.model);
         if (station === "analyst") {
           if (turns === 0) return completion(body.model, { name: "bash", arguments: { command: "cat math.mjs" } });
           if (turns === 1)
@@ -102,7 +177,10 @@ integration(
                 json: JSON.stringify({
                   problem: "Addition subtracts",
                   plan: ["Correct the add implementation"],
-                  acceptance_criteria: [{ id: "AC1", text: "add(2,3) returns 5", testable: true }],
+                  acceptance_criteria: [
+                    { id: "AC1", text: "add(2,3) returns 5", testable: true },
+                    { id: "AC2", text: "README documents numeric strings", testable: false },
+                  ],
                   hidden_tests: [
                     {
                       file: "addition.test.mjs",
@@ -152,28 +230,29 @@ integration(
               },
             });
         } else {
-          if (turns === 0) return completion(body.model, { name: "bash", arguments: { command: `git diff ${original}...HEAD` } });
-          if (turns === 1)
+          if (turns === 0) return completion(body.model, { name: "read", arguments: { path: "/etc/passwd" } });
+          if (turns === 1) return completion(body.model, { name: "read", arguments: { path: "math.mjs" } });
+          if (turns === 2)
             return completion(body.model, {
               name: "submit_result",
               arguments: {
                 json: JSON.stringify({
-                  summary: "Addition is corrected",
-                  files_reviewed: ["math.mjs"],
-                  criteria: [],
-                  // The first green gate gets one proven defect; the review after the repair is clean.
-                  findings: JSON.stringify(body.messages).includes("Number(a)")
-                    ? []
-                    : [
-                        {
-                          severity: "P1",
-                          category: "bug",
-                          where: "math.mjs:1",
-                          quote: "export const add = (a, b) => a + b;",
-                          what: "Strings are concatenated instead of added",
-                        },
-                      ],
-                  read_first: ["math.mjs:1"],
+                  findings: [
+                    {
+                      id: "F1",
+                      verification: {
+                        status: "confirmed",
+                        reason: "The changed operator concatenates string operands; baseline subtraction coerces them to numbers",
+                        expected: "Numeric strings produce a numeric sum",
+                        scenario: "add('2','3') returns '23' instead of 5",
+                        evidence: [
+                          { revision: "base", path: "math.mjs", line: 1, quote: "export const add = (a, b) => a - b;" },
+                          { revision: "head", path: "math.mjs", line: 1, quote: "export const add = (a, b) => a + b;" },
+                        ],
+                      },
+                    },
+                    { id: "F2", verification: { status: "duplicate", of: "F1", reason: "Same concatenation root cause" } },
+                  ],
                 }),
               },
             });
@@ -190,6 +269,7 @@ integration(
         runtime,
         [cli, ...connection, "--repo", source, "--issue", issueFile, "--output", task, "--definition", definitionFile],
         {
+          cwd: directory,
           env: { ...process.env, MORK_LOCAL_API_KEY: "local-fixture-key", AWS_EC2_METADATA_DISABLED: "true" },
           stdio: ["ignore", "pipe", "pipe"],
         },
@@ -219,6 +299,7 @@ integration(
         interrupted.kill("SIGKILL");
       }
       const started = await execAsync(runtime, [cli, ...connection, "--resume", task], {
+        cwd: directory,
         env: { ...process.env, MORK_LOCAL_API_KEY: "local-fixture-key", AWS_EC2_METADATA_DISABLED: "true" },
         timeoutMs: 90_000,
       });
@@ -229,10 +310,13 @@ integration(
       expect(await store.json(keys.gateBefore("tasks/local"))).toMatchObject({ hidden: [{ passed: false }] });
       expect(await store.json(keys.gate("tasks/local", 1))).toMatchObject({ hidden: [{ passed: false }] });
       expect(await store.json(keys.gate("tasks/local", 2))).toMatchObject({ hidden: [{ passed: true }] });
-      expect(await store.json(keys.review("tasks/local", 2))).toMatchObject({ unreviewed_files: [], findings: [{ located: { line: 1 } }] });
+      expect(await store.json(keys.review("tasks/local", 2))).toMatchObject({
+        unreviewed_files: [],
+        findings: [{ located: { line: 1 }, verification: { status: "confirmed" } }, { verification: { status: "duplicate", of: "F1" } }],
+      });
       expect(await store.text(keys.feedback("tasks/local", 3))).toContain("Strings are concatenated instead of added");
       expect(await store.json(keys.gate("tasks/local", 3))).toMatchObject({ head_sha: state.result.head_sha, hidden: [{ passed: true }] });
-      expect(await store.json(keys.review("tasks/local", 3))).toMatchObject({ summary: "Addition is corrected", findings: [] });
+      expect(await store.json(keys.review("tasks/local", 3))).toMatchObject({ findings: [] });
       expect(mustExec("git", [...SAFE_GIT, "--git-dir", join(task, "remote.git"), "rev-parse", state.result.branch]).trim()).toBe(
         state.result.head_sha,
       );
@@ -240,7 +324,8 @@ integration(
       for (const [station, kind] of [
         ["analyst", "plan"],
         ["implementer", "build"],
-        ["reviewer", "check"],
+        ["verifier", "check"],
+        ["criteria", "check"],
       ]) {
         const requests = seen.filter((request) => request.station === station);
         expect(requests.length).toBeGreaterThan(0);
@@ -248,7 +333,9 @@ integration(
         expect(requests.every((request) => JSON.stringify(request.messages).includes(`CONFIGURED_${kind?.toUpperCase()}_PROMPT`))).toBe(true);
       }
       expect(((await store.json("local-run.json")) as { brief: { last_attempt: number } }).brief.last_attempt).toBe(3);
-      expect(seen.some((request) => request.station === "reviewer")).toBe(true);
+      expect(seen.some((request) => request.station === "ocr")).toBe(true);
+      expect(JSON.stringify(seen.filter((request) => request.station === "verifier"))).toContain("Read only the supplied repository checkouts");
+      expect(seen.some((request) => request.station === "reviewer")).toBe(false);
       expect(JSON.stringify(seen.filter((request) => request.station === "implementer"))).not.toContain("HIDDEN_FIXTURE_ASSERTION");
       expect(JSON.stringify(seen.filter((request) => request.station === "implementer"))).toContain("verify: PASSED");
       expect(JSON.stringify(seen.filter((request) => request.station === "implementer"))).not.toContain("verify: FAILED");
