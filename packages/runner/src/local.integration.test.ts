@@ -6,10 +6,13 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { keys } from "@mork/contracts";
+import { Brief, keys } from "@mork/contracts";
 import { DEFAULT_DEVELOPMENT } from "@mork/contracts/development";
+import { DecisionPanel } from "@mork/decision";
+import { noLogger } from "@mork/sources";
 import { LocalStore } from "@mork/store/local";
 import { execAsync, mustExec, SAFE_GIT } from "./git.ts";
+import { type PhaseContext, plan } from "./phases.ts";
 
 const pi = process.env.MORK_LOCAL_E2E_PI;
 const integration = pi && process.getuid?.() !== 0 ? test : test.skip;
@@ -35,6 +38,86 @@ function completion(model: string, tool?: { name: string; arguments: unknown }):
     headers: { "content-type": "text/event-stream" },
   });
 }
+
+integration(
+  "real Pi produces a documentation plan on its first attempt without installing repository tools",
+  async () => {
+    const directory = mkdtempSync(join(tmpdir(), "mork-doc-plan-"));
+    const source = join(directory, "source");
+    mkdirSync(join(source, ".mork"), { recursive: true });
+    const git = (...args: string[]) =>
+      mustExec("git", [...SAFE_GIT, "-c", "user.name=fixture", "-c", "user.email=fixture@example.test", "-C", source, ...args]).trim();
+    git("init", "-q");
+    writeFileSync(join(source, "README.md"), "# Project\n");
+    writeFileSync(
+      join(source, ".mork", "config.toml"),
+      'setup = "exit 42"\ntest = "true"\n[hidden_tests]\ndir = "hidden"\ncommand = "node {file}"\nfile_suffix = ".mjs"\n',
+    );
+    git("add", ".");
+    git("commit", "-qm", "base");
+    const base = git("rev-parse", "HEAD");
+    const output = {
+      problem: "Document the Slack channel",
+      plan: ["Add the channel to README.md"],
+      acceptance_criteria: [{ id: "AC1", text: "README names the channel", testable: false }],
+      hidden_tests: [],
+      risks: [],
+      security_sensitive: false,
+    };
+    let submissions = 0;
+    const server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      async fetch(request) {
+        const body = (await request.json()) as { model: string; messages: Message[] };
+        if (body.messages.some((m) => m.role === "tool")) return completion(body.model);
+        submissions++;
+        return completion(body.model, { name: "submit_result", arguments: { json: JSON.stringify(output) } });
+      },
+    });
+    try {
+      const store = new LocalStore(join(directory, "outputs"));
+      const brief = Brief.parse({
+        attempt: 1,
+        prefix: "tasks/docs",
+        repo: { full_name: "fixture/docs", default_branch: "main", base_sha: base },
+        branch: "mork/docs",
+      });
+      await store.putJson(keys.issue(brief.prefix), { ref: "DOC-1", title: "Document the channel", body: "Add the Slack channel to README.md" });
+      const ctx: PhaseContext = {
+        brief,
+        step: DEFAULT_DEVELOPMENT.steps[0],
+        store,
+        localRepo: source,
+        env: {
+          llmBaseUrl: `http://127.0.0.1:${server.port}/v1`,
+          trustedLocal: { apiKey: "local-fixture-key" },
+          piBin: pi as string,
+          extensionsDir: "/opt/mork/packages/runner/extensions",
+          workDir: join(directory, "work"),
+          agentHome: join(directory, "home"),
+        },
+        sandbox: { env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: directory, CI: "1" } },
+        githubToken: async () => "fixture",
+        model: "fixture",
+        panel: new DecisionPanel([]),
+        superviseEveryMs: 300000,
+        reporter: { report: async () => undefined },
+        secrets: () => [],
+        logger: noLogger,
+      };
+      expect(await plan(ctx)).toMatchObject({ ok: true });
+      expect(submissions).toBe(1);
+      expect(await store.json(keys.hidden(brief.prefix))).toEqual([]);
+      expect(await store.json(keys.plan(brief.prefix))).toMatchObject(output);
+      expect(await store.json(keys.gateBefore(brief.prefix))).toEqual({ mode: "before", hidden: [] });
+    } finally {
+      server.stop(true);
+      rmSync(directory, { recursive: true, force: true });
+    }
+  },
+  30000,
+);
 
 integration(
   "real Pi resumes after SIGTERM, plans hidden tests, retries a red gate, repairs an OCR finding after verification and passes Check without AWS",

@@ -42,7 +42,7 @@ ${criteria}
 - The verify tool runs all of these for you.
 - Your branch: \`${branch}\`. Push it with \`git push origin ${branch}\`.
 ${feedback ? `\n## Your previous attempt was sent back\n\n${feedback}\n\nFix the problems on the current branch. Your earlier commits are already on it.\n` : ""}
-Implement it, commit, and push your branch.`;
+Use a Conventional Commit subject with a scope, e.g. \`docs(readme): describe the channel\`, at most 72 characters. Follow stricter repository conventions when present. Implement it, commit, and push your branch.`;
 }
 
 export function criteriaMessage(issue: Issue, plan: Plan, base: string): string {

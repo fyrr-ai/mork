@@ -76,13 +76,32 @@ test("failed renewal rejects instead of using a stale token, then permits a fres
   expect(f.calls()).toBe(3);
 });
 
+test("a temporary GitHub server error is retried without exposing credentials", async () => {
+  let calls = 0;
+  const request: typeof fetch = async () => {
+    calls++;
+    if (calls === 1) return new Response(pem, { status: 500 });
+    return Response.json({ token: "recovered-token", expires_at: new Date(Date.now() + 60 * 60_000).toISOString() }, { status: 201 });
+  };
+  const auth = new GitHubAuth({ GITHUB_APP: app }, { request });
+  expect(await auth.token("example-org/mork")).toBe("recovered-token");
+  expect(calls).toBe(2);
+  expect(await auth.token("example-org/mork")).toBe("recovered-token");
+  expect(calls).toBe(2);
+});
+
 test("invalid configuration and echoed credential responses never appear in errors", async () => {
   expect(() => new GitHubAuth({ GITHUB_APP: `bad-${pem}` })).toThrow("GITHUB_APP must contain valid");
   expect(() => new GitHubAuth({ GITHUB_APP: app, GITHUB_TOKEN: "static" })).toThrow("not both");
   expect(() => new GitHubAuth({ GITHUB_TOKEN: "revoked" })).toThrow("required");
-  const request: typeof fetch = async () => new Response(pem, { status: 500 });
+  let failedCalls = 0;
+  const request: typeof fetch = async () => {
+    failedCalls++;
+    return new Response(pem, { status: 500 });
+  };
   const auth = new GitHubAuth({ GITHUB_APP: app }, { request });
   await expect(auth.token("example-org/mork")).rejects.toThrow("GitHub App token request failed (500)");
+  expect(failedCalls).toBe(3);
   await expect(auth.token("https://github.com/example-org/mork")).rejects.toThrow("owner/repo");
   await expect(githubAuthFromEnv({ GITHUB_APP_SECRET_ID: "app", GITHUB_TOKEN_SECRET_ID: "token" })).rejects.toThrow("not both");
 });

@@ -93,12 +93,15 @@ The old module-level `phase_seconds`, `spot_attempts`, `answer_seconds` and
 ## Routing
 
 Slack acknowledges a signed event after enqueueing an asynchronous invocation of
-the same Lambda. The worker asks **Jev only** to select a workflow, including
-messages that explicitly name one. Jev receives the request, workflow
-descriptions and the channel's allowed options. `default_workflow` is a hint to
-Jev; it never acts as a fallback when routing fails.
+the same Lambda. A channel with one allowed workflow selects it directly;
+Start still triages the task and resolves its Jira issue. With multiple allowed
+workflows, the worker asks Jev to select one, including messages that explicitly
+name one. Jev receives the request, workflow descriptions and the channel's
+allowed options. `default_workflow` is a hint to Jev; it never acts as a fallback
+when routing fails.
 
-Below `routing_confidence`, or when Jev chooses `_clarify`, the worker asks the
+For channels with multiple workflows, below `routing_confidence` or when Jev
+chooses `_clarify`, the worker asks the
 requester in the original thread. Jev evaluates their reply together with the
 original request. No workflow starts until there is an allowed, confident choice.
 An unavailable or invalid Jev response reports routing failure and starts nothing.

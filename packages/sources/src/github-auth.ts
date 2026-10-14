@@ -70,20 +70,27 @@ export class GitHubAuth {
     const payload = Buffer.from(JSON.stringify({ iat: now - 60, exp: now + 9 * 60, iss: credential.appId })).toString("base64url");
     const message = `${header}.${payload}`;
     const jwt = `${message}.${sign("RSA-SHA256", Buffer.from(message), credential.key).toString("base64url")}`;
-    const response = await this.#request(`https://api.github.com/app/installations/${credential.installationId}/access_tokens`, {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${jwt}`,
-        accept: "application/vnd.github+json",
-        "content-type": "application/json",
-        "x-github-api-version": "2022-11-28",
-        "user-agent": "mork",
-      },
-      body: JSON.stringify({ repositories: [repo.split("/")[1]] }),
-      signal: AbortSignal.timeout(15_000),
-    }).catch(() => {
-      throw new Error("GitHub App token request failed");
-    });
+    let response: Response;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        response = await this.#request(`https://api.github.com/app/installations/${credential.installationId}/access_tokens`, {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${jwt}`,
+            accept: "application/vnd.github+json",
+            "content-type": "application/json",
+            "x-github-api-version": "2022-11-28",
+            "user-agent": "mork",
+          },
+          body: JSON.stringify({ repositories: [repo.split("/")[1]] }),
+          signal: AbortSignal.timeout(15_000),
+        });
+        if (response.status < 500 || attempt === 2) break;
+      } catch {
+        if (attempt === 2) throw new Error("GitHub App token request failed");
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1000 * (attempt + 1)));
+    }
     // Never include response bodies or signed JWTs in failures: a proxy may echo credentials.
     if (!response.ok) throw new Error(`GitHub App token request failed (${response.status})`);
     let issued: z.infer<typeof InstallationToken>;

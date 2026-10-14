@@ -1,7 +1,7 @@
 # Architecture
 
 Mork also supports [workflows defined in Terraform](workflows.md). A shared Slack
-intake queues each mention, then Jev selects an allowed workflow. Each configured
+intake queues each mention, then selects the sole allowed workflow or asks Jev to choose between several. Each configured
 workflow has its own state machine and shares the runner infrastructure. The
 sections below describe the development profile and its draft-PR behavior.
 

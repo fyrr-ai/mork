@@ -2,6 +2,10 @@
 
 ## 0.1.0
 
+- Give PR titles a Conventional Commit scope and reserve space for the tracker reference within 100 characters.
+- Accept document-evidence plans without hidden tests and skip unnecessary before-gate setup; repository checks still run after Build.
+- Select the sole allowed Slack workflow without a routing question; retry transient GitHub App token failures up to three requests.
+
 Prepared for release; not published.
 
 - Use the pushed commit's subject as the PR title and append its tracking reference, preserving repository title conventions during normal delivery and handover.

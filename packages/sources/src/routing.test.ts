@@ -93,6 +93,21 @@ afterEach(() => {
   rmSync(directory, { recursive: true, force: true });
 });
 
+test("a channel with only development starts the Jira request without a routing question or Jev call", async () => {
+  failDecision = true;
+  const single = SlackConfig.parse({
+    channels: { CDEMO: { repo: "example-org/example-app", jira_project: "PROJ" } },
+    workflows: { development: config.workflows.development },
+  });
+  await processSlackMention({ ...request, ask: "implement PROJ-1315" }, { ...deps, config: single, panel: new DecisionPanel([]) });
+  expect(calls.some((call) => call.path === "/v1/systemone")).toBe(false);
+  expect(calls.some((call) => call.path === "/chat.postMessage" && call.body.text.includes("Which workflow"))).toBe(false);
+  const start = calls.find((call) => call.target.endsWith("StartExecution"));
+  assert(start);
+  expect(JSON.parse(start.body.input)).toMatchObject({ source: "slack", repo: "example-org/example-app", ask: "implement PROJ-1315", jira_project: "PROJ" });
+  expect(await store.json(taskKey(request.ref))).toMatchObject({ workflow: "development" });
+});
+
 test("even a named workflow goes through Jev; only channel workflows are offered", async () => {
   await processSlackMention(request, deps);
   const decision = calls.find((call) => call.path === "/v1/systemone");

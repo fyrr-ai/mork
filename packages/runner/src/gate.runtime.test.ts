@@ -68,6 +68,16 @@ test("the real gate fetches, sets up, runs checks and hidden tests against the b
   expect(result.hidden[0]?.passed).toBe(true);
   expect(gatePassed(result)).toBe(true);
 });
+test("a documentation gate runs the real repository checks without hidden tests", async () => {
+  const { job, work, head } = fixture("mkdir generated");
+  job.hidden_tests = [];
+  const result = await runGate(job, "", work, { env });
+  expect(result.head_sha).toBe(head);
+  expect(result.repo_tests?.exit_code).toBe(0);
+  expect(result.checks?.[0]?.exit_code).toBe(0);
+  expect(result.hidden).toEqual([]);
+  expect(gatePassed(result)).toBe(true);
+});
 test("setup cannot silently change the tracked tree under the recorded SHA", async () => {
   const { job, work } = fixture("printf tampered > value; mkdir generated");
   await expect(runGate(job, "", work, { env })).rejects.toThrow("changed the tested checkout: value");

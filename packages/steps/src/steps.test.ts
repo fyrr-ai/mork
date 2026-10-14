@@ -11,7 +11,7 @@ import { linkPr, MemoryStore as TimelineMemory } from "@mork/timeline";
 import { type FixTrigger, fixTrigger, MARKER, releasePr, savePr } from "./fix.ts";
 import { ask, checksTable, type Deps, decide, type FlowState, handover, handoverReason, start, startedBy } from "./flow.ts";
 import { prOutcome, signatureValid } from "./intake.ts";
-import { githubReporter } from "./origin.ts";
+import { githubReporter, prLink } from "./origin.ts";
 import { recommend } from "./recommend.ts";
 
 const plan: AnalystOutput = {
@@ -439,7 +439,7 @@ describe("slack origin", () => {
       },
     } as unknown as Deps["github"];
     await decide(deps, state);
-    expect(created?.title).toBe("feat: add add() (PROJ-7)");
+    expect(created?.title).toBe("feat(mork): add add() (PROJ-7)");
     expect(created?.body).toContain("Jira: https://jira/PROJ-7");
     expect(events.map((e) => e.kind)).toEqual(["pr"]);
   });
@@ -882,4 +882,14 @@ test("unresolved and incomplete reviews cannot become quick even with a confiden
     }),
   ).toBe("careful");
   expect(await rec({ panel: q, review: { ...review, incomplete: ["OCR partial"] } })).toBe("careful");
+});
+
+test("PR titles include a scope, preserve an existing tracker reference and fit the repository limit", () => {
+  const origin = baseState.task.origin;
+  expect(prLink(origin, "docs: document the channel").title).toBe("docs(mork): document the channel (#1)");
+  expect(prLink(origin, "docs(readme): document the channel (#1)").title).toBe("docs(readme): document the channel (#1)");
+  const long = prLink(origin, `docs: ${"long subject ".repeat(15)}`).title;
+  expect(long.length).toBeLessThanOrEqual(100);
+  expect(long.endsWith(" (#1)")).toBe(true);
+  expect(prLink(origin, "Document the channel").title).toBe("chore(mork): Document the channel (#1)");
 });

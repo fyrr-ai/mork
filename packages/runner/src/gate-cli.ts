@@ -37,10 +37,7 @@ const git = (...args: string[]) => mustExec("git", [...SAFE_GIT, "-C", source, .
 const base = git("rev-parse", "--verify", "--end-of-options", `${values.base}^{commit}`);
 const branch = values.mode === "after" ? (values.branch ?? git("symbolic-ref", "--short", "HEAD")) : undefined;
 const config = parseRepoConfig(mustExec("git", [...SAFE_GIT, "-C", source, "show", `${base}:.mork/config.toml`]));
-const hidden = z
-  .array(HiddenTest)
-  .min(1)
-  .parse(JSON.parse(readFileSync(values.hidden, "utf8")));
+const hidden = z.array(HiddenTest).parse(JSON.parse(readFileSync(values.hidden, "utf8")));
 const work = mkdtempSync(join(tmpdir(), "mork-local-gate-"));
 try {
   const report = await runGate(
@@ -57,10 +54,7 @@ try {
     work,
     { env: { PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin", HOME: work, CI: "1" } },
   );
-  const passed =
-    values.mode === "after"
-      ? gatePassed(report)
-      : (report.setup?.exit_code ?? 0) === 0 && report.hidden.length > 0 && report.hidden.every((test) => !test.passed);
+  const passed = values.mode === "after" ? gatePassed(report) : (report.setup?.exit_code ?? 0) === 0 && report.hidden.every((test) => !test.passed);
   console.log(JSON.stringify({ passed, gate: report }, null, 2));
   process.exitCode = passed ? 0 : 1;
 } finally {

@@ -6,8 +6,6 @@ export function checkPlan(plan: PublicPlan, config: RepoConfig): string | undefi
   const covered = new Set(plan.hidden_tests.flatMap((t) => t.criteria));
   const uncovered = plan.acceptance_criteria.filter((c) => c.testable && !covered.has(c.id)).map((c) => c.id);
   if (uncovered.length) return `Testable criteria without a hidden test: ${uncovered.join(", ")}. Write one for each.`;
-  if (!plan.acceptance_criteria.some((c) => c.testable))
-    return "No criterion is testable. At least the core behaviour must be decided by a hidden test.";
   const badNames = plan.hidden_tests
     .filter((t) => !t.file.endsWith(config.hidden_tests.file_suffix) || t.file.includes("/") || t.file.startsWith("."))
     .map((t) => t.file);
@@ -28,7 +26,6 @@ export function gateFailures(gate: GateReport): string[] {
   for (const check of failedChecks(gate)) lines.push(`check failed: \`${check.command}\``);
   for (const hidden of gate.hidden.filter((h) => !h.passed)) lines.push(`${hidden.criteria.join(", ")} not met (${hidden.file})`);
   for (const violation of gate.diff_policy?.violations ?? []) lines.push(`policy: ${violation}`);
-  if (!gate.hidden.length) lines.push("no hidden tests ran");
   return lines;
 }
 
@@ -37,7 +34,6 @@ export function gatePassed(gate: GateReport): boolean {
     (gate.setup?.exit_code ?? 0) === 0 &&
     gate.repo_tests?.exit_code === 0 &&
     failedChecks(gate).length === 0 &&
-    gate.hidden.length > 0 &&
     gate.hidden.every((h) => h.passed) &&
     (gate.diff_policy?.violations.length ?? 0) === 0
   );
