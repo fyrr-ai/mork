@@ -4,6 +4,7 @@
 
 Prepared for release; not published.
 
+- Use the pushed commit's subject as the PR title and append its tracking reference, preserving repository title conventions during normal delivery and handover.
 - Accept OCR's skipped result without claiming review coverage. Keep small plans brief and check documentation criteria through evidence instead of hidden text snapshots. Restore the runner's awk alias.
 - Retain glibc compatibility libraries and ship OpenSSL and envsubst in the runner so repository tools and offline checks can run.
 

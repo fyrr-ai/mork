@@ -159,6 +159,7 @@ const github = {
   repo: async () => ({ default_branch: "main" }),
   file: async () => "[commands]",
   branchSha: async (_repo: string, branch: string) => (branch === "main" ? "a".repeat(40) : (headOf.get(branch) ?? "b".repeat(40))),
+  commitTitle: async () => "feat: add add()",
   issue: async () => ({ number: 1, title: "Make it better", body: "pls" }),
   pull: async (_repo: string, n: number) => ({
     number: n,
@@ -417,7 +418,7 @@ describe("slack origin", () => {
     });
     expect(calls).toEqual([]);
   });
-  test("its PR carries the Jira key; Decide only reports the PR", async () => {
+  test("its PR preserves the commit subject before the Jira key; Decide only reports the PR", async () => {
     events.length = 0;
     calls.length = 0;
     const state: FlowState = {
@@ -438,7 +439,7 @@ describe("slack origin", () => {
       },
     } as unknown as Deps["github"];
     await decide(deps, state);
-    expect(created?.title).toBe("PROJ-7: Add add()");
+    expect(created?.title).toBe("feat: add add() (PROJ-7)");
     expect(created?.body).toContain("Jira: https://jira/PROJ-7");
     expect(events.map((e) => e.kind)).toEqual(["pr"]);
   });
@@ -549,6 +550,41 @@ describe("handover", () => {
     await handover(makeDeps(await checkedStore(true)), { ...baseState, error: { Error: "States.Timeout", Cause: "" } });
     expect(calls).not.toContain("pr");
     headOf.clear();
+  });
+  test("a handover uses the pushed commit title without duplicating its Jira reference", async () => {
+    let title: string | undefined;
+    const deps = makeDeps(await checkedStore(true));
+    deps.github = {
+      ...github,
+      commitTitle: async (repo: string, sha: string) => {
+        expect(repo).toBe("o/r");
+        expect(sha).toBe("b".repeat(40));
+        return "docs(readme): link config (PROJ-7)";
+      },
+      createDraftPr: async (_repo: string, pr: { title: string }) => {
+        title = pr.title;
+        return { number: 8, html_url: "u" };
+      },
+    } as unknown as Deps["github"];
+    await handover(deps, {
+      ...baseState,
+      task: {
+        ...baseState.task,
+        origin: {
+          kind: "slack",
+          start: {
+            repo: "o/r",
+            source: "slack",
+            ref: { kind: "slack", channel: "C123", thread_ts: "1.2", user: "U1" },
+            ask: "add add()",
+            jira_project: "PROJ",
+          },
+          work: { key: "PROJ-7", url: "https://jira/PROJ-7", title: "Add add()", created: true },
+        },
+      },
+      error: { Error: "Handover", Cause: "OCR failed" },
+    });
+    expect(title).toBe("docs(readme): link config (PROJ-7)");
   });
   test("any other error is reported as unexpected", () => {
     expect(handoverReason({ ...baseState, error: { Error: "States.Timeout", Cause: "" } })).toContain("Unexpected error (States.Timeout)");

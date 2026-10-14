@@ -418,7 +418,7 @@ export async function decide(deps: Deps, state: FlowState): Promise<FlowState> {
     deps.log(task.id, "fix.end", { pr: fix.pr, round: fix.round, level: rec.level });
     return { ...state, next: "done", last: undefined, outcome: { level: rec.level, url: fix.url } };
   }
-  const link = prLink(task.origin, issue.title);
+  const link = prLink(task.origin, await github.commitTitle(task.repo, head));
   // A replayed Decide finds the PR its first run opened instead of failing on a duplicate.
   const pr =
     (await github.openPr(task.repo, brief.branch)) ??
@@ -498,8 +498,7 @@ async function handoverPr(deps: Deps, state: FlowState, reason: string): Promise
     throw error;
   });
   if (!head || head === brief.repo.base_sha) return undefined;
-  const issue = IssueDoc.parse(await deps.store.json(keys.issue(brief.prefix)));
-  const link = prLink(task.origin, issue.title);
+  const link = prLink(task.origin, await deps.github.commitTitle(task.repo, head));
   const transcripts = transcriptsUrl(deps.store.bucket, brief.prefix);
   const pr =
     (await deps.github.openPr(task.repo, brief.branch)) ??

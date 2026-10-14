@@ -31,9 +31,12 @@ export function naming(repo: string, origin: Origin, short: string): Naming {
 
 /** PR title and the line that links the PR back to its tracker. */
 export function prLink(origin: Origin, title: string): { title: string; footer: string } {
-  if (origin.kind === "github") return { title: `${title} (#${origin.issue})`, footer: `Closes #${origin.issue}` };
-  const key = origin.work?.key ?? "";
-  return { title: `${key}: ${title}`, footer: `Jira: ${origin.work?.url ?? key}` };
+  const reference = origin.kind === "github" ? `#${origin.issue}` : origin.work?.key;
+  const suffix = reference ? ` (${reference})` : "";
+  return {
+    title: suffix && !title.endsWith(suffix) ? `${title}${suffix}` : title,
+    footer: origin.kind === "github" ? `Closes #${origin.issue}` : `Jira: ${origin.work?.url ?? reference ?? ""}`,
+  };
 }
 
 export const LABELS = {
