@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import { OcrResult, ocrReview, parseOcrResult } from "./ocr.ts";
 
 const result = OcrResult.parse({
@@ -41,4 +42,15 @@ test("missing quotation cannot turn a reported line into checked evidence", () =
 test("cached OCR results are rejected if the gate-tested range changes", () => {
   expect(parseOcrResult(result, "a".repeat(40), "b".repeat(40))).toEqual(result);
   expect(() => parseOcrResult(result, "a".repeat(40), "c".repeat(40))).toThrow("different commits");
+});
+
+test("a skipped OCR result is accepted without claiming review coverage", () => {
+  const raw = JSON.parse(readFileSync(new URL("./ocr-skipped.fixture.json", import.meta.url), "utf8"));
+  const skipped = parseOcrResult(raw, "a".repeat(40), "b".repeat(40));
+  const review = ocrReview(skipped, [{ path: "README.md", added: 1, removed: 1 }]);
+  expect(skipped.status).toBe("skipped");
+  expect(review.findings).toEqual([]);
+  expect(review.files_reviewed).toEqual([]);
+  expect(review.unreviewed_files).toEqual(["README.md"]);
+  expect(review.incomplete).toEqual(["Review skipped: no items were selected."]);
 });

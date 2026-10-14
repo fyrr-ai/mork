@@ -16,7 +16,7 @@ export function analystMessage(issue: Issue, config: RepoConfig, feedback?: stri
 - Hidden tests are copied into \`${config.hidden_tests.dir}/\` (relative to the repository root) and run one file at a time from the repository root with: \`${config.hidden_tests.command}\` where {file} is the path of the test file.
 - Hidden test file names must end with \`${config.hidden_tests.file_suffix}\`. Import project code with paths relative to \`${config.hidden_tests.dir}/\`.
 ${feedback ? `\n## Feedback on your previous attempt\n\n${feedback}\n` : ""}
-Plan the work and write the hidden tests.`;
+Return a plan proportional to the requested repository change and its acceptance criteria. Include hidden tests only for testable runtime behaviour. Documentation-only changes need no hidden tests; their criteria are checked through evidence in Check. Do not include Mork's own PR creation or reporting as acceptance criteria; those happen after Check.`;
 }
 
 export function implementerMessage(issue: Issue, plan: Plan, config: RepoConfig, branch: string, feedback?: string): string {
