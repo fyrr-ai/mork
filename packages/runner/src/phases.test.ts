@@ -5,9 +5,8 @@ import { join } from "node:path";
 import { Brief, keys } from "@mork/contracts";
 import { DEFAULT_DEVELOPMENT } from "@mork/contracts/development";
 import { DecisionPanel } from "@mork/decision";
-import type { ReportEvent } from "@mork/sources";
+import { noLogger, type ReportEvent } from "@mork/sources";
 import { LocalStore } from "@mork/store/local";
-import { noLogger } from "./otlp.ts";
 import { check, type PhaseContext } from "./phases.ts";
 
 const directories: string[] = [];

@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, test } from "bun:test";
+import { type Logger, OtlpLogger } from "@mork/sources";
 import { logPiEvent } from "./llm.ts";
-import { type Logger, OtlpLogger } from "./otlp.ts";
 
 const bodies: unknown[] = [];
 const server = Bun.serve({

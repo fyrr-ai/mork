@@ -11,9 +11,9 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { dirname, join } from "node:path";
 import { type LlmStation, type RepoRef, StationOutput } from "@mork/contracts";
 import type { DecisionPanel } from "@mork/decision";
+import type { Logger } from "@mork/sources";
 import { killUser, readAgentFile } from "./agentfs.ts";
 import { exec, execAsync, mustExec } from "./git.ts";
-import type { Logger } from "./otlp.ts";
 import { PiRpc } from "./rpc.ts";
 import type { SessionLog } from "./session.ts";
 import { onShutdown } from "./shutdown.ts";

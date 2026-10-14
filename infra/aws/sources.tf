@@ -10,6 +10,7 @@ locals {
 }
 
 resource "aws_cloudwatch_log_group" "slack" {
+  count             = local.cloudwatch_logs ? 1 : 0
   tags              = local.tags
   name              = "/aws/lambda/${local.name}_slack"
   retention_in_days = var.log_retention_days
@@ -22,15 +23,19 @@ resource "aws_iam_role" "slack" {
 }
 
 resource "aws_iam_role_policy_attachment" "slack_logs" {
+  count      = local.cloudwatch_logs ? 1 : 0
   role       = aws_iam_role.slack.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
 data "aws_iam_policy_document" "slack" {
-  statement {
-    sid       = "RetainFailedSlackRequests"
-    actions   = ["sqs:SendMessage"]
-    resources = [aws_sqs_queue.slack_failures.arn]
+  dynamic "statement" {
+    for_each = local.alarms ? [1] : []
+    content {
+      sid       = "RetainFailedSlackRequests"
+      actions   = ["sqs:SendMessage"]
+      resources = [aws_sqs_queue.slack_failures[0].arn]
+    }
   }
   statement {
     sid       = "EnqueueSlackWorker"
@@ -144,7 +149,7 @@ resource "aws_lambda_function" "slack" {
       JIRA_BASE_URL                  = var.jira_base_url
       JIRA_EMAIL                     = var.jira_email
       }, contains(keys(data.aws_secretsmanager_secret.decision), "jev") ? { JEV_API_SECRET_ID = data.aws_secretsmanager_secret.decision["jev"].arn } : {},
-    { for key, value in local.decision_settings : key => value if contains(["TYPESAFE_BASE_URL", "TYPESAFE_MODEL"], key) })
+    { for key, value in local.decision_settings : key => value if contains(["TYPESAFE_BASE_URL", "TYPESAFE_MODEL"], key) }, local.otlp_env)
   }
 
   lifecycle {
@@ -154,15 +159,25 @@ resource "aws_lambda_function" "slack" {
     }
   }
 
-  depends_on = [aws_cloudwatch_log_group.slack]
+  dynamic "vpc_config" {
+    for_each = local.lambda_in_vpc ? [1] : []
+    content {
+      subnet_ids         = var.vpc_private_subnet_ids
+      security_group_ids = [aws_security_group.stations.id]
+    }
+  }
+  depends_on = [aws_cloudwatch_log_group.slack, aws_iam_role_policy_attachment.lambda_vpc]
 }
 
 resource "aws_lambda_function_event_invoke_config" "slack" {
   function_name                = aws_lambda_function.slack.function_name
   maximum_event_age_in_seconds = 3600
   maximum_retry_attempts       = 2
-  destination_config {
-    on_failure { destination = aws_sqs_queue.slack_failures.arn }
+  dynamic "destination_config" {
+    for_each = local.alarms ? [1] : []
+    content {
+      on_failure { destination = aws_sqs_queue.slack_failures[0].arn }
+    }
   }
   depends_on = [aws_iam_role_policy.slack]
 }

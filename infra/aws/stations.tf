@@ -3,9 +3,25 @@
 # and the brief as overrides.
 
 resource "aws_cloudwatch_log_group" "stations" {
+  count             = local.cloudwatch_logs ? 1 : 0
   tags              = local.tags
   name              = "/ecs/${local.name}/stations"
   retention_in_days = var.log_retention_days
+}
+
+# Container output goes to CloudWatch with log_destination cloudwatch; with otlp the runner's
+# live log and the egress audit go over OTLP and the containers keep no other log.
+locals {
+  station_logs = { for stream in flatten([for phase in ["plan", "build", "check"] : [phase, "${phase}-egress"]]) : stream => !local.cloudwatch_logs ? {} : {
+    logConfiguration = {
+      logDriver = "awslogs"
+      options = {
+        awslogs-group         = aws_cloudwatch_log_group.stations[0].name
+        awslogs-region        = data.aws_region.current.region
+        awslogs-stream-prefix = stream
+      }
+    }
+  } }
 }
 
 data "aws_iam_policy_document" "ecs_tasks_assume" {
@@ -174,7 +190,7 @@ resource "aws_ecs_task_definition" "phase" {
     name = "egress-ca"
   }
 
-  container_definitions = jsonencode([{
+  container_definitions = jsonencode([merge({
     name      = "station"
     image     = coalesce(try(local.development.runner_image, null), "${aws_ecr_repository.this["runner"].repository_url}@${lookup(var.image_digests, "runner", "sha256:missing")}")
     essential = true
@@ -205,15 +221,7 @@ resource "aws_ecs_task_definition" "phase" {
       # Every phase supervises its LLM station; the runner, not Pi, holds these keys.
       [for p, s in data.aws_secretsmanager_secret.decision : { name = local.decision_env[p], valueFrom = s.arn }],
     )
-    logConfiguration = {
-      logDriver = "awslogs"
-      options = {
-        awslogs-group         = aws_cloudwatch_log_group.stations.name
-        awslogs-region        = data.aws_region.current.region
-        awslogs-stream-prefix = each.key
-      }
-    }
-    }, {
+    }, local.station_logs[each.key]), merge({
     name      = "egress"
     image     = "${aws_ecr_repository.this["egress"].repository_url}@${lookup(var.image_digests, "egress", "sha256:missing")}"
     essential = true
@@ -222,7 +230,7 @@ resource "aws_ecs_task_definition" "phase" {
       { name = "MORK_EGRESS_ALLOW", value = join(",", local.development_steps[each.key].allowed_domains) },
       # "false" blocks hosts outside the allowlist; "true" only logs them.
       { name = "MORK_EGRESS_WARN", value = tostring(!var.egress_enforce) },
-    ], var.github_auth_mode == "app" && each.key == "build" ? [{ name = "GITHUB_TOKEN_FILE", value = "/mork-egress/github-token" }] : [])
+    ], var.github_auth_mode == "app" && each.key == "build" ? [{ name = "GITHUB_TOKEN_FILE", value = "/mork-egress/github-token" }] : [], local.egress_otlp_env)
     secrets = concat(
       [{ name = "LLM_API_KEY", valueFrom = data.aws_secretsmanager_secret.this["llm_api_key"].arn }],
       # Only Build injects GitHub authentication into the agent's proxied requests.
@@ -236,15 +244,7 @@ resource "aws_ecs_task_definition" "phase" {
       retries     = 6
       startPeriod = 5
     }
-    logConfiguration = {
-      logDriver = "awslogs"
-      options = {
-        awslogs-group         = aws_cloudwatch_log_group.stations.name
-        awslogs-region        = data.aws_region.current.region
-        awslogs-stream-prefix = "${each.key}-egress"
-      }
-    }
-  }])
+  }, local.station_logs["${each.key}-egress"])])
 }
 
 resource "aws_security_group" "stations" {

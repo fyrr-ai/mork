@@ -3,12 +3,11 @@
 // back with the task token.
 import { DEFAULT_DEVELOPMENT, DevelopmentStep } from "@mork/contracts/development";
 import { panelFromEnv } from "@mork/decision";
-import { githubAuthFromEnv, type Reporter, slackThreadReporterFromEnv } from "@mork/sources";
+import { githubAuthFromEnv, type Logger, noLogger, OtlpLogger, type Reporter, resourceAttributes, slackThreadReporterFromEnv } from "@mork/sources";
 import { Store } from "@mork/store";
 import { briefFromEnv, reportInterrupted, reportTo, requiredEnv } from "./callback.ts";
 import { withGitHubTokenFile } from "./github-auth.ts";
 import { caBundle, egressEnv } from "./llm.ts";
-import { type Logger, noLogger, OtlpLogger } from "./otlp.ts";
 import { build, check, type PhaseContext, plan } from "./phases.ts";
 import { onShutdown, runShutdown } from "./shutdown.ts";
 
@@ -55,11 +54,6 @@ await reportTo(token, async () => {
     [...auth.secrets(), env.JEV_API, env.OPENAI_API_KEY, env.SLACK_BOT_TOKEN].filter((v): v is string => typeof v === "string" && v.length > 0);
 
   const deployment = env.MORK_ENV ?? "dev";
-
-  function resourceAttributes(raw: string | undefined): Record<string, string> {
-    const pairs = (raw ?? "").split(",").map((pair) => pair.split("=", 2).map((part) => part.trim()));
-    return Object.fromEntries(pairs.filter((pair): pair is [string, string] => pair.length === 2 && pair[0] !== "" && pair[1] !== ""));
-  }
 
   logger = env.OTEL_EXPORTER_OTLP_ENDPOINT
     ? new OtlpLogger({

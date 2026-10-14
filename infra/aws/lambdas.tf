@@ -13,7 +13,7 @@ data "aws_iam_policy_document" "lambda_assume" {
 
 resource "aws_cloudwatch_log_group" "lambda" {
   tags              = local.tags
-  for_each          = toset(["steps", "intake"])
+  for_each          = local.cloudwatch_logs ? toset(["steps", "intake"]) : toset([])
   name              = "/aws/lambda/${local.name}_${each.key}"
   retention_in_days = var.log_retention_days
 }
@@ -26,9 +26,16 @@ resource "aws_iam_role" "lambda" {
 }
 
 resource "aws_iam_role_policy_attachment" "lambda_logs" {
-  for_each   = toset(["steps", "intake"])
+  for_each   = local.cloudwatch_logs ? toset(["steps", "intake"]) : toset([])
   role       = aws_iam_role.lambda[each.key].name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+# Network interfaces only: without AWSLambdaBasicExecutionRole a Lambda in the VPC cannot write CloudWatch logs.
+resource "aws_iam_role_policy_attachment" "lambda_vpc" {
+  for_each   = local.lambda_in_vpc ? toset(["steps", "intake", "slack"]) : toset([])
+  role       = each.key == "slack" ? aws_iam_role.slack.name : aws_iam_role.lambda[each.key].name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaENIManagementAccess"
 }
 
 data "aws_iam_policy_document" "steps" {
@@ -172,6 +179,7 @@ resource "aws_lambda_function" "steps" {
       "${local.github_env}_SECRET_ID" = data.aws_secretsmanager_secret.this[local.github_secret_key].arn
       LLM_API_KEY_SECRET_ID           = data.aws_secretsmanager_secret.this["llm_api_key"].arn
       }, var.grafana_url == null ? {} : { MORK_GRAFANA_URL = var.grafana_url, MORK_GRAFANA_LOKI_UID = var.grafana_loki_uid },
+      local.otlp_env,
       local.decision_settings,
     { for p, s in data.aws_secretsmanager_secret.decision : "${local.decision_env[p]}_SECRET_ID" => s.arn })
   }
@@ -184,7 +192,14 @@ resource "aws_lambda_function" "steps" {
     }
   }
 
-  depends_on = [aws_cloudwatch_log_group.lambda]
+  dynamic "vpc_config" {
+    for_each = local.lambda_in_vpc ? [1] : []
+    content {
+      subnet_ids         = var.vpc_private_subnet_ids
+      security_group_ids = [aws_security_group.stations.id]
+    }
+  }
+  depends_on = [aws_cloudwatch_log_group.lambda, aws_iam_role_policy_attachment.lambda_vpc]
 }
 
 resource "aws_lambda_function" "intake" {
@@ -202,13 +217,13 @@ resource "aws_lambda_function" "intake" {
   }
 
   environment {
-    variables = {
+    variables = merge({
       STATE_MACHINE_ARN               = aws_sfn_state_machine.this.arn
       MORK_TIMELINE_TABLE             = aws_dynamodb_table.timeline.name
       REPO_ALLOWLIST                  = join(",", var.repo_allowlist)
       "${local.github_env}_SECRET_ID" = data.aws_secretsmanager_secret.this[local.github_secret_key].arn
       WEBHOOK_SECRET_SECRET_ID        = data.aws_secretsmanager_secret.this["webhook_secret"].arn
-    }
+    }, local.otlp_env)
   }
 
   lifecycle {
@@ -218,7 +233,14 @@ resource "aws_lambda_function" "intake" {
     }
   }
 
-  depends_on = [aws_cloudwatch_log_group.lambda]
+  dynamic "vpc_config" {
+    for_each = local.lambda_in_vpc ? [1] : []
+    content {
+      subnet_ids         = var.vpc_private_subnet_ids
+      security_group_ids = [aws_security_group.stations.id]
+    }
+  }
+  depends_on = [aws_cloudwatch_log_group.lambda, aws_iam_role_policy_attachment.lambda_vpc]
 }
 
 # Public by design: GitHub cannot sign AWS requests. The function checks the

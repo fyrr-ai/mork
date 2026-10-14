@@ -29,6 +29,6 @@ output "slack_events_url" {
 }
 
 output "slack_failure_queue_url" {
-  description = "Failed asynchronous Slack invocation records, retained for 14 days for inspection and explicit replay."
-  value       = aws_sqs_queue.slack_failures.url
+  description = "Failed asynchronous Slack invocation records, retained for 14 days for inspection and explicit replay; null without alarm_actions."
+  value       = try(aws_sqs_queue.slack_failures[0].url, null)
 }

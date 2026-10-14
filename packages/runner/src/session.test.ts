@@ -2,8 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { lstatSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { redact } from "@mork/sources";
 import type { Store } from "@mork/store";
-import { redact, SessionLog } from "./session.ts";
+import { SessionLog } from "./session.ts";
 
 describe("session redaction", () => {
   test("every occurrence of every secret is replaced", () => {

@@ -3,7 +3,7 @@
 // PR events only feed the decision timeline with what the human did.
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { ExecutionAlreadyExists, SFNClient, StartExecutionCommand } from "@aws-sdk/client-sfn";
-import { type GitHubAuth, githubAuthFromEnv, loadSecrets } from "@mork/sources";
+import { eventLog, type GitHubAuth, githubAuthFromEnv, loadSecrets, logged } from "@mork/sources";
 import { type Outcome, prTask, recordOutcome, type TimelineStore } from "@mork/timeline";
 import { DynamoStore } from "@mork/timeline/dynamo";
 import { fixTrigger } from "./fix.ts";
@@ -30,7 +30,8 @@ export function signatureValid(secret: string, body: Buffer, header: string | un
   return presented.length === expected.length && timingSafeEqual(presented, expected);
 }
 
-const log = (kind: string, detail: Record<string, unknown>) => console.log(JSON.stringify({ ts: new Date().toISOString(), kind, detail }));
+const events = eventLog(process.env, "intake");
+const log = (kind: string, detail: Record<string, unknown>) => events.log(kind, { detail });
 
 type PrPayload = {
   action?: string;
@@ -53,7 +54,9 @@ export function prOutcome(event: string | undefined, payload: PrPayload): Outcom
 let timeline: TimelineStore | undefined;
 let githubAuth: GitHubAuth | undefined;
 
-export async function handler(event: UrlEvent): Promise<UrlResult> {
+export const handler = (event: UrlEvent): Promise<UrlResult> => logged(events, () => handle(event));
+
+async function handle(event: UrlEvent): Promise<UrlResult> {
   if (event.requestContext?.http?.path === "/health") return { statusCode: 200, body: "ok" };
   if (event.requestContext?.http?.method !== "POST") return { statusCode: 404 };
   await loadSecrets(process.env, ["WEBHOOK_SECRET"]);

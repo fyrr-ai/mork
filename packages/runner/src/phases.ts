@@ -30,14 +30,13 @@ import {
 } from "@mork/contracts";
 import type { DevelopmentStep } from "@mork/contracts/development";
 import type { DecisionPanel } from "@mork/decision";
-import type { Reporter } from "@mork/sources";
+import type { Logger, Reporter } from "@mork/sources";
 import type { Store } from "@mork/store";
 import { z } from "zod";
 import { killUser } from "./agentfs.ts";
 import { runGate, type Sandbox } from "./gate.ts";
 import { fetchRepo, mustExec, remoteHead, repoUrl, SAFE_GIT } from "./git.ts";
 import { type LlmJob, type LlmOutcome, type RunnerEnv, runLlmStation } from "./llm.ts";
-import type { Logger } from "./otlp.ts";
 import * as prompts from "./prompts.ts";
 import { changedFiles, checkReview, readAt, reviewRules } from "./review.ts";
 import { checkPlan, gateFailures, gateFeedback, gatePassed } from "./rules.ts";

@@ -15,6 +15,7 @@
 # reports, labels and stops whatever container still runs.
 
 resource "aws_cloudwatch_log_group" "sfn" {
+  count             = local.cloudwatch_logs ? 1 : 0
   tags              = local.tags
   name              = "/aws/vendedlogs/states/${local.name}"
   retention_in_days = var.log_retention_days
@@ -62,13 +63,16 @@ data "aws_iam_policy_document" "sfn" {
     actions   = ["lambda:InvokeFunction"]
     resources = [aws_lambda_function.steps.arn, "${aws_lambda_function.steps.arn}:*"]
   }
-  statement {
-    sid = "Logs"
-    actions = [
-      "logs:CreateLogDelivery", "logs:GetLogDelivery", "logs:UpdateLogDelivery", "logs:DeleteLogDelivery",
-      "logs:ListLogDeliveries", "logs:PutResourcePolicy", "logs:DescribeResourcePolicies", "logs:DescribeLogGroups",
-    ]
-    resources = ["*"]
+  dynamic "statement" {
+    for_each = local.cloudwatch_logs ? [1] : []
+    content {
+      sid = "Logs"
+      actions = [
+        "logs:CreateLogDelivery", "logs:GetLogDelivery", "logs:UpdateLogDelivery", "logs:DeleteLogDelivery",
+        "logs:ListLogDeliveries", "logs:PutResourcePolicy", "logs:DescribeResourcePolicies", "logs:DescribeLogGroups",
+      ]
+      resources = ["*"]
+    }
   }
 }
 
@@ -233,9 +237,13 @@ resource "aws_sfn_state_machine" "this" {
     }
   }
 
-  logging_configuration {
-    log_destination        = "${aws_cloudwatch_log_group.sfn.arn}:*"
-    include_execution_data = false
-    level                  = "ERROR"
+  # Without CloudWatch, failed executions are in their own execution history.
+  dynamic "logging_configuration" {
+    for_each = local.cloudwatch_logs ? [1] : []
+    content {
+      log_destination        = "${aws_cloudwatch_log_group.sfn[0].arn}:*"
+      include_execution_data = false
+      level                  = "ERROR"
+    }
   }
 }

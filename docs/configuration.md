@@ -26,7 +26,10 @@ Required: `vpc_id`, `vpc_cidr_block`, `vpc_private_subnet_ids`, `repo_allowlist`
 | `station_size` | 2048 CPU, 8192 MiB, 40 GiB | Fargate size of a phase container |
 | `supervise_seconds` | 300 | Longest time between two supervision questions to the decision model; signals ask earlier |
 | `egress_enforce` | `false` | Block instead of log requests outside the allowlist |
-| `otlp_endpoint`, `otlp_cidr_block` | `null` | Live log over OTLP/HTTP |
+| `otlp_endpoint`, `otlp_cidr_block` | `null` | OTLP/HTTP collector for the live log, Lambda events and the egress audit; with `otlp_cidr_block` the collector is inside your network and the Lambdas join the VPC to reach it |
+| `log_destination` | `cloudwatch` | `cloudwatch`: log groups for Lambdas, containers and Step Functions. `otlp`: logs only to `otlp_endpoint`, no log groups |
+| `log_retention_days` | 30 | CloudWatch log retention, with `log_destination = "cloudwatch"` |
+| `alarm_actions` | `[]` | SNS topics for Slack and workflow failure alarms; empty creates no alarms and no failure queue |
 | `otel_resource_attributes` | `""` | Extra attributes on the live log |
 | `grafana_url`, `grafana_loki_uid` | `null`, `loki` | Link to the live log in Grafana and its Loki data source |
 | `bucket_expiration_days` | 120 | Retention of task outputs and sessions |
