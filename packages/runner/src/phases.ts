@@ -232,15 +232,18 @@ async function planWith(ctx: PhaseContext, records: SupervisionRecord[]): Promis
       feedback = problem;
       continue;
     }
-    const report = await runGate(
-      { mode: "before", repo: brief.repo, config, hidden_tests: full.hidden_tests, allow_test_change: false, localRepo: ctx.localRepo },
-      await ctx.githubToken(),
-      join(ctx.env.workDir, `gate-before-${attempt}`),
-      ctx.sandbox,
-    );
-    killUser(ctx.sandbox.uid);
-    if (ctx.localRepo) mustExec("chmod", ["-R", "u+rwX", join(ctx.env.workDir, `gate-before-${attempt}`)]);
-    mustExec("rm", ["-rf", join(ctx.env.workDir, `gate-before-${attempt}`)]);
+    let report: GateReport = { mode: "before", hidden: [] };
+    if (full.hidden_tests.length) {
+      report = await runGate(
+        { mode: "before", repo: brief.repo, config, hidden_tests: full.hidden_tests, allow_test_change: false, localRepo: ctx.localRepo },
+        await ctx.githubToken(),
+        join(ctx.env.workDir, `gate-before-${attempt}`),
+        ctx.sandbox,
+      );
+      killUser(ctx.sandbox.uid);
+      if (ctx.localRepo) mustExec("chmod", ["-R", "u+rwX", join(ctx.env.workDir, `gate-before-${attempt}`)]);
+      mustExec("rm", ["-rf", join(ctx.env.workDir, `gate-before-${attempt}`)]);
+    }
     logGate(ctx.logger, report);
     await store.putJson(keys.gateBefore(brief.prefix), report);
     if (report.setup && report.setup.exit_code !== 0)
@@ -255,7 +258,7 @@ async function planWith(ctx: PhaseContext, records: SupervisionRecord[]): Promis
     await ctx.reporter.report({ kind: "plan", criteria: publicPlan.acceptance_criteria.length, hidden_tests: full.hidden_tests.length });
     return { ok: true, stats };
   }
-  throw new HandoverError(`The analyst did not produce a valid plan with hidden tests. Last problem: ${feedback}`);
+  throw new HandoverError(`The analyst did not produce a valid plan. Last problem: ${feedback}`);
 }
 
 /** Build: the implementer changes the code and pushes the work branch itself; nothing here sees hidden tests. */

@@ -2,6 +2,7 @@
 
 ## 0.1.0
 
+- Accept document-evidence plans without hidden tests and skip unnecessary before-gate setup; repository checks still run after Build.
 - Select the sole allowed Slack workflow without a routing question; retry transient GitHub App token failures up to three requests.
 
 Prepared for release; not published.

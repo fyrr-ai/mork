@@ -29,6 +29,11 @@ const gate: GateReport = {
 
 describe("plan checks", () => {
   test("accepts a covered plan", () => expect(checkPlan(plan, config)).toBeUndefined());
+  test("document evidence criteria need no hidden tests", () => {
+    expect(
+      checkPlan({ ...plan, acceptance_criteria: [{ id: "AC1", text: "README describes the channel", testable: false }], hidden_tests: [] }, config),
+    ).toBeUndefined();
+  });
   test("rejects uncovered testable criteria", () => {
     expect(checkPlan({ ...plan, hidden_tests: [] }, config)).toContain("AC1");
   });
@@ -42,7 +47,12 @@ describe("gate verdict", () => {
   test("a violation fails the gate", () => {
     expect(gatePassed({ ...gate, diff_policy: { ...policy, violations: ["modifies existing test"] } })).toBe(false);
   });
-  test("no hidden tests is not a pass", () => expect(gatePassed({ ...gate, hidden: [] })).toBe(false));
+  test("without hidden tests repository checks still decide the gate", () => {
+    const documentation = { ...gate, hidden: [] };
+    expect(gatePassed(documentation)).toBe(true);
+    expect(gateFailures(documentation)).toEqual([]);
+    expect(gatePassed({ ...documentation, repo_tests: { command: "npm test", exit_code: 1, output: "failed" } })).toBe(false);
+  });
 });
 
 describe("gate feedback", () => {
