@@ -249,7 +249,17 @@ integration(
             });
           return ocrCompletion(body.model, "task_done", {});
         }
-        if (station === "criteria" && turns === 0)
+        if (station === "criteria" && turns === 0) {
+          const baselineDir = /baseline checkout is at (\/[^\s"\\]+)\./.exec(users)?.[1];
+          if (!baselineDir) return new Response("Criteria checker was not given a baseline checkout", { status: 500 });
+          return completion(body.model, { name: "read", arguments: { path: `${baselineDir}/math.mjs` } });
+        }
+        if (station === "criteria" && turns === 1) {
+          if (!JSON.stringify(body.messages.filter((m) => m.role === "tool")).includes("a - b"))
+            return new Response("Criteria checker could not read immutable baseline", { status: 500 });
+          return completion(body.model, { name: "read", arguments: { path: "README.md" } });
+        }
+        if (station === "criteria" && turns === 2)
           return completion(body.model, {
             name: "submit_result",
             arguments: {

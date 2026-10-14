@@ -45,10 +45,11 @@ ${feedback ? `\n## Your previous attempt was sent back\n\n${feedback}\n\nFix the
 Use a Conventional Commit subject with a scope, e.g. \`docs(readme): describe the channel\`, at most 72 characters. Follow stricter repository conventions when present. Implement it, commit, and push your branch.`;
 }
 
-export function criteriaMessage(issue: Issue, plan: Plan, base: string): string {
+export function criteriaMessage(issue: Issue, plan: Plan, base: string, head: string, baselineDir: string): string {
   return `${issueBlock(issue)}
 
-Base commit: ${base}. Read only the files needed to find evidence for these acceptance criteria:
+Compare immutable base ${base} with tested head ${head}. The current checkout is at head. The read-only baseline checkout is at ${baselineDir}.
+Use read, grep, find and ls on these two checkouts. Shell and Git commands are unavailable; do not inspect .git internals to reconstruct the baseline. Read only the files needed to find evidence for these acceptance criteria:
 ${plan.acceptance_criteria
   .filter((c) => !c.testable)
   .map((c) => `- ${c.id}: ${c.text}`)

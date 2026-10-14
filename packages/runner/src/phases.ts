@@ -410,8 +410,9 @@ async function checkWith(ctx: PhaseContext, records: SupervisionRecord[]): Promi
   const evidenceDir = await checkout(ctx, "review-evidence", true);
   const read = { base: readAt(evidenceDir, brief.repo.base_sha), head: readAt(evidenceDir, built.head_sha) };
   review = locateFindings(review, read.head);
-  if (review.findings.length) {
-    const baselineDir = await checkout(ctx, "review-base", false);
+  const untestable = thePlan.acceptance_criteria.filter((criterion) => !criterion.testable);
+  const baselineDir = review.findings.length || untestable.length ? await checkout(ctx, "review-base", false) : undefined;
+  if (baselineDir && review.findings.length) {
     const verifierDir = await checkout(ctx, "verifier", true);
     mustExec("git", [...SAFE_GIT, "-C", verifierDir, "checkout", "-q", built.head_sha]);
     const outcome = await llm(
@@ -427,8 +428,7 @@ async function checkWith(ctx: PhaseContext, records: SupervisionRecord[]): Promi
     if (outcome.ok) review = verifyReview(review, VerificationOutput.parse(outcome.output), read);
     else review.incomplete.push(`Finding verifier failed: ${outcome.error ?? "no result"}`);
   }
-  const untestable = thePlan.acceptance_criteria.filter((criterion) => !criterion.testable);
-  if (untestable.length) {
+  if (baselineDir && untestable.length) {
     const criteriaDir = await checkout(ctx, "criteria", true);
     mustExec("git", [...SAFE_GIT, "-C", criteriaDir, "checkout", "-q", built.head_sha]);
     const outcome = await llm(
@@ -436,10 +436,10 @@ async function checkWith(ctx: PhaseContext, records: SupervisionRecord[]): Promi
       `check-${brief.attempt}-criteria`,
       "criteria",
       criteriaDir,
-      prompts.criteriaMessage(issue, thePlan, brief.repo.base_sha),
+      prompts.criteriaMessage(issue, thePlan, brief.repo.base_sha, built.head_sha, baselineDir),
       stats,
       records,
-      { title: issue.title, criteria: untestable.map((c) => c.id) },
+      { title: issue.title, criteria: untestable.map((c) => c.id), baselineDir },
     );
     if (outcome.ok) {
       const output = CriteriaOutput.parse(outcome.output);
