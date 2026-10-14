@@ -3,6 +3,7 @@
 // branch through the egress sidecar.
 
 import type { GitHubTokenSource } from "@mork/sources";
+import { z } from "zod";
 
 export class GitHubError extends Error {
   readonly status: number;
@@ -49,6 +50,11 @@ export class GitHub {
   async branchSha(full: string, branch: string): Promise<string> {
     const ref = await this.api<{ object: { sha: string } }>("GET", `/repos/${full}/git/ref/heads/${encodeURIComponent(branch)}`);
     return ref.object.sha;
+  }
+
+  async commitTitle(full: string, sha: string): Promise<string> {
+    const commit = z.object({ commit: z.object({ message: z.string() }) }).parse(await this.api<unknown>("GET", `/repos/${full}/commits/${sha}`));
+    return z.string().trim().min(1).parse(commit.commit.message.split(/\r?\n/, 1)[0]);
   }
 
   issue(full: string, number: number) {
