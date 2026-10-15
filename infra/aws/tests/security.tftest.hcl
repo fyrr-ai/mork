@@ -421,8 +421,8 @@ run "logs_to_otlp_without_cloudwatch" {
     otlp_cidr_block = "10.20.0.0/16"
   }
   assert {
-    condition     = length(aws_cloudwatch_event_rule.execution_status) == 1 && aws_cloudwatch_event_target.execution_status[0].arn == aws_lambda_function.steps.arn && aws_lambda_permission.execution_status[0].principal == "events.amazonaws.com" && aws_lambda_function.steps.environment[0].variables.MORK_ENV == var.environment
-    error_message = "OTLP dashboards must receive terminal execution events and the same environment as runner logs."
+    condition     = aws_lambda_function.steps.environment[0].variables.MORK_ENV == var.environment
+    error_message = "The steps Lambda must use the same environment as runner logs."
   }
   assert {
     condition     = local.definition.States.Ask.Next == "MarkResumed" && local.definition.States.MarkResumed.ResultPath == "$.brief.run.resume" && local.definition.States.Start.Parameters.Payload["started_at.$"] == "$$.Execution.StartTime" && contains([for env in local.definition.States.Plan.Parameters.Overrides.ContainerOverrides[0].Environment : env.Name], "MORK_PHASE_STARTED_AT")

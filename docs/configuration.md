@@ -170,25 +170,22 @@ the ECS container task ID, also attached to live logs as `mork.step`. This keeps
 Spot retries separate even when they share the same build attempt. The readable
 phase message remains available as `mork.message`.
 
-The steps Lambda exports waiting states after parking a question. Runners export
-running states as phases start. EventBridge invokes the same Lambda on terminal
-development executions; it reads execution history to export the authoritative
-outcome, close interrupted phases and aggregate callback usage. This also covers
-timeouts and manual aborts when a runner cannot report. EventBridge delivery and
-OTLP are best effort; Step Functions remains the source of truth. These records
-are not a durable run registry and do not backfill older successful executions.
+The steps Lambda exports waiting states after parking a question, completed states
+after Decide opens or updates the PR, and handover states after notifying the
+requester. Runners export running states as phases start. There is no separate
+execution watcher or history replay. Manual aborts, execution timeouts and hard
+crashes can leave the dashboard at its last reported status or phase. OTLP is
+best effort; Step Functions remains the source of truth. These records are not a
+durable run registry and do not backfill older executions.
 
-Usage that is missing from any station or interrupted container remains unknown,
-represented by JSON `null`. Resumed Pi sessions report only their new usage.
-Decision-model usage is not included. Totals are available after the execution
-ends; a live run's totals can remain unknown.
+Usage is reported per phase. Run-level totals remain unknown, represented by JSON
+`null`, because Mork does not aggregate execution history. Missing station usage
+also remains unknown. Resumed Pi sessions report only their new usage.
+Decision-model usage is not included.
 
 Slack names require the `users:read` bot scope in the app manifest and reinstalling
 the app after adding that scope. Requester lookup failure retains the Slack user
 ID and leaves the permalink empty without stopping the task.
-
-Execution-history phase records carry `authoritative: true`. They take precedence
-over a late runner callback for the same container, including after a manual abort.
 
 The Grafana dashboards must select the latest whole record for each run or step,
 including its null values, before counting or filtering status. The overview

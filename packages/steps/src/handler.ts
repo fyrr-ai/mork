@@ -19,7 +19,7 @@ import { DynamoStore } from "@mork/timeline/dynamo";
 import { ask, type Deps, decide, type FlowState, handover, start } from "./flow.ts";
 import { GitHub } from "./github.ts";
 import { llmFromEnv } from "./llm.ts";
-import { attachRun, ExecutionEvent, observeExecution } from "./observability.ts";
+import { attachRun } from "./observability.ts";
 import { githubReporter, type StartInput } from "./origin.ts";
 import { executionRunning, stopStations } from "./stations.ts";
 import { type WorkflowEvent, workflowAction, workflowSlack } from "./workflow.ts";
@@ -87,10 +87,9 @@ async function getDeps(): Promise<Deps> {
 
 const events = eventLog(process.env, "steps");
 
-export const handler = (event: StepEvent | WorkflowEvent | ExecutionEvent): Promise<unknown> => logged(events, () => handle(event));
+export const handler = (event: StepEvent | WorkflowEvent): Promise<unknown> => logged(events, () => handle(event));
 
-async function handle(event: StepEvent | WorkflowEvent | ExecutionEvent): Promise<unknown> {
-  if ("detail-type" in event) return observeExecution(ExecutionEvent.parse(event), events.records);
+async function handle(event: StepEvent | WorkflowEvent): Promise<unknown> {
   if (event.action.startsWith("workflow."))
     return workflowAction({ store: Store.fromEnv(process.env), slack: await workflowSlack() }, event as WorkflowEvent);
   const base = await getDeps();
@@ -118,10 +117,24 @@ async function handle(event: StepEvent | WorkflowEvent | ExecutionEvent): Promis
       );
       return result;
     }
-    case "decide":
-      return decide(d, event.state);
-    case "handover":
-      return handover(d, event.state);
+    case "decide": {
+      const result = await decide(d, event.state);
+      if (result.next === "done" && result.outcome && result.brief.run)
+        emitRun(events.records, result.brief.run, "completed", Date.now(), {
+          review: result.outcome.level,
+          pr_url: result.outcome.url,
+        });
+      return result;
+    }
+    case "handover": {
+      const result = await handover(d, event.state);
+      if (event.state.brief?.run)
+        emitRun(events.records, event.state.brief.run, "handover", Date.now(), {
+          review: result.outcome.level,
+          pr_url: result.outcome.url ?? event.state.brief.run.pr_url,
+        });
+      return result;
+    }
     case "ask":
       // Nothing to return: the state machine waits until the answer arrives with this token.
       await ask(d, event.state, event.task_token);
