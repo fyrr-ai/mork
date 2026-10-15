@@ -2,6 +2,8 @@
 
 ## 0.1.0
 
+- Treat acceptance criteria an issue numbers as `AC1: text` as the author's contract: Plan keeps them verbatim and only decides testability, its own ideas appear separately as unchecked proposals, and the PR and Jira comment report each criterion's result.
+
 - Retain criteria citations from either checkout, normalize their repository paths and check the named immutable revision before passing evidence to the decision model.
 
 - Keep the original Slack request alongside a referenced Jira issue so planning retains supplied context and constraints; ask for missing external data before choosing a test or storage contract.

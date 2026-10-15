@@ -29,6 +29,18 @@ const gate: GateReport = {
 
 describe("plan checks", () => {
   test("accepts a covered plan", () => expect(checkPlan(plan, config)).toBeUndefined());
+  test("keeps the author's criteria: only testability is the analyst's call", () => {
+    const author = [
+      { id: "AC2", text: "documented" },
+      { id: "AC1", text: "adds" },
+    ];
+    expect(checkPlan(plan, config, author)).toBeUndefined();
+    const reworded = { ...plan, acceptance_criteria: [{ id: "AC1", text: "adds two numbers", testable: true }, plan.acceptance_criteria[1]] };
+    expect(checkPlan(reworded as AnalystOutput, config, author)).toContain("- AC1: adds");
+    const extra = { ...plan, acceptance_criteria: [...plan.acceptance_criteria, { id: "AC3", text: "fast", testable: false }] };
+    expect(checkPlan(extra as AnalystOutput, config, author)).toContain("proposed_criteria");
+    expect(checkPlan(plan, config, [{ id: "AC1", text: "adds" }])).toContain("exactly");
+  });
   test("document evidence criteria need no hidden tests", () => {
     expect(
       checkPlan({ ...plan, acceptance_criteria: [{ id: "AC1", text: "README describes the channel", testable: false }], hidden_tests: [] }, config),

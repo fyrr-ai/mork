@@ -9,6 +9,7 @@ import { join } from "node:path";
 import {
   AnalystOutput,
   Answers,
+  authorCriteria,
   type Brief,
   type BuildResult,
   BuildResult as BuildResultSchema,
@@ -210,6 +211,7 @@ export function plan(ctx: PhaseContext): Promise<RunResult> {
 async function planWith(ctx: PhaseContext, records: SupervisionRecord[]): Promise<RunResult> {
   const { brief, store } = ctx;
   const issue = IssueDoc.parse(await store.json(keys.issue(brief.prefix)));
+  const author = authorCriteria(issue.body);
   const stats: Stats = [];
   let feedback: string | undefined;
   for (let attempt = 1; attempt <= ctx.step.attempts; attempt++) {
@@ -227,7 +229,7 @@ async function planWith(ctx: PhaseContext, records: SupervisionRecord[]): Promis
     }
     const full = parsed.data;
     const publicPlan: PublicPlan = { ...full, hidden_tests: full.hidden_tests.map(({ file, criteria }) => ({ file, criteria })) };
-    const problem = checkPlan(publicPlan, config);
+    const problem = checkPlan(publicPlan, config, author);
     if (problem) {
       feedback = problem;
       continue;

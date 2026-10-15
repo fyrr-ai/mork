@@ -6,6 +6,7 @@
 // the brief. Every decision-model call lands in the timeline.
 import {
   Answers,
+  authorCriteria,
   type Brief,
   GateReport,
   HANDOVER_ERROR,
@@ -426,6 +427,10 @@ export async function decide(deps: Deps, state: FlowState): Promise<FlowState> {
     return { ...state, next: "done", last: undefined, outcome: { level: rec.level, url: fix.url } };
   }
   const link = prLink(task.origin, await github.commitTitle(task.repo, head));
+  const criteria = {
+    source: criteriaSource(IssueDoc.parse(await store.json(keys.issue(brief.prefix)))),
+    results: criteriaResults(plan, gate, review, judged.verdicts),
+  };
   // A replayed Decide finds the PR its first run opened instead of failing on a duplicate.
   const pr =
     (await github.openPr(task.repo, brief.branch)) ??
@@ -436,11 +441,10 @@ export async function decide(deps: Deps, state: FlowState): Promise<FlowState> {
       body: prBody(
         task,
         plan,
-        gate,
+        criteria,
         impl,
         review,
         rec,
-        judged.verdicts,
         link.footer,
         transcripts,
         brief.execution ? deps.liveLog(brief.execution) : undefined,
@@ -450,7 +454,14 @@ export async function decide(deps: Deps, state: FlowState): Promise<FlowState> {
   await linkPr(deps.timeline, task.id, task.repo, pr.number, brief.prefix);
   await savePr(deps, state, { number: pr.number, url: pr.html_url });
   await github.addLabels(task.repo, pr.number, [rec.level === "quick" ? LABELS.quick.name : LABELS.careful.name]);
-  await reporter.report({ kind: "pr", url: pr.html_url, level: rec.level, reasons: rec.reasons, transcripts_url: transcripts });
+  await reporter.report({
+    kind: "pr",
+    url: pr.html_url,
+    level: rec.level,
+    reasons: rec.reasons,
+    criteria: criteria.results,
+    transcripts_url: transcripts,
+  });
   deps.log(task.id, "task.end", { level: rec.level, url: pr.html_url });
   return { ...state, next: "done", last: undefined, outcome: { level: rec.level, url: pr.html_url } };
 }
@@ -611,21 +622,12 @@ export function checksTable(c: ChecksEvidence): string {
   return ["| Check | By | Result |", "| --- | --- | --- |", ...rows.map((r) => `| ${r.map(cell).join(" | ")} |`)].join("\n");
 }
 
-export function prBody(
-  task: Task,
-  plan: PublicPlan,
-  gate: GateReport,
-  impl: ImplementerOutput,
-  review: Review,
-  rec: Recommendation,
-  verdicts: CriterionVerdict[],
-  footer: string,
-  transcripts: string | undefined,
-  liveUrl: string | undefined,
-  checks: ChecksEvidence,
-): string {
+export type CriterionResult = { id: string; text: string; result: string };
+
+/** Each acceptance criterion with how it was settled: by a hidden test, or by the decision model from quotes. */
+export function criteriaResults(plan: PublicPlan, gate: GateReport, review: Review, verdicts: CriterionVerdict[]): CriterionResult[] {
   const icon = { pass: "✅", fail: "❌", review: "⚠️" } as const;
-  const verdictOf = (id: string, testable: boolean) => {
+  const resultOf = (id: string, testable: boolean) => {
     if (testable) return gate.hidden.filter((h) => h.criteria.includes(id)).every((h) => h.passed) ? "✅ hidden test" : "❌ hidden test";
     const v = verdicts.find((x) => x.id === id);
     const evidence = review.criteria.find((c) => c.id === id)?.evidence;
@@ -633,6 +635,26 @@ export function prBody(
     const cited = quote ? `, \`${quote.revision} ${quote.where}\`: "${quote.quote.slice(0, 120)}"` : "";
     return v ? `${icon[v.verdict]} decision model: ${v.reason}${cited}` : "⚠️ not judged";
   };
+  return plan.acceptance_criteria.map((c) => ({ id: c.id, text: c.text, result: resultOf(c.id, c.testable) }));
+}
+
+/** Whose criteria the PR shows: the issue author's when the issue numbers them, otherwise the analyst's. */
+export function criteriaSource(issue: IssueDoc): string {
+  return authorCriteria(issue.body).length ? `from ${issue.ref}` : "derived by Plan";
+}
+
+export function prBody(
+  task: Task,
+  plan: PublicPlan,
+  criteria: { source: string; results: CriterionResult[] },
+  impl: ImplementerOutput,
+  review: Review,
+  rec: Recommendation,
+  footer: string,
+  transcripts: string | undefined,
+  liveUrl: string | undefined,
+  checks: ChecksEvidence,
+): string {
   return `## Recommendation: ${REVIEW_LEVEL_TEXT[rec.level]}
 
 ${rec.reasons.map((r) => `- ${r}`).join("\n") || "- The gate passed and the reviewer has no concerns."}
@@ -643,10 +665,10 @@ ${impl.summary}
 
 ${impl.changes.map((c) => `- \`${c.path}\`: ${c.change}`).join("\n")}
 
-## Acceptance criteria
+## Acceptance criteria (${criteria.source})
 
-${plan.acceptance_criteria.map((c) => `- **${c.id}** ${c.text}: ${verdictOf(c.id, c.testable)}`).join("\n")}
-
+${criteria.results.map((c) => `- **${c.id}** ${c.text}: ${c.result}`).join("\n")}
+${plan.proposed_criteria.length ? `\n## Proposed by Plan, not checked\n\n${plan.proposed_criteria.map((c) => `- ${c}`).join("\n")}\n` : ""}
 ## Checks performed
 
 ${checksTable(checks)}
