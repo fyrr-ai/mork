@@ -548,7 +548,7 @@ describe("handover", () => {
     const store = await checkedStore(true);
     const cause = JSON.stringify({ errorType: "Handover", errorMessage: "The change touches a protected path", trace: [] });
     const done = await handover(makeDeps(store), { ...baseState, error: { Error: "Handover", Cause: cause } });
-    expect(done).toMatchObject({ next: "done", outcome: { level: "takeover" } });
+    expect(done).toMatchObject({ next: "done", outcome: { level: "takeover", url: "https://github.com/o/r/pull/7" } });
     expect(calls).toEqual(["pr", "label:needs-human", "label:needs-human", "unlabel:mork:working", "comment"]);
     expect(await store.json(keys.pr(prefix))).toMatchObject({ number: 7, fix_rounds: 0 });
   });

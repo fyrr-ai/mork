@@ -3,6 +3,7 @@
 import { parse as parseToml } from "smol-toml";
 import { z } from "zod";
 import { DEFAULT_DEVELOPMENT } from "./development.ts";
+import { RunContext } from "./observability.ts";
 import { SlackRef } from "./workflow.ts";
 
 export const BRANCH_PREFIX = "mork/";
@@ -282,6 +283,8 @@ export const Brief = z.object({
   report: SlackRef.optional(),
   /** Step Functions execution name and tracker reference (PROJ-123, owner/repo#12), for the live log. */
   execution: z.string().optional(),
+  /** Dashboard context, carried through callbacks without parsing task names. */
+  run: RunContext.optional(),
   task: z.string().optional(),
   /** Last build attempt this run may use; fix runs after the PR continue the numbering with their own budget. */
   last_attempt: z.number().int().positive().optional(),

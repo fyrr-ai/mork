@@ -12,6 +12,7 @@ import { dirname, join } from "node:path";
 import { type LlmStation, type RepoRef, StationOutput } from "@mork/contracts";
 import type { DecisionPanel } from "@mork/decision";
 import type { Logger } from "@mork/sources";
+import { z } from "zod";
 import { killUser, readAgentFile } from "./agentfs.ts";
 import { exec, execAsync, mustExec } from "./git.ts";
 import { PiRpc } from "./rpc.ts";
@@ -199,6 +200,19 @@ export async function runLlmStation(spec: LlmJob, env: RunnerEnv, repoDir: strin
   };
   const offShutdown = onShutdown(keepWork);
   try {
+    const readUsage = async () => {
+      const response = await pi.command({ type: "get_session_stats" }).catch(() => undefined);
+      const stats = z
+        .object({
+          data: z
+            .object({ tokens: z.object({ total: z.number().nonnegative().optional() }).optional(), cost: z.number().nonnegative().optional() })
+            .optional(),
+        })
+        .safeParse(response);
+      return { tokens: stats.success ? stats.data.data?.tokens?.total : undefined, cost: stats.success ? stats.data.data?.cost : undefined };
+    };
+    // A resumed Pi session reports lifetime usage. Count only this container's increment.
+    const initial = spec.resumed ? await readUsage() : { tokens: 0, cost: 0 };
     let prompt = spec.resumed
       ? spec.message
       : `${spec.message}\n\n## Output\n\nWhen you are done, call submit_result with one JSON document matching this JSON Schema:\n\n\`\`\`json\n${JSON.stringify(spec.output_schema)}\n\`\`\``;
@@ -243,10 +257,13 @@ export async function runLlmStation(spec: LlmJob, env: RunnerEnv, repoDir: strin
       rmSync(outFile, { force: true });
       prompt = `${problem} Then call submit_result again.`;
     }
-    const stats = (await pi.command({ type: "get_session_stats" }).catch(() => ({ data: {} }))) as {
-      data?: { tokens?: { total?: number }; cost?: number };
+    const stats = await readUsage();
+    const delta = (key: "tokens" | "cost") => {
+      const before = initial[key],
+        after = stats[key];
+      return before !== undefined && after !== undefined && after >= before ? after - before : undefined;
     };
-    const runStats = { turns, tokens: stats.data?.tokens?.total, cost: stats.data?.cost };
+    const runStats = { turns, tokens: delta("tokens"), cost: delta("cost") };
     const supervision = supervisor.records;
     const asked = readAgentFile(questionFile, 64_000);
     if (asked !== undefined) {

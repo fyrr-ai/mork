@@ -1,5 +1,11 @@
 # Plans only. All AWS resources and account lookups use an in-process mock.
 mock_provider "aws" {
+  mock_resource "aws_cloudwatch_event_rule" {
+    defaults = { arn = "arn:aws:events:us-east-1:123456789012:rule/mork-execution-status" }
+  }
+  mock_resource "aws_lambda_function" {
+    defaults = { arn = "arn:aws:lambda:us-east-1:123456789012:function:mork-steps", qualified_arn = "arn:aws:lambda:us-east-1:123456789012:function:mork-steps:1" }
+  }
   mock_resource "aws_sqs_queue" {
     defaults = { arn = "arn:aws:sqs:us-east-1:123456789012:mork-slack-failures" }
   }
@@ -413,6 +419,14 @@ run "logs_to_otlp_without_cloudwatch" {
     log_destination = "otlp"
     otlp_endpoint   = "http://otlp.internal.example:4318"
     otlp_cidr_block = "10.20.0.0/16"
+  }
+  assert {
+    condition     = length(aws_cloudwatch_event_rule.execution_status) == 1 && aws_cloudwatch_event_target.execution_status[0].arn == aws_lambda_function.steps.arn && aws_lambda_permission.execution_status[0].principal == "events.amazonaws.com" && aws_lambda_function.steps.environment[0].variables.MORK_ENV == var.environment
+    error_message = "OTLP dashboards must receive terminal execution events and the same environment as runner logs."
+  }
+  assert {
+    condition     = local.definition.States.Ask.Next == "MarkResumed" && local.definition.States.MarkResumed.ResultPath == "$.brief.run.resume" && local.definition.States.Start.Parameters.Payload["started_at.$"] == "$$.Execution.StartTime" && contains([for env in local.definition.States.Plan.Parameters.Overrides.ContainerOverrides[0].Environment : env.Name], "MORK_PHASE_STARTED_AT")
+    error_message = "Run creation, resumption and phase times must come from Step Functions rather than Lambda retries."
   }
   assert {
     condition     = length(aws_cloudwatch_log_group.lambda) == 0 && length(aws_cloudwatch_log_group.slack) == 0 && length(aws_cloudwatch_log_group.stations) == 0 && length(aws_cloudwatch_log_group.sfn) == 0 && length(aws_sfn_state_machine.this.logging_configuration) == 0

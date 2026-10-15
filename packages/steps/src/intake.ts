@@ -113,7 +113,7 @@ async function handle(event: UrlEvent): Promise<UrlResult> {
       new StartExecutionCommand({
         stateMachineArn: process.env.STATE_MACHINE_ARN,
         name,
-        input: JSON.stringify({ repo, issue: payload.issue.number }),
+        input: JSON.stringify({ repo, issue: payload.issue.number, requested_by: payload.sender.login }),
       }),
     );
     log("intake.started", { repo, issue: payload.issue.number, execution: started.executionArn });
@@ -145,7 +145,7 @@ async function startFix(repo: string, fix: NonNullable<ReturnType<typeof fixTrig
       new StartExecutionCommand({
         stateMachineArn: process.env.STATE_MACHINE_ARN,
         name,
-        input: JSON.stringify({ fix: { repo, pr: fix.pr, trigger: fix.trigger } }),
+        input: JSON.stringify({ fix: { repo, pr: fix.pr, trigger: fix.trigger }, requested_by: fix.sender }),
       }),
     );
     log("fix.started", { repo, pr: fix.pr, trigger: fix.trigger.kind, execution: started.executionArn });

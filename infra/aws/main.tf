@@ -45,7 +45,7 @@ locals {
   # A collector inside the network is reachable from the Lambdas only when they run in the VPC.
   lambda_in_vpc = var.otlp_endpoint != null && var.otlp_cidr_block != null
   otlp_env = var.otlp_endpoint == null ? {} : merge(
-    { OTEL_EXPORTER_OTLP_ENDPOINT = var.otlp_endpoint },
+    { OTEL_EXPORTER_OTLP_ENDPOINT = var.otlp_endpoint, MORK_ENV = var.environment },
     var.otel_resource_attributes == "" ? {} : { OTEL_RESOURCE_ATTRIBUTES = var.otel_resource_attributes },
   )
   alarms = length(var.alarm_actions) > 0

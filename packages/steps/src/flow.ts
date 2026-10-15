@@ -468,7 +468,7 @@ export function handoverReason(state: FlowState): string {
 }
 
 /** Comments, labels and stops whatever container of the task still runs. */
-export async function handover(deps: Deps, state: FlowState): Promise<{ next: "done"; outcome: { level: "takeover" } }> {
+export async function handover(deps: Deps, state: FlowState): Promise<{ next: "done"; outcome: { level: "takeover"; url?: string } }> {
   const task: Task = state.task ?? taskFromStartInput(state as unknown as StartInput);
   const reason = handoverReason(state);
   const stopped = task.started_by ? await deps.stopStations(task.started_by) : 0;
@@ -494,7 +494,7 @@ export async function handover(deps: Deps, state: FlowState): Promise<{ next: "d
     await recordTakeover(deps.timeline, task.id);
   }
   deps.log(task.id, "task.handover", { reason: reason.slice(0, 500), stopped });
-  return { next: "done", outcome: { level: "takeover" } };
+  return { next: "done", outcome: { level: "takeover", ...(pr ? { url: pr.html_url } : {}) } };
 }
 
 /** Opens (or finds) the draft PR of a handed-over task, labelled for a person; none when the branch has no work. */

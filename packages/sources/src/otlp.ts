@@ -64,13 +64,19 @@ export class OtlpLogger implements Logger {
   }
 
   log(body: string, attrs: LogAttrs = {}, severity: Severity = "INFO"): void {
-    const text = redact(body, this.#secrets());
+    const secrets = this.#secrets();
+    const text = redact(body, secrets);
+    const safeAttrs = Object.fromEntries(
+      Object.entries({ ...this.#base, ...attrs }).map(([key, value]) => [key, typeof value === "string" ? redact(value, secrets) : value]),
+    );
+    // Truncating a dashboard record would make it invalid JSON and hide its state change.
+    const structured = attrs["mork.event"] === "run.snapshot" || (attrs["mork.event"] === "phase" && text.startsWith("{"));
     this.#queue.push({
       timeUnixNano: `${Date.now()}000000`,
       severityNumber: SEVERITY_NUMBER[severity],
       severityText: severity,
-      body: { stringValue: text.length > MAX_BODY ? `${text.slice(0, MAX_BODY)}…` : text },
-      attributes: attributes({ ...this.#base, ...attrs }),
+      body: { stringValue: !structured && text.length > MAX_BODY ? `${text.slice(0, MAX_BODY)}…` : text },
+      attributes: attributes(safeAttrs),
     });
     if (this.#queue.length >= BATCH_SIZE) void this.flush();
     else this.#state.timer ??= setTimeout(() => void this.flush(), BATCH_MS);
@@ -111,7 +117,12 @@ export function resourceAttributes(raw: string | undefined): LogAttrs {
   return Object.fromEntries(pairs.filter((pair): pair is [string, string] => pair.length === 2 && pair[0] !== "" && pair[1] !== ""));
 }
 
-export type EventLog = { log(kind: string, detail?: Record<string, unknown>): void; flush(): Promise<void> };
+export type EventLog = {
+  records: Logger;
+  with(attrs: LogAttrs): EventLog;
+  log(kind: string, detail?: Record<string, unknown>): void;
+  flush(): Promise<void>;
+};
 
 /**
  * A Lambda's log: one JSON line per event on stdout and, with
@@ -122,23 +133,32 @@ export function eventLog(env: NodeJS.ProcessEnv, service: string): EventLog {
   const otlp = env.OTEL_EXPORTER_OTLP_ENDPOINT
     ? new OtlpLogger({
         endpoint: env.OTEL_EXPORTER_OTLP_ENDPOINT,
-        resource: { "service.name": "mork", "mork.function": service, ...resourceAttributes(env.OTEL_RESOURCE_ATTRIBUTES) },
-        secrets: () => [],
+        resource: {
+          "service.name": "mork",
+          "deployment.environment.name": env.MORK_ENV,
+          "mork.function": service,
+          ...resourceAttributes(env.OTEL_RESOURCE_ATTRIBUTES),
+        },
+        secrets: () =>
+          [env.SLACK_BOT_TOKEN, env.GITHUB_TOKEN, env.LLM_API_KEY, env.JEV_API, env.OPENAI_API_KEY].filter((s): s is string => Boolean(s)),
         scope: `mork.${service}`,
       })
     : noLogger;
-  return {
+  const scoped = (records: Logger): EventLog => ({
+    records,
+    with: (attrs) => scoped(records.with(attrs)),
     log(kind, detail) {
       const line = JSON.stringify({ ts: new Date().toISOString(), kind, ...detail });
       console.log(line);
-      otlp.log(
+      records.log(
         line,
         { "mork.event": kind, "mork.task": typeof detail?.task === "string" ? detail.task : undefined },
         kind.endsWith("failed") || kind === "error" ? "ERROR" : "INFO",
       );
     },
-    flush: () => otlp.flush(),
-  };
+    flush: () => records.flush(),
+  });
+  return scoped(otlp);
 }
 
 /** Runs one Lambda invocation and sends its log before the Lambda freezes; a failure is logged first. */

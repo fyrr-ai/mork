@@ -79,7 +79,7 @@ export class Slack {
     this.#token = token;
   }
 
-  async call(method: string, payload: Record<string, unknown>): Promise<void> {
+  async call(method: string, payload: Record<string, unknown>): Promise<unknown> {
     const response = await fetch(`https://slack.com/api/${method}`, {
       method: "POST",
       headers: { authorization: `Bearer ${this.#token}`, "content-type": "application/json; charset=utf-8" },
@@ -90,10 +90,24 @@ export class Slack {
     // Status reactions are set idempotently: adding one twice or removing an absent one is fine.
     if (!result.ok && result.error !== "already_reacted" && result.error !== "no_reaction")
       throw new Error(`Slack ${method}: ${result.error ?? response.status}`);
+    return result;
   }
 
-  reply(ref: SlackRef, text: string): Promise<void> {
-    return this.call("chat.postMessage", { channel: ref.channel, thread_ts: ref.thread_ts, text, unfurl_links: false, unfurl_media: false });
+  async reply(ref: SlackRef, text: string): Promise<void> {
+    await this.call("chat.postMessage", { channel: ref.channel, thread_ts: ref.thread_ts, text, unfurl_links: false, unfurl_media: false });
+  }
+
+  /** Resolve a stable filter ID separately from the person's display name. */
+  async requester(ref: SlackRef): Promise<{ id: string; name: string; url: string }> {
+    const user = z
+      .object({
+        user: z.object({ name: z.string(), real_name: z.string().optional(), profile: z.object({ display_name: z.string().optional() }).optional() }),
+      })
+      .parse(await this.call("users.info", { user: ref.user })).user;
+    const link = z
+      .object({ permalink: z.string().url() })
+      .parse(await this.call("chat.getPermalink", { conversation_id: ref.channel, message_ts: ref.thread_ts }));
+    return { id: ref.user, name: user.profile?.display_name || user.real_name || user.name, url: link.permalink };
   }
 
   /**

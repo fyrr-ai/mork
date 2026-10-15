@@ -125,6 +125,8 @@ locals {
           Environment = [
             { Name = "MORK_TASK_TOKEN", "Value.$" = "$$.Task.Token" },
             { Name = "MORK_BRIEF", "Value.$" = "States.JsonToString($.brief)" },
+            { Name = "MORK_PHASE", Value = step.kind },
+            { Name = "MORK_PHASE_STARTED_AT", "Value.$" = "$$.State.EnteredTime" },
           ]
           }, {
           Name        = "egress"
@@ -168,7 +170,7 @@ locals {
         Parameters = {
           FunctionName = aws_lambda_function.steps.qualified_arn
           # The whole execution input goes on: { repo, issue } from GitHub or SlackStart from Slack.
-          Payload = { action = "start", "input.$" = "$", "execution.$" = "$$.Execution.Name", "execution_arn.$" = "$$.Execution.Id", policy = local.development_policy }
+          Payload = { action = "start", "input.$" = "$", "execution.$" = "$$.Execution.Name", "execution_arn.$" = "$$.Execution.Id", "started_at.$" = "$$.Execution.StartTime", policy = local.development_policy }
         }
         OutputPath = "$.Payload"
         Retry      = local.lambda_retry
@@ -191,13 +193,19 @@ locals {
         Resource = "arn:aws:states:::lambda:invoke.waitForTaskToken"
         Parameters = {
           FunctionName = aws_lambda_function.steps.qualified_arn
-          Payload      = { action = "ask", "state.$" = "$", "task_token.$" = "$$.Task.Token" }
+          Payload      = { action = "ask", "state.$" = "$", "task_token.$" = "$$.Task.Token", "entered_at.$" = "$$.State.EnteredTime" }
         }
         TimeoutSeconds = local.development.questions.timeout_seconds
         ResultPath     = "$.last"
         Retry          = local.lambda_retry
         Catch          = local.catch
-        Next           = "Resume"
+        Next           = "MarkResumed"
+      }
+      MarkResumed = {
+        Type       = "Pass"
+        Parameters = { "at.$" = "$$.State.EnteredTime" }
+        ResultPath = "$.brief.run.resume"
+        Next       = "Resume"
       }
       Resume = {
         Type = "Choice"
