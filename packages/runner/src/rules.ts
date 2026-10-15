@@ -2,12 +2,6 @@
 // the gate pass, what does the implementer need to hear when it did not.
 import type { AnalystOutput, AuthorCriterion, GateReport, PublicPlan, RepoConfig } from "@mork/contracts";
 
-/** Two lines naming the same id cannot both be the contract; only the author can fix that. */
-export function duplicateCriteria(author: AuthorCriterion[]): string[] {
-  const ids = author.map((c) => c.id);
-  return [...new Set(ids.filter((id, i) => ids.indexOf(id) !== i))];
-}
-
 const sameText = (a: string, b: string) => a.replace(/\s+/g, " ").trim() === b.replace(/\s+/g, " ").trim();
 
 export function checkPlan(plan: PublicPlan, config: RepoConfig, author: AuthorCriterion[] = []): string | undefined {

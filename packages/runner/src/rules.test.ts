@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { AnalystOutput, GateReport } from "@mork/contracts";
-import { checkPlan, duplicateCriteria, gateFailures, gateFeedback, gatePassed } from "./rules.ts";
+import { checkPlan, gateFailures, gateFeedback, gatePassed } from "./rules.ts";
 
 const config = {
   test: "npm test",
@@ -40,15 +40,6 @@ describe("plan checks", () => {
     const extra = { ...plan, acceptance_criteria: [...plan.acceptance_criteria, { id: "AC3", text: "fast", testable: false }] };
     expect(checkPlan(extra as AnalystOutput, config, author)).toContain("proposed_criteria");
     expect(checkPlan(plan, config, [{ id: "AC1", text: "adds" }])).toContain("exactly");
-  });
-  test("names criteria ids the author used twice", () => {
-    expect(
-      duplicateCriteria([
-        { id: "AC1", text: "a" },
-        { id: "AC2", text: "b" },
-        { id: "AC1", text: "c" },
-      ]),
-    ).toEqual(["AC1"]);
   });
   test("document evidence criteria need no hidden tests", () => {
     expect(

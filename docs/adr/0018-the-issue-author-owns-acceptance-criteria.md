@@ -12,7 +12,6 @@ An issue may number its criteria, one per line as `AC1: text`. Code reads them f
 
 - Plan copies them with the same ids and text and decides only which ones a hidden test can check. A plan that adds, drops or rewords one goes back to the analyst; an ambiguous criterion is a question to the author, not a rewrite.
 - The analyst may suggest further checks in `proposed_criteria`. The PR shows them apart; nothing checks them and they do not affect the recommendation.
-- The same id used twice hands the task over before Plan runs.
 - The PR and the Jira comment list each criterion with how it was settled: a hidden test, or the decision model from quotes.
 
 An issue without numbered criteria, such as a quick Slack request, keeps the old behaviour; the PR labels its criteria as derived by Plan. The issue Mork drafts from a Slack message uses plain bullets, so a model never writes the contract.
