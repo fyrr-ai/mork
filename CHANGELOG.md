@@ -2,6 +2,8 @@
 
 ## 0.1.0
 
+- Retain criteria citations from either checkout, normalize their repository paths and check the named immutable revision before passing evidence to the decision model.
+
 - Keep the original Slack request alongside a referenced Jira issue so planning retains supplied context and constraints; ask for missing external data before choosing a test or storage contract.
 
 - Give PR titles a Conventional Commit scope and reserve space for the tracker reference within 100 characters.

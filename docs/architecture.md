@@ -49,7 +49,7 @@ Progress goes where the request came from: labels and comments on the GitHub iss
 Whether the code works is decided by tests, not by a model.
 
 1. **Analyst** (Pi + LLM) writes the plan and a **hidden test** for every testable acceptance criterion. Hidden tests are stored under `hidden/` in the bucket, which only the Plan and Check roles can access; they never reach the implementer's checkout.
-   Planning is proportional to the request. Documentation-only criteria use evidence in Check, with no hidden text snapshots or dependency installation by the analyst.
+   Planning is proportional to the request. Documentation-only criteria use evidence in Check, with no hidden text snapshots or dependency installation by the analyst. Criteria quotes retain their base/head revision; the runner resolves checkout paths to repository paths and checks each quote against the corresponding immutable Git object before Jev receives it. Invalid citations remain explicit uncertainty.
 2. **Gate before** (no LLM) runs the hidden tests on the base commit. They must **fail**, because the feature does not exist yet. Tests that pass prove nothing and go back to the analyst (at most 2 analyst attempts).
 3. **Implementer** (Pi + LLM) writes the code on its branch and pushes it. It can call `verify` to run the repository's setup, tests, repository checks (`checks`) and a preview of the diff policy (not the hidden tests). Directory-scoped `AGENTS.md` rules reach it before it first edits a file under that directory.
 4. **Gate after** (no LLM) clones the pushed branch fresh and runs, as an unprivileged user:

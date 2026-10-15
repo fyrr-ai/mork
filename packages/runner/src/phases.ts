@@ -41,7 +41,7 @@ import { fetchRepo, mustExec, remoteHead, repoUrl, SAFE_GIT } from "./git.ts";
 import { type LlmJob, type LlmOutcome, type RunnerEnv, runLlmStation } from "./llm.ts";
 import { ocrReview, parseOcrResult, runOcr } from "./ocr.ts";
 import * as prompts from "./prompts.ts";
-import { carryFindings, changedFiles, locate, locateFindings, readAt, verifyReview } from "./review.ts";
+import { carryFindings, changedFiles, locateFindings, readAt, verifyCriteria, verifyReview } from "./review.ts";
 import { checkPlan, gateFailures, gateFeedback, gatePassed } from "./rules.ts";
 import { SessionLog } from "./session.ts";
 import { onShutdown } from "./shutdown.ts";
@@ -442,23 +442,13 @@ async function checkWith(ctx: PhaseContext, records: SupervisionRecord[]): Promi
       { title: issue.title, criteria: untestable.map((c) => c.id), baselineDir },
     );
     if (outcome.ok) {
-      const output = CriteriaOutput.parse(outcome.output);
-      const ids = new Set<string>();
-      review.criteria = output.criteria
-        .filter((c) => {
-          if (!untestable.some((expected) => expected.id === c.id) || ids.has(c.id)) return false;
-          ids.add(c.id);
-          return true;
-        })
-        .map((c) => ({
-          ...c,
-          evidence: c.evidence.filter((e) => {
-            const where = /^(.+?):(\d+)$/.exec(e.where);
-            const snapshot = where && read.head(where[1] as string);
-            return !!where && snapshot?.status === "present" && locate(snapshot.content, e.quote, Number(where[2]))?.line === Number(where[2]);
-          }),
-        }));
-      if (ids.size !== untestable.length) review.incomplete.push("Acceptance criteria checker omitted criteria");
+      review = verifyCriteria(
+        review,
+        CriteriaOutput.parse(outcome.output),
+        untestable.map((c) => c.id),
+        read,
+        { base: baselineDir, head: criteriaDir },
+      );
     } else review.incomplete.push(`Acceptance criteria checker failed: ${outcome.error ?? "no result"}`);
   }
   await store.putJson(keys.review(brief.prefix, brief.attempt), review);

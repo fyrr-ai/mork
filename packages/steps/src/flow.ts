@@ -628,8 +628,9 @@ export function prBody(
   const verdictOf = (id: string, testable: boolean) => {
     if (testable) return gate.hidden.filter((h) => h.criteria.includes(id)).every((h) => h.passed) ? "✅ hidden test" : "❌ hidden test";
     const v = verdicts.find((x) => x.id === id);
-    const quote = review.criteria.find((c) => c.id === id)?.evidence[0];
-    const cited = quote ? `, \`${quote.where}\`: "${quote.quote.slice(0, 120)}"` : "";
+    const evidence = review.criteria.find((c) => c.id === id)?.evidence;
+    const quote = evidence?.find((e) => e.revision === "head") ?? evidence?.[0];
+    const cited = quote ? `, \`${quote.revision} ${quote.where}\`: "${quote.quote.slice(0, 120)}"` : "";
     return v ? `${icon[v.verdict]} decision model: ${v.reason}${cited}` : "⚠️ not judged";
   };
   return `## Recommendation: ${REVIEW_LEVEL_TEXT[rec.level]}

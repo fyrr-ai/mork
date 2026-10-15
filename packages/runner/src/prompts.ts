@@ -55,7 +55,7 @@ ${plan.acceptance_criteria
   .map((c) => `- ${c.id}: ${c.text}`)
   .join("\n")}
 
-Do not perform a general code review or search for bugs. For each criterion return its ID, pass, and exact quotes as {where: "path:line", quote}. Missing evidence means pass=false.`;
+Do not perform a general code review or search for bugs. For each criterion return its ID, pass, and exact quotes as {revision: "base" | "head", where: "repository-relative/path:line", quote}. Use revision="base" for quotes from ${baselineDir} and revision="head" for quotes from the current checkout. Do not put checkout directory prefixes in where. Preserve both revisions when comparing them; a head quote alone cannot prove what changed. Never inspect .git internals. If a criterion needs unavailable commit or PR metadata, return pass=false without searching for it. Missing evidence means pass=false.`;
 }
 
 export function verifierMessage(issue: Issue, plan: Plan, base: string, head: string, findings: Review["findings"], baselineDir: string): string {

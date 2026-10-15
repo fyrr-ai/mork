@@ -1,4 +1,4 @@
-import type { FindingVerification } from "@mork/contracts";
+import type { CriteriaOutput, FindingVerification } from "@mork/contracts";
 // The three places the decision model is asked something besides the final
 // recommendation. Each policy is a fixed question set plus a pure function
 // from answers to an action; the code, not the model, owns the thresholds and
@@ -83,7 +83,7 @@ export async function triageMessage(panel: DecisionPanel, message: string): Prom
 export const PASS_AT = 0.8;
 export const FAIL_AT = 0.2;
 
-export type CriterionEvidence = { id: string; text: string; evidence: { where: string; quote: string }[] };
+export type CriterionEvidence = { id: string; text: string; evidence: CriteriaOutput["criteria"][number]["evidence"] };
 export type CriterionVerdict = { id: string; verdict: "pass" | "fail" | "review"; p?: number; reason: string };
 
 export function criterionVerdict(c: CriterionEvidence, answer: Answer | undefined): CriterionVerdict {
@@ -106,7 +106,7 @@ export async function judgeCriteria(
       c.id,
       {
         type: "noul",
-        instructions: `Does the change satisfy acceptance criterion ${c.id}: "${c.text}"? Judge only from the evidence listed under ${c.id}; if it does not show the criterion is met, answer no.`,
+        instructions: `Does the change satisfy acceptance criterion ${c.id}: "${c.text}"? Judge only from the evidence listed under ${c.id}. Each checked quote names its revision: base is before the change, head is the tested result. Do not treat a base quote as current behaviour. If the evidence does not show the criterion is met, answer no.`,
       },
     ]),
   );

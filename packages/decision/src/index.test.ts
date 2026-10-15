@@ -166,7 +166,7 @@ describe("policies", () => {
     expect(sec.security).toBe(true);
   });
   test("criteria: no evidence and doubt are review, bands decide the rest", () => {
-    const c = { id: "AC1", text: "README mentions it", evidence: [{ where: "README.md", quote: "truncate()" }] };
+    const c = { id: "AC1", text: "README mentions it", evidence: [{ revision: "head" as const, where: "README.md", quote: "truncate()" }] };
     expect(criterionVerdict({ ...c, evidence: [] }, { type: "noul", p: 1 }).verdict).toBe("review");
     expect(criterionVerdict(c, { type: "noul", p: 0.85 }).verdict).toBe("pass");
     expect(criterionVerdict(c, { type: "noul", p: 0.5 }).verdict).toBe("review");
@@ -178,6 +178,17 @@ describe("policies", () => {
     const result = await judgeCriteria(panel, [{ id: "AC2", text: "x", evidence: [] }]);
     expect(result.trace).toBeUndefined();
     expect(result.verdicts[0]?.verdict).toBe("review");
+  });
+  test("criterion decisions retain the checked revision of every quote", async () => {
+    const evidence = [
+      { revision: "base" as const, where: "README.md:3", quote: "Old behaviour" },
+      { revision: "head" as const, where: "README.md:3", quote: "New behaviour" },
+    ];
+    const result = await judgeCriteria(new DecisionPanel([fixed("jev", { AC1: { type: "noul", p: 0.95 } })]), [
+      { id: "AC1", text: "README documents the new behaviour", evidence },
+    ]);
+    expect(result.trace?.state).toEqual({ evidence: { AC1: { criterion: "README documents the new behaviour", quotes: evidence } } });
+    expect(result.verdicts[0]?.verdict).toBe("pass");
   });
   test("a finding's priority comes from the decision model when it is confident, otherwise from the reviewer", () => {
     const answer = (p: number) => ({ type: "choice" as const, choice: "P1", confidence: 0.5, probabilities: { P0: p / 2, P1: p / 2, P2: 1 - p } });

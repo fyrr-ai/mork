@@ -259,17 +259,28 @@ integration(
             return new Response("Criteria checker could not read immutable baseline", { status: 500 });
           return completion(body.model, { name: "read", arguments: { path: "README.md" } });
         }
-        if (station === "criteria" && turns === 2)
+        if (station === "criteria" && turns === 2) {
+          const baselineDir = /baseline checkout is at (\/[^\s"\\]+)\./.exec(users)?.[1];
+          if (!baselineDir) return new Response("Missing criteria baseline path", { status: 500 });
+          const headDir = join(baselineDir, "..", "criteria");
           return completion(body.model, {
             name: "submit_result",
             arguments: {
               json: JSON.stringify({
                 criteria: [
-                  { id: "AC2", pass: true, evidence: [{ where: "README.md:1", quote: "add returns a numeric sum, including numeric strings." }] },
+                  {
+                    id: "AC2",
+                    pass: true,
+                    evidence: [
+                      { where: `${headDir}/README.md:1`, quote: "add returns a numeric sum, including numeric strings." },
+                      { where: `${baselineDir}/math.mjs:1`, quote: "export const add = (a, b) => a - b;" },
+                    ],
+                  },
                 ],
               }),
             },
           });
+        }
         if (station === "criteria") return completion(body.model);
         if (station === "analyst") {
           if (turns === 0) return completion(body.model, { name: "bash", arguments: { command: "cat math.mjs" } });
@@ -444,7 +455,15 @@ integration(
         findings: [{ located: { line: 1 }, verification: { status: "confirmed" } }, { verification: { status: "duplicate", of: "F1" } }],
       });
       expect(await store.json(keys.review("tasks/local", 2))).toMatchObject({
-        criteria: [{ id: "AC2", evidence: [{ where: "README.md:1", quote: "add returns a numeric sum, including numeric strings." }] }],
+        criteria: [
+          {
+            id: "AC2",
+            evidence: [
+              { revision: "head", where: "README.md:1", quote: "add returns a numeric sum, including numeric strings." },
+              { revision: "base", where: "math.mjs:1", quote: "export const add = (a, b) => a - b;" },
+            ],
+          },
+        ],
       });
       expect(await store.text(keys.feedback("tasks/local", 3))).toContain("Strings are concatenated instead of added");
       expect(await store.json(keys.gate("tasks/local", 3))).toMatchObject({ head_sha: state.result.head_sha, hidden: [{ passed: true }] });
