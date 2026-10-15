@@ -1,9 +1,22 @@
 // Entry point of the station image: runs the phase its task definition names
 // (plan, build or check) for the brief Step Functions passed in, then reports
 // back with the task token.
+
+import { randomUUID } from "node:crypto";
 import { DEFAULT_DEVELOPMENT, DevelopmentStep } from "@mork/contracts/development";
 import { panelFromEnv } from "@mork/decision";
-import { githubAuthFromEnv, type Logger, noLogger, OtlpLogger, type Reporter, resourceAttributes, slackThreadReporterFromEnv } from "@mork/sources";
+import {
+  emitPhase,
+  emitRun,
+  githubAuthFromEnv,
+  type Logger,
+  noLogger,
+  OtlpLogger,
+  type PhaseRecord,
+  type Reporter,
+  resourceAttributes,
+  slackThreadReporterFromEnv,
+} from "@mork/sources";
 import { Store } from "@mork/store";
 import { briefFromEnv, reportInterrupted, reportTo, requiredEnv } from "./callback.ts";
 import { withGitHubTokenFile } from "./github-auth.ts";
@@ -54,6 +67,7 @@ await reportTo(token, async () => {
     [...auth.secrets(), env.JEV_API, env.OPENAI_API_KEY, env.SLACK_BOT_TOKEN].filter((v): v is string => typeof v === "string" && v.length > 0);
 
   const deployment = env.MORK_ENV ?? "dev";
+  const stepId = (await ecsTaskId()) ?? randomUUID();
 
   logger = env.OTEL_EXPORTER_OTLP_ENDPOINT
     ? new OtlpLogger({
@@ -63,7 +77,7 @@ await reportTo(token, async () => {
           "deployment.environment.name": deployment,
           // Anything else the log backend wants (team, namespace…): OTEL_RESOURCE_ATTRIBUTES=key=value,key=value
           ...resourceAttributes(env.OTEL_RESOURCE_ATTRIBUTES),
-          "service.instance.id": await ecsTaskId(),
+          "service.instance.id": stepId,
         },
         secrets,
         base: {
@@ -71,6 +85,7 @@ await reportTo(token, async () => {
           "mork.task": brief.task,
           "mork.phase": phase,
           "mork.attempt": brief.attempt,
+          "mork.step": stepId,
         },
       })
     : noLogger;
@@ -110,26 +125,53 @@ await reportTo(token, async () => {
   if (ctx.env.egress) Object.assign(ctx.sandbox.env, egressEnv(ctx.env.egress.proxy, caBundle(ctx.env)));
 
   const phases = { plan, build, check };
-  logger.log(`${phase} · container started (attempt ${brief.attempt})`, { "mork.event": "phase" });
-  const result = env.GITHUB_TOKEN_FILE
-    ? await withGitHubTokenFile(auth, brief.repo.full_name, env.GITHUB_TOKEN_FILE, () => phases[phase](ctx))
-    : await phases[phase](ctx);
-  logger.log(
-    `${phase} · container finished: ${result.question ? `asked "${result.question.slice(0, 200)}"` : result.ok ? (result.passed === false ? "checks failed" : "ok") : `failed: ${result.error ?? "?"}`}`,
-    { "mork.event": "phase" },
-    result.ok ? "INFO" : "ERROR",
-  );
-  console.log(
-    JSON.stringify({
-      phase,
-      attempt: brief.attempt,
-      prefix: brief.prefix,
-      ok: result.ok,
-      passed: result.passed,
-      error: result.error,
-      stats: result.stats,
-    }),
-  );
-  return result;
+  const startedAt = env.MORK_PHASE_STARTED_AT ? Date.parse(env.MORK_PHASE_STARTED_AT) : Date.now();
+  const step: PhaseRecord = {
+    run_id: brief.execution ?? "unknown",
+    step_id: stepId,
+    phase: phase.charAt(0).toUpperCase() + phase.slice(1),
+    attempt: brief.attempt,
+    started_at: startedAt,
+    model: ctx.step.model ?? ctx.model,
+  };
+  let finished = false;
+  const removeShutdown = onShutdown(async () => {
+    if (!finished) emitPhase(logger, step, "interrupted", `${phase} · container stopped before it finished`);
+    await logger.flush();
+  });
+  if (brief.run) emitRun(logger, brief.run, "running", startedAt);
+  emitPhase(logger, step, "running", `${phase} · container started (attempt ${brief.attempt})`, startedAt);
+  try {
+    const result = env.GITHUB_TOKEN_FILE
+      ? await withGitHubTokenFile(auth, brief.repo.full_name, env.GITHUB_TOKEN_FILE, () => phases[phase](ctx))
+      : await phases[phase](ctx);
+    emitPhase(
+      logger,
+      step,
+      result.question ? "waiting" : !result.ok || result.passed === false ? "failed" : "passed",
+      `${phase} · container finished: ${result.question ? `asked "${result.question.slice(0, 200)}"` : result.ok ? (result.passed === false ? "checks failed" : "ok") : `failed: ${result.error ?? "?"}`}`,
+      Date.now(),
+      result.stats,
+    );
+    console.log(
+      JSON.stringify({
+        phase,
+        attempt: brief.attempt,
+        prefix: brief.prefix,
+        ok: result.ok,
+        passed: result.passed,
+        error: result.error,
+        stats: result.stats,
+      }),
+    );
+    return result;
+  } catch (error) {
+    emitPhase(logger, step, "failed", `${phase} · container failed: ${String(error).slice(0, 500)}`);
+    throw error;
+  } finally {
+    finished = true;
+    removeShutdown();
+    await logger.flush();
+  }
 });
 await logger.flush();

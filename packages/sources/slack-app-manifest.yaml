@@ -17,6 +17,7 @@ oauth_config:
       - app_mentions:read
       - chat:write
       - reactions:write
+      - users:read
 settings:
   event_subscriptions:
     request_url: https://example.com/slack/events

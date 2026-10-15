@@ -22,7 +22,7 @@ describe("otlp logger", () => {
     });
     const station = root.with({ "mork.station": "implementer", "mork.attempt": 2 });
     station.log("bash: echo sk-secret-value-123", { "mork.event": "tool_call", "mork.tool": "bash" });
-    station.log("bash failed", { "mork.event": "tool_result" }, "ERROR");
+    station.log("bash failed", { "mork.event": "tool_result", "mork.message": "failed with sk-secret-value-123" }, "ERROR");
     await root.flush();
     const sent = bodies[0] as {
       resourceLogs: {
@@ -36,6 +36,7 @@ describe("otlp logger", () => {
     const records = sent.resourceLogs[0]?.scopeLogs[0]?.logRecords ?? [];
     expect(records.map((r) => r.body.stringValue)).toEqual(["bash: echo [redacted]", "bash failed"]);
     expect(records[1]?.severityText).toBe("ERROR");
+    expect(records[1]?.attributes.find((a) => a.key === "mork.message")?.value).toEqual({ stringValue: "failed with [redacted]" });
     expect(Object.fromEntries((records[0]?.attributes ?? []).map((a) => [a.key, Object.values(a.value)[0]]))).toEqual({
       "mork.execution": "slack-Ev1",
       "mork.station": "implementer",
@@ -48,6 +49,14 @@ describe("otlp logger", () => {
     const logger = new OtlpLogger({ endpoint: "http://127.0.0.1:9", resource: {}, secrets: () => [] });
     logger.log("x");
     await logger.flush();
+  });
+  test("dashboard JSON remains parseable beyond the live-message truncation limit", async () => {
+    const logger = new OtlpLogger({ endpoint: `http://127.0.0.1:${server.port}`, resource: {}, secrets: () => [] });
+    const record = { event: "run.snapshot", title: "x".repeat(4500) };
+    logger.log(JSON.stringify(record), { "mork.event": "run.snapshot" });
+    await logger.flush();
+    const sent = bodies.at(-1) as { resourceLogs: { scopeLogs: { logRecords: { body: { stringValue: string } }[] }[] }[] };
+    expect(JSON.parse(sent.resourceLogs[0]?.scopeLogs[0]?.logRecords[0]?.body.stringValue ?? "null")).toEqual(record);
   });
 });
 

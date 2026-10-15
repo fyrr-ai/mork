@@ -3,12 +3,23 @@
 // task to a person throws HandoverError, which the state's Catch routes.
 import { DevelopmentPolicy } from "@mork/contracts/development";
 import { panelFromEnv } from "@mork/decision";
-import { eventLog, githubAuthFromEnv, grafanaLiveUrl, loadSecrets, logged, type SlackSource, slackSourceFromEnv } from "@mork/sources";
+import {
+  emitRun,
+  eventLog,
+  githubAuthFromEnv,
+  grafanaLiveUrl,
+  loadSecrets,
+  logged,
+  Slack,
+  type SlackSource,
+  slackSourceFromEnv,
+} from "@mork/sources";
 import { Store } from "@mork/store";
 import { DynamoStore } from "@mork/timeline/dynamo";
 import { ask, type Deps, decide, type FlowState, handover, start } from "./flow.ts";
 import { GitHub } from "./github.ts";
 import { llmFromEnv } from "./llm.ts";
+import { attachRun, ExecutionEvent, observeExecution } from "./observability.ts";
 import { githubReporter, type StartInput } from "./origin.ts";
 import { executionRunning, stopStations } from "./stations.ts";
 import { type WorkflowEvent, workflowAction, workflowSlack } from "./workflow.ts";
@@ -22,10 +33,11 @@ export type StepEvent =
       input: DistributiveOmit<StartInput, "execution" | "execution_arn">;
       execution: string;
       execution_arn: string;
+      started_at?: string;
       policy?: unknown;
     }
   | { action: "decide" | "handover"; state: FlowState }
-  | { action: "ask"; state: FlowState; task_token: string };
+  | { action: "ask"; state: FlowState; task_token: string; entered_at?: string };
 
 let deps: Deps | undefined;
 
@@ -75,19 +87,37 @@ async function getDeps(): Promise<Deps> {
 
 const events = eventLog(process.env, "steps");
 
-export const handler = (event: StepEvent | WorkflowEvent): Promise<unknown> => logged(events, () => handle(event));
+export const handler = (event: StepEvent | WorkflowEvent | ExecutionEvent): Promise<unknown> => logged(events, () => handle(event));
 
-async function handle(event: StepEvent | WorkflowEvent): Promise<unknown> {
+async function handle(event: StepEvent | WorkflowEvent | ExecutionEvent): Promise<unknown> {
+  if ("detail-type" in event) return observeExecution(ExecutionEvent.parse(event), events.records);
   if (event.action.startsWith("workflow."))
     return workflowAction({ store: Store.fromEnv(process.env), slack: await workflowSlack() }, event as WorkflowEvent);
-  const d = await getDeps();
+  const base = await getDeps();
+  const execution = event.action === "start" ? event.execution : "state" in event ? event.state.brief?.execution : undefined;
+  const runEvents = events.with({ "mork.execution": execution });
+  const d = {
+    ...base,
+    log: (task: string, kind: string, detail?: Record<string, unknown>) => runEvents.log(kind, { task, ...(detail ? { detail } : {}) }),
+  };
   switch (event.action) {
-    case "start":
-      return start({ ...d, development: event.policy === undefined ? undefined : DevelopmentPolicy.parse(event.policy) }, {
+    case "start": {
+      const input = {
         ...event.input,
         execution: event.execution,
         execution_arn: event.execution_arn,
-      } as StartInput);
+      } as StartInput;
+      const result = await start({ ...d, development: event.policy === undefined ? undefined : DevelopmentPolicy.parse(event.policy) }, input);
+      await attachRun(
+        d.store,
+        input,
+        result,
+        event.started_at ? Date.parse(event.started_at) : Date.now(),
+        events.records,
+        process.env.SLACK_BOT_TOKEN ? new Slack(process.env.SLACK_BOT_TOKEN) : undefined,
+      );
+      return result;
+    }
     case "decide":
       return decide(d, event.state);
     case "handover":
@@ -95,6 +125,8 @@ async function handle(event: StepEvent | WorkflowEvent): Promise<unknown> {
     case "ask":
       // Nothing to return: the state machine waits until the answer arrives with this token.
       await ask(d, event.state, event.task_token);
+      if (event.state.brief.run)
+        emitRun(events.records, event.state.brief.run, "waiting", event.entered_at ? Date.parse(event.entered_at) : Date.now());
       return {};
   }
 }

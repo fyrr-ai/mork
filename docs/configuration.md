@@ -151,3 +151,48 @@ The Terraform module sets these; they are listed for running the code elsewhere.
 | `MORK_SECRET_PREFIX` | `aws-secrets.sh` | Secret name prefix |
 
 Keep these in `mise.local.toml` (not committed), together with `AWS_PROFILE` and `AWS_REGION`.
+
+## Run dashboards
+
+With `otlp_endpoint` configured, Mork exports dashboard records through the existing
+OTLP log connection. It creates no Prometheus metrics or additional state database.
+Presentation colours belong to Grafana; Mork adds no ANSI colour codes to these records.
+
+`run.snapshot` is a complete JSON record with `run_id`, repository, tracker issue,
+title, requester ID and name, Slack permalink, status, `started_at`, `updated_at`,
+`observed_at`, duration, optional usage, PR URL and review effort. Times are Unix
+milliseconds. `updated_at` means the current status began; `observed_at` orders
+records. A fix run gets a new run ID while retaining its task's tracker issue.
+
+The existing `phase` events carry JSON records with `run_id`, `step_id`, phase,
+attempt, start/end times, result, model and available station usage. `step_id` is
+the ECS container task ID, also attached to live logs as `mork.step`. This keeps
+Spot retries separate even when they share the same build attempt. The readable
+phase message remains available as `mork.message`.
+
+The steps Lambda exports waiting states after parking a question. Runners export
+running states as phases start. EventBridge invokes the same Lambda on terminal
+development executions; it reads execution history to export the authoritative
+outcome, close interrupted phases and aggregate callback usage. This also covers
+timeouts and manual aborts when a runner cannot report. EventBridge delivery and
+OTLP are best effort; Step Functions remains the source of truth. These records
+are not a durable run registry and do not backfill older successful executions.
+
+Usage that is missing from any station or interrupted container remains unknown,
+represented by JSON `null`. Resumed Pi sessions report only their new usage.
+Decision-model usage is not included. Totals are available after the execution
+ends; a live run's totals can remain unknown.
+
+Slack names require the `users:read` bot scope in the app manifest and reinstalling
+the app after adding that scope. Requester lookup failure retains the Slack user
+ID and leaves the permalink empty without stopping the task.
+
+Execution-history phase records carry `authoritative: true`. They take precedence
+over a late runner callback for the same container, including after a manual abort.
+
+The Grafana dashboards must select the latest whole record for each run or step,
+including its null values, before counting or filtering status. The overview
+shows runs updated within the selected time window. A long wait with no update
+can fall outside that window; widen it when investigating an older run. The
+source queries have a 5,000-record limit and are shared between panels. They are
+intended for interactive inspection, not an exhaustive inventory or alert source.

@@ -6,7 +6,11 @@ import { REVIEW_LEVEL_TEXT, type Reporter, type SlackStart } from "@mork/sources
 import type { FixRequest } from "./fix.ts";
 import type { GitHub } from "./github.ts";
 
-export type StartInput = ({ repo: string; issue: number } | SlackStart | { fix: FixRequest }) & { execution: string; execution_arn?: string };
+export type StartInput = ({ repo: string; issue: number } | SlackStart | { fix: FixRequest }) & {
+  execution: string;
+  execution_arn?: string;
+  requested_by?: string;
+};
 
 export type Origin =
   | { kind: "github"; issue: number }

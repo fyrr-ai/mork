@@ -81,7 +81,7 @@ data "aws_iam_policy_document" "steps" {
   statement {
     # A fix run's claim on its PR expires with its execution.
     sid       = "SeeFixRuns"
-    actions   = ["states:DescribeExecution"]
+    actions   = ["states:DescribeExecution", "states:GetExecutionHistory"]
     resources = ["${replace(aws_sfn_state_machine.this.arn, ":stateMachine:", ":execution:")}:*"]
   }
   statement {
