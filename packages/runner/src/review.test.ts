@@ -2,9 +2,9 @@ import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Review, type ReviewEvidence, type VerificationOutput } from "@mork/contracts";
+import { CriteriaOutput, Review, type ReviewEvidence, type VerificationOutput } from "@mork/contracts";
 import { mustExec, SAFE_GIT } from "./git.ts";
-import { carryFindings, locate, locateFindings, readAt, type SnapshotReader, verifyReview } from "./review.ts";
+import { carryFindings, locate, locateFindings, readAt, type SnapshotReader, verifyCriteria, verifyReview } from "./review.ts";
 
 const before = "export function add(a, b) {\n  return a + b;\n}";
 const after = "export function add(a, b) {\n  return a - b;\n}";
@@ -40,6 +40,70 @@ const confirmed: VerificationOutput = {
     },
   ],
 };
+
+test("criteria retain absolute checkout citations at their immutable base and head revisions", () => {
+  const dir = mkdtempSync(join(tmpdir(), "mork-criteria-evidence-"));
+  try {
+    const git = (...args: string[]) =>
+      mustExec("git", [...SAFE_GIT, "-c", "user.name=test", "-c", "user.email=test@example.test", "-C", dir, ...args]).trim();
+    git("init", "-q");
+    writeFileSync(join(dir, "README.md"), "## Mork\nMork opens draft PRs.\n\n## Setup\n");
+    git("add", ".");
+    git("commit", "-qm", "base");
+    const base = git("rev-parse", "HEAD");
+    const channel = "Tasks go to Slack channel #mork-example-app.";
+    writeFileSync(join(dir, "README.md"), `## Mork\nMork opens draft PRs.\n${channel}\n\n## Setup\n`);
+    git("commit", "-qam", "docs(readme): name the channel");
+    const head = git("rev-parse", "HEAD");
+    // Verification must read Git objects, even if a worker has edited its checkout.
+    writeFileSync(join(dir, "README.md"), "uncommitted content\n");
+    const roots = { base: "/work/review-base", head: "/work/criteria" };
+    const readers = { base: readAt(dir, base), head: readAt(dir, head) };
+    const output = CriteriaOutput.parse({
+      criteria: [
+        {
+          id: "AC1",
+          pass: true,
+          evidence: [
+            { where: "/work/criteria/README.md:3", quote: channel },
+            { where: "/work/review-base/README.md:4", quote: "## Setup" },
+            { revision: "head", where: "README.md:5", quote: "## Setup" },
+            { revision: "base", where: "README.md:2", quote: "Mork opens draft PRs." },
+          ],
+        },
+      ],
+    });
+    const checked = verifyCriteria(review, output, ["AC1"], readers, roots);
+    expect(checked.criteria[0]?.evidence).toEqual([
+      { revision: "head", where: "README.md:3", quote: channel },
+      { revision: "base", where: "README.md:4", quote: "## Setup" },
+      { revision: "head", where: "README.md:5", quote: "## Setup" },
+      { revision: "base", where: "README.md:2", quote: "Mork opens draft PRs." },
+    ]);
+    expect(checked.incomplete).toEqual([]);
+    const invalid = CriteriaOutput.parse({
+      criteria: [
+        {
+          id: "AC1",
+          pass: true,
+          evidence: [
+            { where: "/work/criteria-other/README.md:3", quote: channel },
+            { where: "/work/criteria/../review-base/README.md:4", quote: "## Setup" },
+            { revision: "base", where: "README.md:3", quote: channel },
+            { where: "README.md:4", quote: "## Setup" },
+            { where: "README.md:3", quote: "invented quote" },
+          ],
+        },
+      ],
+    });
+    expect(verifyCriteria(review, invalid, ["AC1", "AC2"], readers, roots)).toMatchObject({
+      criteria: [{ evidence: [] }],
+      incomplete: ["Acceptance criteria checker omitted criteria", "Acceptance criterion AC1 has invalid evidence"],
+    });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 test("confirmation requires checked baseline and changed code", () => {
   expect(verifyReview(review, confirmed, read).findings[0]?.verification.status).toBe("confirmed");

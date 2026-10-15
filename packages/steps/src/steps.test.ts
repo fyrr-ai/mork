@@ -37,7 +37,7 @@ const review: Review = {
   files_reviewed: ["math.mjs"],
   unreviewed_files: [],
   incomplete: [],
-  criteria: [{ id: "AC2", pass: true, evidence: [{ where: "README.md:3", quote: "add(a, b) returns the sum" }] }],
+  criteria: [{ id: "AC2", pass: true, evidence: [{ revision: "head", where: "README.md:3", quote: "add(a, b) returns the sum" }] }],
   findings: [],
   read_first: [],
 };

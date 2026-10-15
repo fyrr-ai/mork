@@ -1,6 +1,6 @@
 // Repository evidence is verified against immutable Git objects. A valid quote
 // proves its location, not the defect; the verifier must establish the regression.
-import type { FindingVerification, Review, ReviewEvidence, VerificationOutput } from "@mork/contracts";
+import type { CriteriaOutput, FindingVerification, Review, ReviewEvidence, VerificationOutput } from "@mork/contracts";
 import { exec, mustExec, SAFE_GIT } from "./git.ts";
 
 export type ChangedFile = { path: string; added: number; removed: number };
@@ -92,6 +92,55 @@ function citationValid(e: ReviewEvidence, read: { base: SnapshotReader; head: Sn
   const snapshot = read[e.revision](e.path);
   if ("absent" in e) return snapshot.status === "absent";
   return snapshot.status === "present" && locate(snapshot.content, e.quote, e.line)?.line === e.line;
+}
+
+/** Resolve agent checkout paths to immutable Git revisions before checking quotes. */
+export function verifyCriteria(
+  review: Review,
+  output: CriteriaOutput,
+  expected: string[],
+  read: { base: SnapshotReader; head: SnapshotReader },
+  roots: { base: string; head: string },
+): Review {
+  const seen = new Set<string>();
+  const criteria = output.criteria
+    .filter((c) => {
+      if (!expected.includes(c.id) || seen.has(c.id)) return false;
+      seen.add(c.id);
+      return true;
+    })
+    .map((c) => ({
+      ...c,
+      evidence: c.evidence.flatMap((e) => {
+        const where = /^(.+):([1-9]\d*)$/.exec(e.where);
+        if (!where) return [];
+        let path = where[1] as string;
+        let revision = e.revision;
+        // The actual checkout identifies the revision even if the agent omits it.
+        for (const candidate of ["base", "head"] as const) {
+          if (!path.startsWith(`${roots[candidate]}/`)) continue;
+          path = path.slice(roots[candidate].length + 1);
+          revision = candidate;
+          break;
+        }
+        if (!safePath(path)) return [];
+        const line = Number(where[2]);
+        const snapshot = read[revision](path);
+        if (snapshot.status !== "present" || locate(snapshot.content, e.quote, line)?.line !== line) return [];
+        return [{ revision, where: `${path}:${line}`, quote: e.quote }];
+      }),
+    }));
+  return {
+    ...review,
+    criteria,
+    incomplete: [
+      ...review.incomplete,
+      ...(seen.size !== expected.length ? ["Acceptance criteria checker omitted criteria"] : []),
+      ...criteria
+        .filter((c) => c.evidence.length !== output.criteria.find((raw) => raw.id === c.id)?.evidence.length)
+        .map((c) => `Acceptance criterion ${c.id} has invalid evidence`),
+    ],
+  };
 }
 
 export function verifyReview(review: Review, output: VerificationOutput, read: { base: SnapshotReader; head: SnapshotReader }): Review {

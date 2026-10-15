@@ -126,7 +126,15 @@ export const CriteriaOutput = z.object({
     z.object({
       id: z.string().regex(/^AC\d+$/),
       pass: z.boolean(),
-      evidence: z.array(z.object({ where: z.string().min(1), quote: z.string().min(1) })),
+      evidence: z.array(
+        z.object({
+          // Stored reviews before revision-aware criteria cited only head.
+          revision: z.enum(["base", "head"]).default("head"),
+          /** Repository-relative path:line, normalized and checked by the runner. */
+          where: z.string().min(1),
+          quote: z.string().min(1),
+        }),
+      ),
     }),
   ),
 });
