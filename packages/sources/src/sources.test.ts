@@ -5,7 +5,7 @@ import { type AnswerDeps, deliverAnswer } from "./answers.ts";
 import { Channels } from "./channels.ts";
 import { allOf, slackSource } from "./index.ts";
 import { handler as slackIntake } from "./intake.ts";
-import { adfToText, draftByRules, draftIssue, findIssueKey, Jira, textToAdf } from "./jira.ts";
+import { adfToText, draftByRules, draftIssue, findIssueKey, Jira, jiraReporter, textToAdf } from "./jira.ts";
 import { resumeAnswer } from "./sfn-run.ts";
 import { executionUrl, grafanaLiveUrl, parseSlackRequest, Slack, slackSignatureValid, slackText, statusOf } from "./slack.ts";
 import { asksForStatus, statusText, taskKey } from "./status.ts";
@@ -154,6 +154,18 @@ describe("jira", () => {
     };
     expect(adfToText(adf).trim()).toBe("Add truncate.\n- max < 1 throws");
     expect(adfToText(textToAdf("one\n\ntwo")).trim()).toBe("one\ntwo");
+  });
+  test("the PR comment on the issue lists each criterion and its result", async () => {
+    const comments: string[] = [];
+    const reporter = jiraReporter({ comment: async (_key: string, text: string) => void comments.push(text) } as unknown as Jira, "PROJ-1");
+    await reporter.report({
+      kind: "pr",
+      url: "https://pr",
+      level: "careful",
+      reasons: [],
+      criteria: [{ id: "AC1", text: "adds", result: "✅ hidden test" }],
+    });
+    expect(comments).toEqual(["Mork opened a draft PR: https://pr\n\nAcceptance criteria:\nAC1 adds: ✅ hidden test"]);
   });
   test("without a usable model answer the rules decide Story or Bug", async () => {
     expect(draftByRules("Fix the export, it fails on an empty file").type).toBe("Bug");

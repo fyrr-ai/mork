@@ -55,6 +55,21 @@ export const AcceptanceCriterion = z.object({
   testable: z.boolean(),
 });
 
+/**
+ * Criteria the issue author wrote, one per line as `AC1: text` (a list bullet
+ * or bold id is fine). They are the contract: Plan copies them unchanged and
+ * only decides which ones a hidden test can check. Read by code, never by a model.
+ */
+export type AuthorCriterion = Pick<z.infer<typeof AcceptanceCriterion>, "id" | "text">;
+const AUTHOR_CRITERION = /^\s*(?:[-*•]\s*)?(?:\*\*)?(AC\d+)(?:\*\*)?\s*[:.)–-]\s*(?:\*\*\s*)?(\S.*?)\s*$/;
+
+export function authorCriteria(body: string | null): AuthorCriterion[] {
+  return (body ?? "").split("\n").flatMap((line) => {
+    const match = AUTHOR_CRITERION.exec(line);
+    return match ? [{ id: match[1] as string, text: (match[2] as string).replace(/\s+/g, " ") }] : [];
+  });
+}
+
 export const HiddenTest = z.object({
   /** File name only; the gate places it under `hidden_tests.dir`. */
   file: z.string().regex(/^[A-Za-z0-9._-]+$/),
@@ -70,6 +85,8 @@ export const AnalystOutput = z.object({
   acceptance_criteria: z.array(AcceptanceCriterion).min(1),
   hidden_tests: z.array(HiddenTest),
   risks: z.array(z.string()),
+  /** Further checks the analyst suggests beside the author's criteria: shown to the reviewer, never checked. */
+  proposed_criteria: z.array(z.string().min(1)).default([]),
   /** The analyst's own read on whether the change touches security-sensitive code. */
   security_sensitive: z.boolean(),
 });

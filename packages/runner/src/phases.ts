@@ -9,6 +9,7 @@ import { join } from "node:path";
 import {
   AnalystOutput,
   Answers,
+  authorCriteria,
   type Brief,
   type BuildResult,
   BuildResult as BuildResultSchema,
@@ -42,7 +43,7 @@ import { type LlmJob, type LlmOutcome, type RunnerEnv, runLlmStation } from "./l
 import { ocrReview, parseOcrResult, runOcr } from "./ocr.ts";
 import * as prompts from "./prompts.ts";
 import { carryFindings, changedFiles, locateFindings, readAt, verifyCriteria, verifyReview } from "./review.ts";
-import { checkPlan, gateFailures, gateFeedback, gatePassed } from "./rules.ts";
+import { checkPlan, duplicateCriteria, gateFailures, gateFeedback, gatePassed } from "./rules.ts";
 import { SessionLog } from "./session.ts";
 import { onShutdown } from "./shutdown.ts";
 import type { SupervisionRecord } from "./supervisor.ts";
@@ -210,6 +211,10 @@ export function plan(ctx: PhaseContext): Promise<RunResult> {
 async function planWith(ctx: PhaseContext, records: SupervisionRecord[]): Promise<RunResult> {
   const { brief, store } = ctx;
   const issue = IssueDoc.parse(await store.json(keys.issue(brief.prefix)));
+  const author = authorCriteria(issue.body);
+  const duplicates = duplicateCriteria(author);
+  if (duplicates.length)
+    throw new HandoverError(`The issue lists acceptance criteria ${duplicates.join(", ")} more than once. Give each criterion its own id.`);
   const stats: Stats = [];
   let feedback: string | undefined;
   for (let attempt = 1; attempt <= ctx.step.attempts; attempt++) {
@@ -227,7 +232,7 @@ async function planWith(ctx: PhaseContext, records: SupervisionRecord[]): Promis
     }
     const full = parsed.data;
     const publicPlan: PublicPlan = { ...full, hidden_tests: full.hidden_tests.map(({ file, criteria }) => ({ file, criteria })) };
-    const problem = checkPlan(publicPlan, config);
+    const problem = checkPlan(publicPlan, config, author);
     if (problem) {
       feedback = problem;
       continue;

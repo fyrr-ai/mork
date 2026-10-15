@@ -1,8 +1,23 @@
 // Rules the containers apply to their own results: is the plan usable, did
 // the gate pass, what does the implementer need to hear when it did not.
-import type { AnalystOutput, GateReport, PublicPlan, RepoConfig } from "@mork/contracts";
+import type { AnalystOutput, AuthorCriterion, GateReport, PublicPlan, RepoConfig } from "@mork/contracts";
 
-export function checkPlan(plan: PublicPlan, config: RepoConfig): string | undefined {
+/** Two lines naming the same id cannot both be the contract; only the author can fix that. */
+export function duplicateCriteria(author: AuthorCriterion[]): string[] {
+  const ids = author.map((c) => c.id);
+  return [...new Set(ids.filter((id, i) => ids.indexOf(id) !== i))];
+}
+
+const sameText = (a: string, b: string) => a.replace(/\s+/g, " ").trim() === b.replace(/\s+/g, " ").trim();
+
+export function checkPlan(plan: PublicPlan, config: RepoConfig, author: AuthorCriterion[] = []): string | undefined {
+  if (author.length) {
+    const changed =
+      plan.acceptance_criteria.length !== author.length ||
+      author.some((a) => !plan.acceptance_criteria.some((c) => c.id === a.id && sameText(c.text, a.text)));
+    if (changed)
+      return `Return exactly the author's acceptance criteria, same ids and text, and decide only which are testable:\n${author.map((c) => `- ${c.id}: ${c.text}`).join("\n")}\nPut any other check you think is needed in proposed_criteria.`;
+  }
   const covered = new Set(plan.hidden_tests.flatMap((t) => t.criteria));
   const uncovered = plan.acceptance_criteria.filter((c) => c.testable && !covered.has(c.id)).map((c) => c.id);
   if (uncovered.length) return `Testable criteria without a hidden test: ${uncovered.join(", ")}. Write one for each.`;

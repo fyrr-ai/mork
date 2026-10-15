@@ -37,6 +37,7 @@ test.each(["completed", "handover", "retry"] as const)("%s is reported directly 
   const records: Record<string, unknown>[] = [];
   const unexpected: string[] = [];
   const objects = new Map<string, unknown>([
+    [keys.issue(prefix), { ref: "#1", title: "Fix the test", body: null }],
     [
       keys.plan(prefix),
       {

@@ -66,7 +66,7 @@ The station without an LLM. Before the change it proves the hidden tests fail; a
 _Avoid_: CI, validator
 
 **Acceptance criterion**:
-One thing the change must achieve, written by the analyst (`AC1`, `AC2`…). A testable criterion gets a hidden test; an untestable one (docs, wording, readability) is judged from code quotes supplied by the criteria checker and by the decision model.
+One thing the change must achieve (`AC1`, `AC2`…). When the issue numbers them as `AC1: text` lines, they are the author's and Plan copies them unchanged; otherwise the analyst writes them. Further checks the analyst suggests are **proposed criteria**: shown in the PR, never checked. A testable criterion gets a hidden test; an untestable one (docs, wording, readability) is judged from code quotes supplied by the criteria checker and by the decision model.
 _Avoid_: requirement, AC (in prose)
 
 **Hidden test**:

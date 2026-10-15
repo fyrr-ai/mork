@@ -449,7 +449,39 @@ describe("slack origin", () => {
     await decide(deps, state);
     expect(created?.title).toBe("feat(mork): add add() (PROJ-7)");
     expect(created?.body).toContain("Jira: https://jira/PROJ-7");
+    expect(created?.body).toContain("## Acceptance criteria (derived by Plan)");
     expect(events.map((e) => e.kind)).toEqual(["pr"]);
+  });
+  test("the PR and the tracker show the author's criteria and how each was settled, Plan proposals apart", async () => {
+    events.length = 0;
+    const store = await checkedStore(true);
+    await store.putJson(keys.issue(prefix), { ref: "#1", title: "Add add()", body: "Acceptance criteria\n- AC1: adds\n- AC2: documented" });
+    await store.putJson(keys.plan(prefix), { ...publicPlan, proposed_criteria: ["add() rejects strings"] });
+    let body = "";
+    const deps = makeDeps(store, live(fixedDecider("quick", 0.9)));
+    deps.github = {
+      ...github,
+      createDraftPr: async (_r: string, pr: { body: string }) => {
+        body = pr.body;
+        return { number: 8, html_url: "u" };
+      },
+    } as unknown as Deps["github"];
+    await decide(deps, {
+      ...baseState,
+      task: {
+        ...baseState.task,
+        origin: { kind: "slack", start: slackStart, work: { key: "PROJ-7", url: "https://jira/PROJ-7", title: "Add add()", created: true } },
+      },
+      last: { ok: true, passed: true },
+    });
+    expect(body).toContain("## Acceptance criteria (from #1)\n\n- **AC1** adds: ✅ hidden test");
+    expect(body).toContain("## Proposed by Plan, not checked\n\n- add() rejects strings");
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        kind: "pr",
+        criteria: [expect.objectContaining({ id: "AC1", result: "✅ hidden test" }), expect.objectContaining({ id: "AC2" })],
+      }),
+    );
   });
 });
 

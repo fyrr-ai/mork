@@ -40,7 +40,15 @@ export type ReportEvent =
   | { kind: "check"; attempt: number; passed: boolean; failures?: string[] }
   /** The gate passed, but the reviewer found defects Mork fixes before it opens the PR. */
   | { kind: "repair"; attempt: number; findings: string[] }
-  | { kind: "pr"; url: string; level: "quick" | "careful"; reasons: string[]; transcripts_url?: string }
+  | {
+      kind: "pr";
+      url: string;
+      level: "quick" | "careful";
+      reasons: string[];
+      /** Every acceptance criterion with how it was settled, so the tracker shows what is done. */
+      criteria?: { id: string; text: string; result: string }[];
+      transcripts_url?: string;
+    }
   /** Mork stops; `pr_url` is the draft PR it opened for the person who takes over, when the branch had work. */
   | { kind: "handover"; reason: string; pr_url?: string }
   /** After the PR: CI failed or a reviewer asked for changes, and Mork is on it. */
