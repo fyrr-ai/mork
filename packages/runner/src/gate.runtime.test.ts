@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { RepoConfig } from "@mork/contracts";
@@ -259,3 +259,22 @@ privileged("a tracked symlink cannot be replaced by the sandbox", async () => {
   const result = await runGate(job, "", work, { uid: 10002, gid: 10002, env });
   expect(gatePassed(result)).toBe(true);
 });
+
+test.skipIf(process.platform === "linux" && process.arch === "arm64")(
+  "an incompatible native worker fails before repository setup or model execution",
+  async () => {
+    const runtime = {
+      image: `registry.example/app@sha256:${"1".repeat(64)}`,
+      platform: "linux/arm64" as const,
+      repository_runtime: false,
+      task_definitions: {
+        plan: "arn:aws:ecs:eu-west-1:123456789012:task-definition/mork_plan:7",
+        build: "arn:aws:ecs:eu-west-1:123456789012:task-definition/mork_build:7",
+        check: "arn:aws:ecs:eu-west-1:123456789012:task-definition/mork_check:7",
+      },
+    };
+    const f = fixture(`touch ${JSON.stringify("SETUP_MUST_NOT_RUN")}`);
+    await expect(runGate({ ...f.job, runtime }, "", f.work, { env })).rejects.toThrow(/Pinned runtime requires linux\/arm64/);
+    expect(existsSync(join(f.work, "repo", "SETUP_MUST_NOT_RUN"))).toBe(false);
+  },
+);

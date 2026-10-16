@@ -201,6 +201,8 @@ export async function startFix(deps: Deps, input: { fix: FixRequest; execution: 
   const parsed = PrRecord.safeParse(raw);
   if (!parsed.success) return dismiss("the task's data has expired");
   const record = parsed.data;
+  if (deps.runtime && !record.state.brief.runtime)
+    throw new HandoverError("Task has no pinned runtime; start a new task instead of switching its execution image.");
   // A Lambda retry of this very Start finds its own claim: it continues the round it already owns.
   const owner = input.execution_arn;
   if (!owner) throw new Error("Fix runs require an execution ARN");

@@ -1,6 +1,7 @@
 // Lambda entry for the steps between containers. Step Functions invokes it
 // with { action, state } and keeps whatever it returns. A step that hands the
 // task to a person throws HandoverError, which the state's Catch routes.
+import { TaskRuntime } from "@mork/contracts";
 import { DevelopmentPolicy } from "@mork/contracts/development";
 import { panelFromEnv } from "@mork/decision";
 import {
@@ -35,6 +36,7 @@ export type StepEvent =
       execution_arn: string;
       started_at?: string;
       policy?: unknown;
+      runtime?: unknown;
     }
   | { action: "decide" | "handover" | "preflight"; state: FlowState }
   | { action: "ask"; state: FlowState; task_token: string; entered_at?: string };
@@ -106,6 +108,9 @@ async function handle(event: StepEvent | WorkflowEvent): Promise<unknown> {
   };
   switch (event.action) {
     case "preflight":
+      TaskRuntime.parse(event.state.brief.runtime, {
+        error: () => "Cloud task has no valid pinned runtime; start a new task instead of selecting a deployed revision.",
+      });
       return preflight(d, event.state);
     case "start": {
       const input = {
@@ -113,7 +118,16 @@ async function handle(event: StepEvent | WorkflowEvent): Promise<unknown> {
         execution: event.execution,
         execution_arn: event.execution_arn,
       } as StartInput;
-      const result = await start({ ...d, development: event.policy === undefined ? undefined : DevelopmentPolicy.parse(event.policy) }, input);
+      const result = await start(
+        {
+          ...d,
+          runtime: TaskRuntime.parse(event.runtime, {
+            error: () => "Cloud Start requires an operator-pinned runtime and task-definition revisions.",
+          }),
+          development: event.policy === undefined ? undefined : DevelopmentPolicy.parse(event.policy),
+        },
+        input,
+      );
       await attachRun(
         d.store,
         input,

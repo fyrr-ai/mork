@@ -22,6 +22,29 @@ const RelativePath = z
     (path) => !path.startsWith("/") && !path.split("/").some((part) => !part || part === "." || part === ".." || part === ".git"),
     "Expected a repository-relative path",
   );
+/** Operator-selected immutable execution environment, never repository or model input. */
+export const TaskRuntime = z.object({
+  image: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]*@sha256:[0-9a-f]{64}$/),
+  platform: z.literal("linux/arm64"),
+  repository_runtime: z.boolean(),
+  task_definitions: z.object({
+    plan: z.string().regex(/^arn:aws(?:-us-gov|-cn)?:ecs:[a-z0-9-]+:[0-9]{12}:task-definition\/[A-Za-z0-9_-]+:[1-9][0-9]*$/),
+    build: z.string().regex(/^arn:aws(?:-us-gov|-cn)?:ecs:[a-z0-9-]+:[0-9]{12}:task-definition\/[A-Za-z0-9_-]+:[1-9][0-9]*$/),
+    check: z.string().regex(/^arn:aws(?:-us-gov|-cn)?:ecs:[a-z0-9-]+:[0-9]{12}:task-definition\/[A-Za-z0-9_-]+:[1-9][0-9]*$/),
+  }),
+});
+export type TaskRuntime = z.infer<typeof TaskRuntime>;
+
+export const RuntimeManifest = z.object({
+  schema: z.literal(1),
+  platform: z.literal("linux/arm64"),
+  base_mork_digest: z.string().regex(/^sha256:[0-9a-f]{64}$/),
+  inputs: z
+    .record(RelativePath, z.string().regex(/^[0-9a-f]{64}$/))
+    .refine((inputs) => Object.keys(inputs).length > 0, "Runtime inputs cannot be empty"),
+});
+export type RuntimeManifest = z.infer<typeof RuntimeManifest>;
+
 export const ReferenceRepository = z.object({
   name: z.string().regex(/^[A-Za-z0-9_-]+$/),
   repo: z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/),
@@ -366,6 +389,7 @@ export const keys = {
 };
 
 export const Brief = z.object({
+  runtime: TaskRuntime.optional(),
   /** Build attempt this run belongs to (Plan uses 1). */
   attempt: z.number().int().positive(),
   /** Object key prefix of this task in the Mork bucket. */

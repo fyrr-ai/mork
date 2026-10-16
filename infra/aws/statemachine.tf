@@ -91,6 +91,13 @@ locals {
     }
   }
 
+  development_runtime = {
+    image              = jsondecode(aws_ecs_task_definition.phase["plan"].container_definitions)[0].image
+    platform           = "linux/arm64"
+    repository_runtime = try(local.development.runner_image, null) != null
+    task_definitions   = { for phase, definition in aws_ecs_task_definition.phase : phase => definition.arn }
+  }
+
   catch = [{ ErrorEquals = ["States.ALL"], ResultPath = "$.error", Next = "Handover" }]
 
   spot        = [{ CapacityProvider = "FARGATE_SPOT", Weight = 1 }]
@@ -115,7 +122,7 @@ locals {
     Next = "${title(step.name)}Asked"
     Parameters = {
       Cluster                  = aws_ecs_cluster.this.arn
-      TaskDefinition           = aws_ecs_task_definition.phase[step.kind].arn
+      "TaskDefinition.$"       = "$.brief.runtime.task_definitions.${step.kind}"
       CapacityProviderStrategy = step.capacity == "spot" ? local.spot : local.on_demand
       NetworkConfiguration     = local.network
       "Group.$"                = "$.task.started_by"
@@ -180,7 +187,7 @@ locals {
         Parameters = {
           FunctionName = aws_lambda_function.steps.qualified_arn
           # The whole execution input goes on: { repo, issue } from GitHub or SlackStart from Slack.
-          Payload = { action = "start", "input.$" = "$", "execution.$" = "$$.Execution.Name", "execution_arn.$" = "$$.Execution.Id", "started_at.$" = "$$.Execution.StartTime", policy = local.development_policy }
+          Payload = { action = "start", "input.$" = "$", "execution.$" = "$$.Execution.Name", "execution_arn.$" = "$$.Execution.Id", "started_at.$" = "$$.Execution.StartTime", policy = local.development_policy, runtime = local.development_runtime }
         }
         OutputPath = "$.Payload"
         Retry      = local.lambda_retry

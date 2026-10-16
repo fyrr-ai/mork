@@ -23,6 +23,7 @@ import {
   readPublicFeedback,
   repairCandidate,
   repairFeedback,
+  TaskRuntime,
 } from "@mork/contracts";
 import { DEFAULT_DEVELOPMENT_POLICY, type DevelopmentPolicy } from "@mork/contracts/development";
 import {
@@ -84,6 +85,7 @@ export type Dismissed = { next: "done"; dismissed: string };
 export type Deps = {
   github: GitHub;
   development?: DevelopmentPolicy;
+  runtime?: TaskRuntime;
   store: Store;
   panel: DecisionPanel;
   timeline: TimelineStore;
@@ -129,6 +131,8 @@ function requireDependencies(work: TrackerIssue): void {
 
 /** Runs in the trusted steps Lambda, including after Ask/resume, never in the agent sandbox. */
 export async function preflight(deps: Deps, state: FlowState): Promise<FlowState> {
+  if (deps.runtime && !state.brief.runtime)
+    throw new HandoverError("Task has no pinned runtime; start a new task instead of switching its execution image.");
   if (state.task.origin.kind === "slack" && state.task.origin.work) {
     if (!deps.trackerIssue) throw new HandoverError("Fresh Jira dependency lookup is unavailable; cannot establish task readiness.");
     requireDependencies(await deps.trackerIssue(state.task.origin.work.key));
@@ -217,10 +221,10 @@ ${slack.ask}`,
     ...(input.execution_arn ? { execution_url: executionUrl(input.execution_arn) } : {}),
   });
   const info = await github.repo(repo);
-  if (!(await github.file(repo, ".mork/config.toml", info.default_branch))) {
+  const baseSha = await github.branchSha(repo, info.default_branch);
+  if (!(await github.file(repo, ".mork/config.toml", baseSha))) {
     throw new HandoverError("The repository has no `.mork/config.toml` on its default branch, so Mork cannot run its tests.");
   }
-  const baseSha = await github.branchSha(repo, info.default_branch);
   const triaged = early ?? (await triage(deps.panel, { title: work.title, body: work.body }));
   await recordDecision(deps.timeline, {
     task: task.id,
@@ -231,6 +235,7 @@ ${slack.ask}`,
   });
   deps.log(task.id, "triage", triaged.triage);
   const brief: Brief = {
+    ...(deps.runtime ? { runtime: TaskRuntime.parse(deps.runtime) } : {}),
     attempt: 1,
     last_attempt: Math.min((deps.development ?? DEFAULT_DEVELOPMENT_POLICY).build_attempts, buildLimit(deps.development)),
     prefix: names.prefix,

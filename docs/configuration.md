@@ -125,6 +125,26 @@ A changed oracle, runtime or acceptance contract invalidates the baseline/candid
 
 Repository setup runs before a new or resumed station starts. Verification diagnostics retain command identity, checkout SHA, working directory and redacted output outside the checkout. Capture is bounded to 64 MiB per command; exceeding it marks the diagnostic incomplete and prevents a successful verification. The prompt shows a short excerpt and the saved artifact location.
 
+### Prepared repository runtime
+
+The operator may configure development `runner_image` as a repository-owned image with an immutable `@sha256:` digest. Development workers run on `linux/arm64`. Start snapshots that image identity and the revision-qualified Plan, Build and Check task definitions into the task's Brief. Initial launches, Spot fallback, Ask/resume and later fix runs use those saved revisions; a new deployment cannot replace them. Existing cloud tasks without a runtime pin must be restarted as new tasks rather than silently adopting the current image. Retain the pinned images and task-definition revisions while their tasks can resume.
+
+A prepared image contains `/opt/mork-runtime/manifest.json`:
+
+```json
+{
+  "schema": 1,
+  "platform": "linux/arm64",
+  "base_mork_digest": "sha256:<64 lowercase hexadecimal characters>",
+  "inputs": {
+    ".mork/config.toml": "<64 lowercase hexadecimal characters>",
+    "mise.lock": "<64 lowercase hexadecimal characters>"
+  }
+}
+```
+
+Include every lockfile, tool configuration and setup input used to prepare dependencies. The manifest must include `.mork/config.toml`; every entry names a regular repository file and its SHA-256. The runner compares these hashes with Git blobs at the task's exact base SHA before worker setup, model sessions or gate commands. A later default branch or changed candidate working tree cannot change that comparison. The repository setup separately checks candidate inputs and imports, so stale prepared dependencies cannot hide a candidate dependency change. Local workers inside a prepared image perform the same manifest check. Native worker architecture must match the declared platform. The manifest records the parent Mork digest; trust in its contents comes from the operator-approved immutable image, not a repository-selected image or model claim.
+
 ## Environment reference
 
 The Terraform module sets these; they are listed for running the code elsewhere. A variable `X` can be given as `X_SECRET_ID` (a Secrets Manager ARN or name) instead.

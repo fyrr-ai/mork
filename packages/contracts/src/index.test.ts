@@ -1,5 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import { authorCriteria, BRANCH_PATTERN, parseRepoConfig, publicFeedback, raiseLevel, readPublicFeedback, repairFeedback } from "./index.ts";
+import {
+  authorCriteria,
+  BRANCH_PATTERN,
+  parseRepoConfig,
+  publicFeedback,
+  RuntimeManifest,
+  raiseLevel,
+  readPublicFeedback,
+  repairFeedback,
+  TaskRuntime,
+} from "./index.ts";
 
 describe("contracts", () => {
   test("repo config parses with defaults", () => {
@@ -44,4 +54,31 @@ test("public feedback requires a leading marker and never upgrades legacy review
   expect(readPublicFeedback(`ORACLE\n${publicFeedback("legacy")}`)).not.toContain("ORACLE");
   expect(readPublicFeedback(repairFeedback([]))).toContain("Legacy reviewer feedback withheld");
   expect(readPublicFeedback(repairFeedback([], "public-v1"))).toContain("The reviewer found defects");
+});
+
+test("runtime identity accepts only an immutable ARM64 image and revision-qualified phase definitions", () => {
+  const runtime = {
+    image: `registry.example/app@sha256:${"1".repeat(64)}`,
+    platform: "linux/arm64",
+    repository_runtime: true,
+    task_definitions: Object.fromEntries(
+      ["plan", "build", "check"].map((phase) => [phase, `arn:aws:ecs:eu-west-1:123456789012:task-definition/mork_${phase}:7`]),
+    ),
+  };
+  expect(TaskRuntime.safeParse(runtime).success).toBe(true);
+  for (const changed of [
+    { ...runtime, image: "registry.example/app:latest" },
+    { ...runtime, platform: "linux/amd64" },
+    { ...runtime, task_definitions: { ...runtime.task_definitions, build: "arn:aws:ecs:eu-west-1:123456789012:task-definition/mork_build" } },
+    { ...runtime, task_definitions: { plan: runtime.task_definitions.plan } },
+  ])
+    expect(TaskRuntime.safeParse(changed).success).toBe(false);
+  expect(
+    RuntimeManifest.safeParse({
+      schema: 1,
+      platform: "linux/arm64",
+      base_mork_digest: `sha256:${"1".repeat(64)}`,
+      inputs: { "../secret": "2".repeat(64) },
+    }).success,
+  ).toBe(false);
 });
