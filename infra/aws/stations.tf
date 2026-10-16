@@ -124,13 +124,27 @@ data "aws_iam_policy_document" "phase" {
     actions   = ["s3:GetObject"]
     resources = [for key in each.value.reads : "${local.tasks_arn}/*/${key}"]
   }
+  statement {
+    sid       = "PublicDiagnostics"
+    actions   = ["s3:GetObject", "s3:PutObject"]
+    resources = ["${local.tasks_arn}/*/diagnostics/public/*"]
+  }
+  # Hidden runner output may contain the oracle even after secret redaction.
+  dynamic "statement" {
+    for_each = each.key != "build" ? [1] : []
+    content {
+      sid       = "OracleDiagnostics"
+      actions   = ["s3:GetObject", "s3:PutObject"]
+      resources = ["${local.tasks_arn}/*/diagnostics/oracle/*"]
+    }
+  }
   dynamic "statement" {
     for_each = each.key == "build" ? [1] : []
     content {
       sid       = "HiddenTestsStayHidden"
       effect    = "Deny"
       actions   = ["s3:GetObject", "s3:GetObjectVersion"]
-      resources = ["${local.tasks_arn}/*/hidden/*", "${local.tasks_arn}/*/sessions/plan-*"]
+      resources = ["${local.tasks_arn}/*/hidden/*", "${local.tasks_arn}/*/sessions/plan-*", "${local.tasks_arn}/*/diagnostics/oracle/*"]
     }
   }
   statement {

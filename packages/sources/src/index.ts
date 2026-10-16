@@ -38,6 +38,8 @@ export function allOf(reporters: Reporter[], log: (error: unknown) => void = con
 }
 
 export type SlackSource = {
+  /** Fresh tracker state, including blocking dependencies, before resuming work. */
+  issue?(key: string): Promise<TrackerIssue>;
   /** The Jira issue the request names, or a new Story or Bug for it. */
   resolve(input: SlackStart): Promise<TrackerIssue>;
   /**
@@ -65,6 +67,7 @@ export function slackSource(slack: Slack, jira: Jira, complete?: Complete, store
   const reporter = (input: SlackStart, work?: TrackerIssue) =>
     allOf(work ? [slackReporter(slack, input.ref), jiraReporter(jira, work.key)] : [slackReporter(slack, input.ref)]);
   return {
+    issue: (key) => jira.issue(key),
     async resolve(input) {
       const key = findIssueKey(input.ask);
       if (key) return jira.issue(key);

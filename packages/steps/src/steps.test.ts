@@ -2,13 +2,22 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type AnalystOutput, type GateReport, keys, MAX_BUILD_ATTEMPTS, type Review } from "@mork/contracts";
+import {
+  type AnalystOutput,
+  type GateReport,
+  keys,
+  MAX_BUILD_ATTEMPTS,
+  PUBLIC_FEEDBACK_MARKER,
+  publicFeedback,
+  type Review,
+  readPublicFeedback,
+} from "@mork/contracts";
 import { DEFAULT_DEVELOPMENT_POLICY } from "@mork/contracts/development";
 import { type Answer, type Decider, DecisionPanel, findingPriority, type Priority } from "@mork/decision";
 import type { ReportEvent } from "@mork/sources";
 import { LocalStore } from "@mork/store/local";
 import { linkPr, MemoryStore as TimelineMemory } from "@mork/timeline";
-import { type FixTrigger, fixTrigger, MARKER, releasePr, savePr } from "./fix.ts";
+import { type FixTrigger, fixTrigger, MARKER, savePr } from "./fix.ts";
 import { ask, checksTable, type Deps, decide, type FlowState, handover, handoverReason, start, startedBy } from "./flow.ts";
 import { prOutcome, signatureValid } from "./intake.ts";
 import { githubReporter, prLink } from "./origin.ts";
@@ -33,6 +42,7 @@ const gate = {
   diff_policy: { violations: [], changed_files: ["math.mjs"], protected_hits: [], flags: [], added_lines: 3, removed_lines: 1 },
 } satisfies GateReport;
 const review: Review = {
+  feedback_visibility: "public-v1",
   summary: "ok",
   files_reviewed: ["math.mjs"],
   unreviewed_files: [],
@@ -167,7 +177,7 @@ const github = {
     html_url: `https://github.com/o/r/pull/${n}`,
     head: { sha: "c".repeat(40), ref: "mork/issue-1-abc" },
   }),
-  failedChecks: async () => [{ name: "lint", summary: "2 errors", log: "src/strings.mjs: missing JSDoc" }],
+  ciChecks: async () => ({ failed: [{ name: "lint", summary: "2 errors", log: "src/strings.mjs: missing JSDoc" }], pending: [] }),
   openPr: async () => undefined,
   review: async () => ({ by: "alice", body: "Rename it", comments: [{ where: "math.mjs:1", body: "call it sum" }] }),
 } as unknown as Deps["github"];
@@ -188,6 +198,7 @@ const makeDeps = (store: LocalStore, panel: DecisionPanel = none): Deps => ({
       ? githubReporter(github, task.repo, task.origin.issue, task.id)
       : { report: async (e: ReportEvent) => void events.push(e) },
   resolveSlack: async () => ({ key: "PROJ-7", title: "Add add()", body: "sum two numbers", url: "https://jira/PROJ-7", created: true }),
+  trackerIssue: async (key) => ({ key, title: "Add add()", body: "sum two numbers", url: `https://jira/${key}`, created: false, blocked_by: [] }),
   askRequester: async (_task, q) => void asked.push(q),
   tellSlack: async (_start, e) => void told.push(e),
   log: () => undefined,
@@ -206,6 +217,295 @@ const baseState: FlowState = {
 };
 const publicPlan = { ...plan, hidden_tests: plan.hidden_tests.map(({ file, criteria }) => ({ file, criteria })) };
 
+describe("handover ownership and task budget", () => {
+  const original = { ...baseState, task: { ...baseState.task, execution_arn: "arn:original" } };
+  const ci = {
+    fix: { repo: "o/r", pr: 7, trigger: { kind: "ci" as const, sha: "c".repeat(40) } },
+    execution: "fix-new",
+    execution_arn: "arn:fix-new",
+  };
+  const resume = { ...ci, fix: { ...ci.fix, trigger: { kind: "comment" as const, body: "@mork resume fix the checks", by: "alice" } } };
+
+  test("handover closes intake before publishing a PR and only explicit resume reopens it", async () => {
+    const store = memory();
+    const deps = { ...makeDeps(store), timeline: new TimelineMemory(), executionRunning: async (arn: string) => arn === "arn:original" };
+    await linkPr(deps.timeline, original.task.id, "o/r", 7, prefix);
+    deps.github = {
+      ...github,
+      createDraftPr: async () => {
+        expect(await store.json(keys.pr(prefix))).toMatchObject({ automation: "handing_over" });
+        expect(await start(deps, ci)).toMatchObject({ next: "done" });
+        expect(await start(deps, resume)).toMatchObject({ next: "done" });
+        return { number: 7, html_url: "https://github.com/o/r/pull/7" };
+      },
+    } as Deps["github"];
+    await handover(deps, original);
+    expect(await store.json(keys.pr(prefix))).toMatchObject({ automation: "handed_over" });
+    for (const trigger of [
+      ci.fix.trigger,
+      { kind: "review" as const, review_id: 1, by: "alice" },
+      { kind: "comment" as const, body: "@mork fix", by: "alice" },
+    ]) {
+      expect(await start(deps, { ...ci, fix: { ...ci.fix, trigger } })).toMatchObject({ dismissed: "automation handed over; use @mork resume" });
+    }
+    expect(await start(deps, resume)).toMatchObject({ next: "build", brief: { attempt: 2 } });
+    const claimed = await store.json(keys.pr(prefix));
+    expect(claimed).toMatchObject({ automation: "enabled", running: "arn:fix-new" });
+    await start(deps, resume);
+    expect(await store.json(keys.pr(prefix))).toEqual(claimed);
+  });
+
+  test.each([false, true])("explicit resume recovers only a dead handover owner, live=%s", async (live) => {
+    const store = memory();
+    const deps = { ...makeDeps(store), timeline: new TimelineMemory() };
+    await linkPr(deps.timeline, original.task.id, "o/r", 7, prefix);
+    await savePr(deps, original, { number: 7, url: "https://github.com/o/r/pull/7" });
+    await store.updateJson(keys.pr(prefix), (r: any) => ({ ...r, automation: "handing_over", running: "arn:handover-owner", build_reserved: 3 }));
+    const observed: string[] = [];
+    deps.executionRunning = async (arn) => {
+      observed.push(arn);
+      return live;
+    };
+    expect(await start(deps, ci)).toMatchObject({ next: "done" });
+    expect(observed).toEqual([]);
+    const result = await start(deps, resume);
+    expect(observed).toEqual(["arn:handover-owner"]);
+    expect(result).toMatchObject(live ? { next: "done" } : { next: "build", brief: { attempt: 4 } });
+    if (!live) {
+      const claimed = await store.json(keys.pr(prefix));
+      await start(deps, resume);
+      expect(await store.json(keys.pr(prefix))).toEqual(claimed);
+    }
+  });
+
+  test("a changed owner after the dead-owner probe cannot be displaced by resume", async () => {
+    const store = memory();
+    const deps = { ...makeDeps(store), timeline: new TimelineMemory() };
+    await linkPr(deps.timeline, original.task.id, "o/r", 7, prefix);
+    await savePr(deps, original, { number: 7, url: "https://github.com/o/r/pull/7" });
+    await store.updateJson(keys.pr(prefix), (r: any) => ({ ...r, automation: "handing_over" }));
+    deps.executionRunning = async (arn) => {
+      expect(arn).toBe("arn:original");
+      await store.updateJson(keys.pr(prefix), (r: any) => ({ ...r, running: "arn:new-owner" }));
+      return false;
+    };
+    expect(await start(deps, resume)).toMatchObject({ next: "done" });
+    expect(await store.json(keys.pr(prefix))).toMatchObject({ automation: "handing_over", running: "arn:new-owner", fix_rounds: 0 });
+  });
+
+  test("blocked CI is silent and explicit blocked resume reports once per execution without reserving", async () => {
+    const store = memory();
+    const deps = { ...makeDeps(store), timeline: new TimelineMemory() };
+    const work = {
+      key: "PROJ-7",
+      title: "Vendor",
+      body: "load",
+      url: "https://jira/PROJ-7",
+      created: false,
+      blocked_by: [{ key: "PROJ-1", status: "In Progress", done: false }],
+    };
+    const state = {
+      ...original,
+      task: {
+        ...original.task,
+        origin: {
+          kind: "slack" as const,
+          start: { source: "slack" as const, repo: "o/r", ask: "PROJ-7", ref: { channel: "C", thread_ts: "1", user: "U" } },
+          work,
+        },
+      },
+    };
+    await linkPr(deps.timeline, original.task.id, "o/r", 7, prefix);
+    await savePr(deps, state, { number: 7, url: "https://github.com/o/r/pull/7" });
+    deps.trackerIssue = async () => work;
+    const reported: ReportEvent[] = [];
+    deps.reporter = async () => ({
+      report: async (e) => {
+        reported.push(e);
+      },
+    });
+    const before = await store.json(keys.pr(prefix));
+    for (const request of [ci, ci, resume, resume]) {
+      const result = await start(deps, request);
+      expect(result).toMatchObject({ next: "done" });
+      expect((result as { dismissed: string }).dismissed).toContain("PROJ-1 (In Progress)");
+    }
+    expect(reported).toHaveLength(1);
+    expect(reported[0]).toMatchObject({ kind: "handover", reason: expect.stringContaining("PROJ-1") });
+    expect(await store.json(keys.pr(prefix))).toEqual(before);
+    await start(deps, { ...resume, execution_arn: "arn:another-request" });
+    expect(reported).toHaveLength(2);
+  });
+
+  test.each([false, true])("inconclusive CI never claims or spends a Build, mixed failure=%s", async (mixed) => {
+    const store = memory();
+    const deps = { ...makeDeps(store), timeline: new TimelineMemory() };
+    await linkPr(deps.timeline, original.task.id, "o/r", 7, prefix);
+    await savePr(deps, original, { number: 7, url: "https://github.com/o/r/pull/7" });
+    deps.github = {
+      ...github,
+      ciChecks: async () => ({
+        failed: mixed ? [{ name: "lint", summary: "failed" }] : [],
+        pending: [],
+        inconclusive: [{ name: "build-image", conclusion: "cancelled", reason: "cancelled before verification completed" }],
+        inconclusive_total: 25,
+      }),
+    } as Deps["github"];
+    const before = await store.json(keys.pr(prefix));
+    const result = await start(deps, ci);
+    expect(result.next).toBe("done");
+    expect((result as { dismissed: string }).dismissed).toContain("CI inconclusive (25)");
+    expect((result as { dismissed: string }).dismissed).toContain("build-image: cancelled before verification completed");
+    expect((result as { dismissed: string }).dismissed).toContain("additional checks omitted");
+    expect(await store.json(keys.pr(prefix))).toEqual(before);
+  });
+
+  test("a fix claim that wins first fences a delayed original handover before stop or publication", async () => {
+    const store = memory();
+    const deps = { ...makeDeps(store), timeline: new TimelineMemory() };
+    await linkPr(deps.timeline, original.task.id, "o/r", 7, prefix);
+    await savePr(deps, original, { number: 7, url: "https://github.com/o/r/pull/7" });
+    const fix = await start(deps, ci);
+    expect(fix).toMatchObject({ next: "build" });
+    const claimed = await store.json(keys.pr(prefix));
+    let stops = 0;
+    deps.stopStations = async () => ++stops;
+    calls.length = 0;
+    expect(await handover(deps, original)).toMatchObject({ outcome: { level: "superseded" } });
+    expect(stops).toBe(0);
+    expect(calls).toEqual([]);
+    expect(await store.json(keys.pr(prefix))).toEqual(claimed);
+  });
+
+  test("a handover that wins while CI feedback loads prevents the later claim", async () => {
+    const store = memory();
+    const deps = { ...makeDeps(store), timeline: new TimelineMemory() };
+    await linkPr(deps.timeline, original.task.id, "o/r", 7, prefix);
+    await savePr(deps, original, { number: 7, url: "https://github.com/o/r/pull/7" });
+    deps.github = {
+      ...github,
+      ciChecks: async () => {
+        await handover(deps, original);
+        return { failed: [{ name: "lint", summary: "failed", log: "failure" }], pending: [] };
+      },
+    } as Deps["github"];
+    expect(await start(deps, ci)).toMatchObject({ next: "done" });
+    expect(await store.json(keys.pr(prefix))).toMatchObject({ automation: "handed_over", fix_rounds: 0 });
+  });
+
+  test("explicit resume retains the original finite budget and a replay does not reserve it twice", async () => {
+    const store = memory();
+    const deps = { ...makeDeps(store), timeline: new TimelineMemory() };
+    const state = { ...original, policy: { ...DEFAULT_DEVELOPMENT_POLICY, total_build_attempts: 3 } };
+    await linkPr(deps.timeline, original.task.id, "o/r", 7, prefix);
+    await handover(deps, state);
+    const fix = (await start(deps, resume)) as FlowState;
+    expect(fix).toMatchObject({ next: "build", brief: { attempt: 2, last_attempt: 3 } });
+    const claimed = await store.json(keys.pr(prefix));
+    expect(claimed).toMatchObject({ build_limit: 3, build_reserved: 3 });
+    await start(deps, resume);
+    expect(await store.json(keys.pr(prefix))).toEqual(claimed);
+    await handover(deps, { ...fix, brief: { ...fix.brief, attempt: 2 } });
+    deps.development = { ...DEFAULT_DEVELOPMENT_POLICY, total_build_attempts: 100 };
+    expect(await start(deps, { ...resume, execution: "again", execution_arn: "arn:again" })).toMatchObject({
+      dismissed: "total Build budget used up",
+    });
+  });
+
+  test("CI waits for all checks, then claims the head once; pending or green heads spend no round", async () => {
+    const store = memory();
+    const deps = { ...makeDeps(store), timeline: new TimelineMemory(), wait: async (_ms: number) => {} };
+    await linkPr(deps.timeline, original.task.id, "o/r", 7, prefix);
+    await savePr(deps, original, { number: 7, url: "https://github.com/o/r/pull/7" });
+    let polls = 0;
+    let pending = true;
+    let green = false;
+    deps.github = {
+      ...github,
+      ciChecks: async () => {
+        polls++;
+        return { pending: pending ? ["integration"] : [], failed: green ? [] : [{ name: "lint", summary: "bad", log: "failure" }] };
+      },
+    } as Deps["github"];
+    expect(await start(deps, ci)).toMatchObject({ dismissed: "CI still running: integration" });
+    expect(polls).toBe(3);
+    expect(await store.json(keys.pr(prefix))).toMatchObject({ fix_rounds: 0, build_reserved: 1 });
+    pending = false;
+    green = true;
+    expect(await start(deps, ci)).toMatchObject({ dismissed: "no failed checks on the PR head" });
+    green = false;
+    const fix = (await start(deps, ci)) as FlowState;
+    expect(fix).toMatchObject({ next: "build" });
+    await savePr(deps, fix, { number: 7, url: "https://github.com/o/r/pull/7" });
+    expect(await start(deps, { ...ci, execution: "another-event", execution_arn: "arn:another" })).toMatchObject({
+      dismissed: "CI fix already claimed for this commit",
+    });
+  });
+
+  test("CI becoming stale during collection starts no Build", async () => {
+    const store = memory();
+    const deps = { ...makeDeps(store), timeline: new TimelineMemory() };
+    await linkPr(deps.timeline, original.task.id, "o/r", 7, prefix);
+    await savePr(deps, original, { number: 7, url: "https://github.com/o/r/pull/7" });
+    let reads = 0;
+    deps.github = {
+      ...github,
+      pull: async () => ({
+        ...(await github.pull("o/r", 7)),
+        head: { sha: ++reads === 1 ? "c".repeat(40) : "d".repeat(40), ref: "mork/issue-1-abc" },
+      }),
+    } as Deps["github"];
+    expect(await start(deps, ci)).toMatchObject({ dismissed: "CI result for an older commit" });
+    expect(await store.json(keys.pr(prefix))).toMatchObject({ fix_rounds: 0 });
+  });
+
+  test("replaying a finished explicit resume cannot allocate another round", async () => {
+    const store = memory();
+    const deps = { ...makeDeps(store), timeline: new TimelineMemory() };
+    await linkPr(deps.timeline, original.task.id, "o/r", 7, prefix);
+    await handover(deps, original);
+    const fix = (await start(deps, resume)) as FlowState;
+    await handover(deps, fix);
+    const completed = await store.json(keys.pr(prefix));
+    expect(await start(deps, resume)).toMatchObject({ dismissed: "this fix execution already finished" });
+    expect(await store.json(keys.pr(prefix))).toEqual(completed);
+  });
+  test("completed handover replay has no stop, notification or PR side effects", async () => {
+    const store = memory();
+    const deps = { ...makeDeps(store), timeline: new TimelineMemory() };
+    let stops = 0;
+    deps.stopStations = async () => ++stops;
+    await handover(deps, original);
+    const completed = await store.json(keys.pr(prefix));
+    calls.length = 0;
+    expect(await handover(deps, original)).toMatchObject({ replayed: true, outcome: { level: "takeover" } });
+    expect(stops).toBe(1);
+    expect(calls).toEqual([]);
+    expect(await store.json(keys.pr(prefix))).toEqual(completed);
+  });
+  test("exhausted CI claims a single handover, retries its failed notification and never spends another round", async () => {
+    const store = memory();
+    const deps = { ...makeDeps(store), timeline: new TimelineMemory() };
+    await linkPr(deps.timeline, original.task.id, "o/r", 7, prefix);
+    await savePr(deps, original, { number: 7, url: "https://github.com/o/r/pull/7" });
+    await store.updateJson(keys.pr(prefix), (value) => ({ ...(value as object), fix_rounds: DEFAULT_DEVELOPMENT_POLICY.fixes.rounds }));
+    let reports = 0;
+    deps.reporter = async () => ({
+      report: async () => {
+        if (++reports === 1) throw new Error("notification unavailable");
+      },
+    });
+    await expect(start(deps, ci)).rejects.toThrow("notification unavailable");
+    expect(await store.json(keys.pr(prefix))).toMatchObject({ automation: "handing_over", fix_rounds: 2, build_reserved: 1 });
+    expect(await start(deps, { ...ci, execution_arn: "arn:other" })).toMatchObject({ next: "done" });
+    expect(reports).toBe(1);
+    expect(await start(deps, ci)).toMatchObject({ dismissed: "fix rounds used up" });
+    expect(await store.json(keys.pr(prefix))).toMatchObject({ automation: "handed_over", fix_rounds: 2, build_reserved: 1 });
+    await start(deps, { ...ci, execution_arn: "arn:later" });
+    expect(reports).toBe(2);
+  });
+});
+
 test("configured development limits stop a failed first build instead of using the default three attempts", async () => {
   const store = memory();
   const policy = { ...DEFAULT_DEVELOPMENT_POLICY, build_attempts: 1 };
@@ -215,6 +515,61 @@ test("configured development limits stop a failed first build instead of using t
   expect(state.policy).toEqual(policy);
   await store.put(keys.feedback(state.brief.prefix, 2), "Acceptance test failed");
   await expect(decide(makeDeps(store), { ...state, last: { ok: true, passed: false } })).rejects.toThrow("by attempt 1");
+});
+
+test("unresolved Jira Blocks refuse Plan and a fresh blocker refuses another Build", async () => {
+  const store = memory();
+  const deps = makeDeps(store);
+  const issue = {
+    key: "PROJ-7",
+    title: "Vendor",
+    body: "load",
+    url: "https://jira/PROJ-7",
+    created: false,
+    blocked_by: [{ key: "PROJ-1", status: "In Progress", done: false }],
+  };
+  deps.resolveSlack = async () => issue;
+  const input = { source: "slack" as const, repo: "o/r", ask: "PROJ-7", ref: { channel: "C", thread_ts: "1", user: "U" }, execution: "blocks" };
+  await expect(start(deps, input)).rejects.toThrow("PROJ-1 (In Progress)");
+  deps.trackerIssue = async () => issue;
+  const state = { ...baseState, task: { ...baseState.task, origin: { kind: "slack" as const, start: input, work: issue } }, last: { ok: false } };
+  await store.put(keys.feedback(prefix, 2), "failed");
+  await expect(decide(deps, state)).rejects.toThrow("PROJ-1 (In Progress)");
+  issue.blocked_by = [{ key: "PROJ-1", status: "Done", done: true }];
+  expect(await decide(deps, state)).toMatchObject({ next: "build" });
+});
+
+test("a Start dependency failure is reported from the original SFN input without task or brief", async () => {
+  const deps = makeDeps(memory());
+  const input = { source: "slack" as const, repo: "o/r", ask: "PROJ-7", ref: { channel: "C", thread_ts: "1", user: "U" }, execution: "blocks" };
+  deps.resolveSlack = async () => ({
+    key: "PROJ-7",
+    title: "Vendor",
+    body: "load",
+    url: "https://jira/PROJ-7",
+    created: false,
+    blocked_by: [{ key: "PROJ-1", status: "In Progress", done: false }],
+  });
+  const reported: { task: FlowState["task"]; event: ReportEvent }[] = [];
+  deps.reporter = async (task) => ({
+    report: async (event) => {
+      reported.push({ task, event });
+    },
+  });
+  const error = await start(deps, input).then(
+    () => {
+      throw new Error("Start must reject");
+    },
+    (error: Error) => error,
+  );
+  // Start's Catch adds $.error to its original input; failed Lambda output is absent.
+  const caught = { ...input, error: { Error: error.name, Cause: JSON.stringify({ errorMessage: error.message }) } } as unknown as FlowState;
+  expect(await handover(deps, caught)).toMatchObject({ outcome: { level: "takeover" } });
+  expect(reported).toHaveLength(1);
+  expect(reported[0]).toMatchObject({
+    task: { repo: "o/r", origin: { kind: "slack", start: { ref: input.ref } } },
+    event: { kind: "handover", reason: expect.stringContaining("PROJ-1 (In Progress)") },
+  });
 });
 const impl = { summary: "adds add()", changes: [{ path: "math.mjs", change: "add" }], verification: [], deviations: [] };
 
@@ -228,6 +583,13 @@ async function checkedStore(passed: boolean): Promise<LocalStore> {
   else await store.put(keys.feedback(prefix, 2), "- Acceptance criterion not met: AC1");
   return store;
 }
+
+test("invalid verification after Build hands over for reviewed oracle repair without spending another Build", async () => {
+  const store = await checkedStore(false);
+  await expect(decide(makeDeps(store), { ...baseState, last: { ok: true, passed: false, invalid_verification: true } })).rejects.toThrow(
+    "independent review",
+  );
+});
 
 describe("flow", () => {
   test("a build without a pushed commit goes back to Build without a gate report", async () => {
@@ -254,7 +616,7 @@ describe("flow", () => {
   test("a red check on the last attempt hands over with the feedback", async () => {
     const store = await checkedStore(false);
     await store.putJson(keys.gate(prefix, MAX_BUILD_ATTEMPTS), (await store.json(keys.gate(prefix, 1))) as GateReport);
-    await store.put(keys.feedback(prefix, MAX_BUILD_ATTEMPTS + 1), "- Acceptance criterion not met: AC1");
+    await store.put(keys.feedback(prefix, MAX_BUILD_ATTEMPTS + 1), publicFeedback("- Acceptance criterion not met: AC1"));
     const state = { ...baseState, brief: { ...baseState.brief, attempt: MAX_BUILD_ATTEMPTS }, last: { ok: true, passed: false } };
     await expect(decide(makeDeps(store), state)).rejects.toThrow("AC1");
   });
@@ -298,6 +660,20 @@ describe("repair before the PR", () => {
     await store.putJson(keys.review(prefix, 1), { ...review, findings });
     return store;
   };
+  test("legacy reviewer findings cannot become public repair feedback", async () => {
+    const store = await reviewed([{ ...finding, what: "ORACLE_LEGACY_REVIEW_SENTINEL" }]);
+    const legacy = (await store.json(keys.review(prefix, 1))) as Review;
+    delete legacy.feedback_visibility;
+    await store.putJson(keys.review(prefix, 1), legacy);
+    await expect(decide(makeDeps(store, urgent(0.95)), passed)).rejects.toThrow("Legacy reviewer feedback withheld");
+    await expect(store.text(keys.feedback(prefix, 2))).rejects.toThrow();
+  });
+  test("review repairs cannot extend the original task's total Build budget", async () => {
+    const store = await reviewed([finding]);
+    await expect(
+      decide(makeDeps(store, urgent(0.95)), { ...passed, policy: { ...DEFAULT_DEVELOPMENT_POLICY, total_build_attempts: 1 } }),
+    ).rejects.toThrow("Total Build budget used up at attempt 1");
+  });
   test("a proven defect goes back to Build, without a PR, and only located bugs and security issues are candidates", async () => {
     calls.length = 0;
     const store = await reviewed([finding, { ...finding, category: "style" }, { ...finding, located: null }]);
@@ -305,7 +681,8 @@ describe("repair before the PR", () => {
     expect(next).toMatchObject({ next: "build", brief: { attempt: 2, last_attempt: MAX_BUILD_ATTEMPTS + 1 }, repair: { rounds: 1, findings: 1 } });
     expect(calls).not.toContain("pr");
     const feedback = await store.text(keys.feedback(prefix, 2));
-    expect(feedback).toContain("The reviewer found defects in your change");
+    expect(feedback.startsWith(PUBLIC_FEEDBACK_MARKER)).toBe(true);
+    expect(readPublicFeedback(feedback)).toContain("The reviewer found defects in your change");
     expect(feedback).toContain("2:   return a - b;");
     expect(feedback.match(/^## /gm)).toHaveLength(1);
     expect(await timeline.get("task#o/r#1/abc", "decision#findings#check-1-findings-1")).toMatchObject({
@@ -637,9 +1014,29 @@ describe("handover", () => {
 });
 
 describe("checks table", () => {
+  test.each([
+    "pass",
+    "behavior_failure",
+    "execution_failure",
+    "inconclusive",
+  ] as const)("baseline reporting preserves the %s classification", (status) => {
+    const table = checksTable({
+      gateBefore: { mode: "before", hidden: [{ file: "acceptance.py", criteria: ["AC1"], status, passed: status === "pass", output: "" }] },
+      gate,
+      review,
+      verdicts: [],
+      attempt: 1,
+      lastAttempt: 3,
+      head: "b".repeat(40),
+    });
+    const row = table.split("\n").find((line) => line.includes("Baseline acceptance verification"));
+    expect(row).toBeDefined();
+    expect(row).toContain(status === "pass" || status === "behavior_failure" ? "✅" : "❌");
+    expect(row).toContain(status === "pass" ? "1 passing regression" : status === "behavior_failure" ? "1 behavior difference" : "1 unverified");
+  });
   test("lists every check that ran, and marks what did not pass", () => {
     const table = checksTable({
-      gateBefore: { mode: "before", hidden: [{ file: "add.test.mjs", criteria: ["AC1"], passed: false, output: "" }] },
+      gateBefore: { mode: "before", hidden: [{ file: "add.test.mjs", criteria: ["AC1"], status: "behavior_failure", passed: false, output: "" }] },
       gate: { ...gate, checks: [{ command: "npm run lint", exit_code: 1, output: "" }] },
       review: { ...review, findings: [{ ...finding, what: "a | b" }] },
       verdicts: [{ id: "AC2", verdict: "pass", p: 0.95, reason: "p=0.95" }],
@@ -647,7 +1044,7 @@ describe("checks table", () => {
       lastAttempt: 3,
       head: "b".repeat(40),
     });
-    expect(table).toContain("| Hidden tests fail on the base commit | gate | ✅ 1/1 failed before the change |");
+    expect(table).toContain("| Baseline acceptance verification | gate | ✅ 1 behavior differences, 0 passing regression checks, 0 unverified |");
     expect(table).toContain("| Repository tests | gate | ✅ `npm test` |");
     expect(table).toContain("| Repository check | gate | ❌ `npm run lint` (exit 1) |");
     expect(table).toContain("| Code review | Open Code Review | ⚠️ 0× P0, 1× P1, 0× P2 |");
@@ -664,7 +1061,7 @@ describe("fix runs after the PR", () => {
       check_suite: { conclusion, head_branch, head_sha: "c".repeat(40), pull_requests: [{ number: 7 }] },
     });
     expect(fixTrigger("check_suite", suite("failure"))).toMatchObject({ pr: 7, trigger: { kind: "ci" }, key: `ci-${"c".repeat(12)}` });
-    expect(fixTrigger("check_suite", suite("success"))).toBeUndefined();
+    expect(fixTrigger("check_suite", suite("success"))).toMatchObject({ trigger: { kind: "ci" } });
     expect(fixTrigger("check_suite", suite("failure", "feature/x"))).toBeUndefined();
     const review = { action: "submitted", review: { id: 5, state: "CHANGES_REQUESTED", user: { login: "alice" } }, pull_request: { number: 7 } };
     expect(fixTrigger("pull_request_review", review)).toMatchObject({ pr: 7, trigger: { kind: "review", review_id: 5 }, sender: "alice" });
@@ -698,7 +1095,9 @@ describe("fix runs after the PR", () => {
     await store.putJson(keys.pr(prefix), prRecord());
     const next = (await start(makeDeps(store), fixInput({ kind: "ci", sha: "c".repeat(40) }))) as FlowState;
     expect(next).toMatchObject({ next: "build", brief: { attempt: 2, last_attempt: 3, execution: "fix-o-r-7-x" }, fix: { pr: 7, round: 1 } });
-    expect(await store.text(keys.feedback(prefix, 2))).toContain("missing JSDoc");
+    const feedback = await store.text(keys.feedback(prefix, 2));
+    expect(feedback.startsWith(PUBLIC_FEEDBACK_MARKER)).toBe(true);
+    expect(readPublicFeedback(feedback)).toContain("missing JSDoc");
     expect(await store.json(keys.pr(prefix))).toMatchObject({ fix_rounds: 1, running: "arn:fix" });
   });
 
@@ -760,7 +1159,7 @@ describe("fix run claims", () => {
     });
     const [a, b] = await Promise.all([start(makeDeps(store), input(1)), start(makeDeps(store), input(2))]);
     const outcomes = [a, b].map((r) => ("dismissed" in r ? r.dismissed : r.next));
-    expect(outcomes.sort()).toEqual(["a fix run is already working on this PR", "build"]);
+    expect(outcomes.sort()).toEqual(["PR automation state changed before reservation; no Build was reserved", "build"]);
   });
 });
 
@@ -803,7 +1202,12 @@ describe("fix run replays and bookkeeping", () => {
       fix: { pr: 7, url: "https://github.com/o/r/pull/7", round: 1, trigger: "CI failed" },
       error: { Error: "Handover", Cause: "gate failed twice" },
     });
-    const next = (await start(makeDeps(store), { ...input, execution: "fix-b", execution_arn: "arn:fix-b" })) as FlowState;
+    const next = (await start(makeDeps(store), {
+      ...input,
+      fix: { ...input.fix, trigger: { ...input.fix.trigger, body: "@mork resume" } },
+      execution: "fix-b",
+      execution_arn: "arn:fix-b",
+    })) as FlowState;
     expect(next).toMatchObject({ next: "build", brief: { attempt: 4 }, fix: { round: 2 } });
   });
 
@@ -866,7 +1270,7 @@ describe("fix run replays and bookkeeping", () => {
       { ...baseState, task: { ...baseState.task, execution_arn: "arn:original" } },
     ]) {
       await savePr(deps, late, { number: 7, url: completed.fix.url });
-      await releasePr(deps, late);
+      await handover(deps, late);
       expect(await store.json(keys.pr(prefix))).toEqual(saved);
     }
     await savePr(deps, completed, { number: 7, url: completed.fix.url });

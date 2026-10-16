@@ -4,7 +4,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { onShutdown } from "./shutdown.ts";
 
-export type Exec = { code: number; output: string };
+export type Exec = { code: number; output: string; output_truncated?: boolean };
 
 export function exec(
   command: string,
@@ -32,11 +32,19 @@ export function exec(
 export function execAsync(
   command: string,
   args: string[],
-  options: { cwd?: string; env?: NodeJS.ProcessEnv; uid?: number; gid?: number; timeoutMs?: number } = {},
+  options: { cwd?: string; env?: NodeJS.ProcessEnv; uid?: number; gid?: number; timeoutMs?: number; maxOutputBytes?: number } = {},
 ): Promise<Exec> {
   return new Promise((resolve) => {
     const chunks: Buffer[] = [];
     let size = 0;
+    let truncated = false;
+    const limit = options.maxOutputBytes ?? 16 * 1024 * 1024;
+    if (!Number.isSafeInteger(limit) || limit < 1) throw new Error("maxOutputBytes must be a positive safe integer");
+    const captured = (code: number): Exec => ({
+      code,
+      output: Buffer.concat(chunks).toString("utf8"),
+      ...(truncated ? { output_truncated: true } : {}),
+    });
     const child = spawn(command, args, {
       cwd: options.cwd,
       env: options.env ?? process.env,
@@ -49,7 +57,14 @@ export function execAsync(
       chunks.push(chunk);
       size += chunk.length;
       // Keep the tail only: callers want the end of the output.
-      while (size > 16 * 1024 * 1024 && chunks.length > 1) size -= (chunks.shift() as Buffer).length;
+      while (size > limit) {
+        truncated = true;
+        const first = chunks[0] as Buffer;
+        const drop = Math.min(size - limit, first.length);
+        if (drop === first.length) chunks.shift();
+        else chunks[0] = first.subarray(drop);
+        size -= drop;
+      }
     };
     child.stdout.on("data", keep);
     child.stderr.on("data", keep);
@@ -73,7 +88,7 @@ export function execAsync(
           // timeout either; the caller cleans up the sandbox uid afterward.
           stop();
           offShutdown();
-          resolve({ code: 124, output: Buffer.concat(chunks).toString("utf8") });
+          resolve(captured(124));
         }, options.timeoutMs)
       : undefined;
     child.on("error", (error) => {
@@ -84,7 +99,7 @@ export function execAsync(
     child.on("close", (code) => {
       offShutdown();
       clearTimeout(timer);
-      resolve({ code: code ?? 1, output: Buffer.concat(chunks).toString("utf8") });
+      resolve(captured(code ?? 1));
     });
   });
 }

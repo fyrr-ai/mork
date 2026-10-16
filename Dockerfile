@@ -98,4 +98,4 @@ ENTRYPOINT ["/usr/local/bin/mork-egress"]
 FROM runner AS runner-test
 COPY --from=deps /bundles/runner-test /opt/mork
 COPY --from=deps /usr/local/bin/bun /usr/local/bin/bun
-CMD ["bun", "test", "/opt/mork/packages/runner/src/gate.runtime.test.ts", "/opt/mork/packages/runner/src/agentfs.test.ts", "/opt/mork/packages/runner/src/git.test.ts", "/opt/mork/packages/runner/src/phases.test.ts", "/opt/mork/packages/runner/src/github-auth.test.ts", "/opt/mork/packages/sources/src/github-auth.test.ts"]
+CMD ["bun", "test", "/opt/mork/packages/runner/src/gate.runtime.test.ts", "/opt/mork/packages/runner/src/agentfs.test.ts", "/opt/mork/packages/runner/src/git.test.ts", "/opt/mork/packages/runner/src/inputs.test.ts", "/opt/mork/packages/runner/src/phases.test.ts", "/opt/mork/packages/runner/src/github-auth.test.ts", "/opt/mork/packages/sources/src/github-auth.test.ts"]

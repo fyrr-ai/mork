@@ -224,9 +224,16 @@ export const SUPERVISION_QUESTIONS = {
 
 export const PROBLEM_AT = 0.8;
 export const NO_PROGRESS_BELOW = 0.2;
+/** Minimum time after a delivered steer before the problem is judged again. */
 export const STEER_GRACE_MS = 30_000;
 
-export type Supervision = { steeredAt?: number };
+/**
+ * `steeredAt`: when the steer message was delivered. `actedAfterSteer`: the agent
+ * completed an action (a tool call and a turn) after that delivery, or has sat idle
+ * for a whole supervision period; a run in the middle of a long command is never stopped
+ * for the grace alone.
+ */
+export type Supervision = { steeredAt?: number; actedAfterSteer?: boolean };
 export type SupervisionAction = { action: "continue" } | { action: "steer"; message: string; signals: string[] } | { action: "stop"; reason: string };
 
 const STEER_TEXT: Record<string, string> = {
@@ -253,6 +260,6 @@ export function supervise(answers: Record<string, Answer>, state: Supervision, n
   if (state.steeredAt === undefined) {
     return { action: "steer", signals, message: signals.map((s) => STEER_TEXT[s]).join("\n") };
   }
-  if (now - state.steeredAt < STEER_GRACE_MS) return { action: "continue" };
+  if (now - state.steeredAt < STEER_GRACE_MS || !state.actedAfterSteer) return { action: "continue" };
   return { action: "stop", reason: `Supervisor: the problem persists after steering (${signals.join(", ")})` };
 }

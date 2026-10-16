@@ -16,6 +16,7 @@ function fixture() {
   let status = 201;
   let calls = 0;
   const repos: string[][] = [];
+  const permissions: unknown[] = [];
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
@@ -27,7 +28,9 @@ function fixture() {
       expect(verify("RSA-SHA256", Buffer.from(`${header}.${payload}`), publicKey, Buffer.from(signature, "base64url"))).toBe(true);
       const claims = JSON.parse(Buffer.from(payload, "base64url").toString());
       expect(claims).toEqual({ iss: "12345", iat: Math.floor(now / 1000) - 60, exp: Math.floor(now / 1000) + 540 });
-      repos.push((await request.json()).repositories);
+      const body = await request.json();
+      repos.push(body.repositories);
+      permissions.push(body.permissions);
       calls++;
       return Response.json({ token: `ghs_installation_${calls}`, expires_at: new Date(now + 60 * 60_000).toISOString() }, { status });
     },
@@ -38,6 +41,7 @@ function fixture() {
   return {
     auth,
     repos,
+    permissions,
     calls: () => calls,
     advance: (ms: number) => {
       now += ms;
@@ -54,6 +58,17 @@ test("a signed App JWT mints one repository-scoped token and deduplicates concur
   expect(f.calls()).toBe(1);
   expect(await f.auth.token("example-org/other")).toBe("ghs_installation_2");
   expect(f.repos).toEqual([["mork"], ["other"]]);
+});
+
+test("reference access has a separate read-only installation token and cache", async () => {
+  const f = fixture();
+  const write = await f.auth.token("example-org/reference-data");
+  const reads = await Promise.all([f.auth.readToken("example-org/reference-data"), f.auth.readToken("example-org/reference-data")]);
+  expect(reads).toEqual(["ghs_installation_2", "ghs_installation_2"]);
+  expect(reads[0]).not.toBe(write);
+  expect(await f.auth.token("example-org/reference-data")).toBe(write);
+  expect(f.permissions).toEqual([undefined, { contents: "read" }]);
+  expect(f.repos).toEqual([["reference-data"], ["reference-data"]]);
 });
 
 test("warm clients refresh before expiry and retain every issued token for redaction", async () => {

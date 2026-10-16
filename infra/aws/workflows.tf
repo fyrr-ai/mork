@@ -2,10 +2,11 @@
 # Pin task-definition revisions so a deployment cannot change a running task.
 locals {
   # One canonical default is also used by the local runner and prompt tests.
-  development          = jsondecode(lookup({ for name, workflow in var.workflows : name => jsonencode(workflow) }, "development", file("${path.module}/../../packages/contracts/src/development.json")))
+  development_input    = jsondecode(lookup({ for name, workflow in var.workflows : name => jsonencode(workflow) }, "development", file("${path.module}/../../packages/contracts/src/development.json")))
+  development          = { for key, value in local.development_input : key => value if key != "total_build_attempts" || value != null }
   development_steps    = { for step in local.development.steps : step.kind => step }
   development_names    = { for step in local.development.steps : step.kind => title(step.name) }
-  development_policy   = { questions = local.development.questions, fixes = local.development.fixes, repairs = local.development.repairs, build_attempts = local.development_steps.build.attempts }
+  development_policy   = merge({ questions = local.development.questions, fixes = local.development.fixes, repairs = local.development.repairs, build_attempts = local.development_steps.build.attempts }, try(local.development.total_build_attempts, null) == null ? {} : { total_build_attempts = local.development.total_build_attempts })
   configured_workflows = { for name, workflow in var.workflows : name => workflow if name != "development" }
   workflow_steps = merge({}, [for name, workflow in local.configured_workflows : {
     for step in workflow.steps : "${name}.${step.name}" => {

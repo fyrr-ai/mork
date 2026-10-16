@@ -21,7 +21,14 @@ export const SlackStart = z.object({
 export type SlackStart = z.input<typeof SlackStart>;
 
 /** The request in its tracker: an existing Jira issue, or one created for it. */
-export type TrackerIssue = { key: string; title: string; body: string; url: string; created: boolean };
+export type TrackerIssue = {
+  key: string;
+  title: string;
+  body: string;
+  url: string;
+  created: boolean;
+  blocked_by?: { key: string; status: string; done: boolean }[];
+};
 
 /**
  * Short state changes a source shows to the people who asked, sent as they

@@ -35,7 +35,32 @@ export function textToAdf(text: string): Adf {
 
 const Issue = z.object({
   key: z.string(),
-  fields: z.object({ summary: z.string(), description: z.unknown().nullable().optional() }),
+  fields: z.object({
+    summary: z.string(),
+    description: z.unknown().nullable().optional(),
+    issuelinks: z
+      .array(
+        z.object({
+          type: z.object({ name: z.string() }),
+          inwardIssue: z
+            .object({
+              key: z.string(),
+              fields: z
+                .object({
+                  status: z
+                    .object({
+                      name: z.string(),
+                      statusCategory: z.object({ key: z.string() }).optional(),
+                    })
+                    .optional(),
+                })
+                .optional(),
+            })
+            .optional(),
+        }),
+      )
+      .default([]),
+  }),
 });
 
 export class Jira {
@@ -69,13 +94,18 @@ export class Jira {
   }
 
   async issue(key: string): Promise<TrackerIssue> {
-    const issue = Issue.parse(await this.#call("GET", `/issue/${encodeURIComponent(key)}?fields=summary,description`));
+    const issue = Issue.parse(await this.#call("GET", `/issue/${encodeURIComponent(key)}?fields=summary,description,issuelinks`));
     return {
       key: issue.key,
       title: issue.fields.summary,
       body: adfToText(issue.fields.description as Adf | null).trim(),
       url: this.browseUrl(issue.key),
       created: false,
+      blocked_by: issue.fields.issuelinks.flatMap((link) => {
+        if (link.type.name.toLowerCase() !== "blocks" || !link.inwardIssue) return [];
+        const status = link.inwardIssue.fields?.status;
+        return [{ key: link.inwardIssue.key, status: status?.name ?? "Unknown", done: status?.statusCategory?.key === "done" }];
+      }),
     };
   }
 

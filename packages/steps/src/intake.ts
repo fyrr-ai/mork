@@ -87,7 +87,7 @@ async function handle(event: UrlEvent): Promise<UrlResult> {
   }
   const fix = fixTrigger(githubEvent, payload);
   if (fix) {
-    if (repo && allowlist.includes(repo)) await startFix(repo, fix);
+    if (repo && allowlist.includes(repo)) await startFix(repo, fix, headers["x-github-delivery"]);
     return { statusCode: 202 };
   }
   if (outcome) return { statusCode: 202 };
@@ -125,7 +125,7 @@ async function handle(event: UrlEvent): Promise<UrlResult> {
 }
 
 /** Starts a fix run for a Mork PR; the trigger key makes a redelivered webhook start nothing new. */
-async function startFix(repo: string, fix: NonNullable<ReturnType<typeof fixTrigger>>): Promise<void> {
+async function startFix(repo: string, fix: NonNullable<ReturnType<typeof fixTrigger>>, delivery?: string): Promise<void> {
   timeline ??= DynamoStore.fromEnv(process.env);
   if (!(await prTask(timeline, repo, fix.pr))) {
     log("fix.ignored", { repo, pr: fix.pr, reason: "not a Mork PR" });
@@ -139,7 +139,10 @@ async function startFix(repo: string, fix: NonNullable<ReturnType<typeof fixTrig
       return;
     }
   }
-  const name = `fix-${repo.replace(/[^A-Za-z0-9-]/g, "-")}-${fix.pr}-${fix.key}`.slice(-80);
+  // Each suite completion can recheck an unsettled head; redelivery remains idempotent.
+  // The task record, not an execution name, limits claims to one CI fix per SHA.
+  const key = fix.trigger.kind === "ci" && delivery ? `ci-${delivery.replace(/[^A-Za-z0-9-]/g, "")}` : fix.key;
+  const name = `fix-${repo.replace(/[^A-Za-z0-9-]/g, "-")}-${fix.pr}-${key}`.slice(-80);
   try {
     const started = await sfn.send(
       new StartExecutionCommand({

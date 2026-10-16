@@ -7,14 +7,17 @@
 // goes through the task's egress sidecar, which adds the LLM key, and in Build
 // the GitHub token, to requests for those hosts only. The implementer pushes its
 // own branch; the guard extension only lets it push that branch, without force.
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+
+import { randomUUID } from "node:crypto";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { type LlmStation, type RepoRef, StationOutput } from "@mork/contracts";
 import type { DecisionPanel } from "@mork/decision";
-import type { Logger } from "@mork/sources";
+import { type Logger, redact } from "@mork/sources";
 import { z } from "zod";
-import { killUser, readAgentFile } from "./agentfs.ts";
-import { exec, execAsync, mustExec } from "./git.ts";
+import { killUser, readAgentFile, writeFresh } from "./agentfs.ts";
+import type { CommandDiagnostic } from "./gate.ts";
+import { exec, execAsync, mustExec, SAFE_GIT } from "./git.ts";
 import { PiRpc } from "./rpc.ts";
 import type { SessionLog } from "./session.ts";
 import { onShutdown } from "./shutdown.ts";
@@ -41,6 +44,13 @@ export type LlmJob = {
   tools?: string[];
   extensions?: string[];
   environment?: Record<string, string>;
+  readiness?: { command: string; marker?: string };
+  transformOutput?: (value: unknown) => unknown;
+  validateOutput?: (value: unknown) => Promise<string | undefined>;
+  /** Corrective submissions after the initial one; Plan maps its total attempts to this. */
+  maxCorrections?: number;
+  secrets?: () => string[];
+  saveDiagnostic?: (record: CommandDiagnostic) => Promise<string>;
   /** Implementer only: the agent commits and pushes `branch` itself. */
   push?: { branch: string; remoteHead: () => Promise<string | undefined> };
   /**
@@ -83,6 +93,8 @@ const MAX_CORRECTIONS = 2;
 
 /** Runs Pi on an already prepared checkout in `repoDir`. */
 export async function runLlmStation(spec: LlmJob, env: RunnerEnv, repoDir: string): Promise<LlmOutcome> {
+  const maxCorrections = spec.maxCorrections ?? MAX_CORRECTIONS;
+  if (!Number.isInteger(maxCorrections) || maxCorrections < 0 || maxCorrections > 7) throw new Error("maxCorrections must be an integer from 0 to 7");
   const outFile = join(env.agentHome, "out", "result.json");
   const questionFile = join(env.agentHome, "out", "question.txt");
   const piDir = join(env.agentHome, ".pi-mork");
@@ -97,9 +109,10 @@ export async function runLlmStation(spec: LlmJob, env: RunnerEnv, repoDir: strin
     mustExec("chown", ["-R", `${env.agentUid}:${env.agentGid}`, repoDir, env.agentHome]);
   }
   const asAgent = { uid: env.agentUid, gid: env.agentGid };
+  const verifyLogDir = join(env.agentHome, "out/verify");
   const agentEnv: Record<string, string> = {
     HOME: env.agentHome,
-    PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
+    PATH: `${join(env.agentHome, ".local/bin")}:${process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin"}`,
     PI_CODING_AGENT_DIR: piDir,
     PI_OFFLINE: "1",
     PI_TELEMETRY: "0",
@@ -107,6 +120,7 @@ export async function runLlmStation(spec: LlmJob, env: RunnerEnv, repoDir: strin
     MORK_OUTPUT: outFile,
     ...(spec.ask ? { MORK_QUESTION: questionFile } : {}),
     ...(spec.verify ? { MORK_VERIFY: verifyFile } : {}),
+    ...(spec.verify ? { MORK_VERIFY_LOG_DIR: verifyLogDir, MORK_VERIFY_PUBLISH_REQUIRED: "1" } : {}),
     GIT_AUTHOR_NAME: "mork",
     GIT_AUTHOR_EMAIL: "mork@users.noreply.github.com",
     GIT_COMMITTER_NAME: "mork",
@@ -117,6 +131,18 @@ export async function runLlmStation(spec: LlmJob, env: RunnerEnv, repoDir: strin
     ...(env.egress ? egressEnv(env.egress.proxy, caBundle(env)) : {}),
     ...(spec.push ? { MORK_WORK_BRANCH: spec.push.branch } : {}),
   };
+
+  const opts = { cwd: repoDir, env: agentEnv, ...asAgent };
+  if (spec.readiness) {
+    const ready = await execAsync("bash", ["-c", spec.readiness.command], { ...opts, timeoutMs: 900_000, maxOutputBytes: 64 * 1024 * 1024 });
+    const artifact = await saveStationDiagnostic(spec, repoDir, spec.readiness.command, ready);
+    if (ready.code !== 0 || ready.output_truncated)
+      return {
+        ok: false,
+        error: `Repository readiness failed${ready.output_truncated ? " (diagnostic incomplete)" : ""}: ${redact(ready.output, spec.secrets?.() ?? []).slice(-2000)}${artifact ? `\nDiagnostic: ${artifact}` : ""}`,
+      };
+    if (spec.readiness.marker) writeFresh(spec.readiness.marker, "");
+  }
 
   const args = [
     ...(spec.session ? ["--session-dir", dirname(spec.session.file), "--session", spec.session.file] : ["--no-session"]),
@@ -141,6 +167,24 @@ export async function runLlmStation(spec: LlmJob, env: RunnerEnv, repoDir: strin
     );
   else if (spec.station !== "implementer") args.push("--tools", spec.ask ? `${READ_ONLY_TOOLS},ask_human` : READ_ONLY_TOOLS);
 
+  const published = new Set<string>();
+  let publishing: Promise<void> | undefined;
+  const collectDiagnostics = () => {
+    publishing ??= publishVerifyDiagnostics(spec, env.workDir, repoDir, verifyLogDir, published)
+      .catch((error) =>
+        spec.log?.log(
+          `Verify diagnostic publication failed: ${redact(String(error), spec.secrets?.() ?? [])}`,
+          { "mork.event": "diagnostic" },
+          "ERROR",
+        ),
+      )
+      .finally(() => {
+        publishing = undefined;
+      });
+    return publishing;
+  };
+  // Start before Pi: its first verify can precede the first supervision tick.
+  const diagnosticTicker = spec.verify ? setInterval(() => void collectDiagnostics(), 100) : undefined;
   const pi = new PiRpc({ bin: env.piBin, args, cwd: repoDir, env: agentEnv, ...asAgent });
   let turns = 0;
   let aborted: string | undefined;
@@ -182,7 +226,8 @@ export async function runLlmStation(spec: LlmJob, env: RunnerEnv, repoDir: strin
   let problem = "";
   // Unfinished work survives the container: the session always, the implementer's commits too
   // (a no-op after a clean, pushed run).
-  const opts = { cwd: repoDir, env: agentEnv, ...asAgent };
+  let finalized = false;
+  let verifiedHead: string | undefined;
   let cleanup: Promise<void> | undefined;
   const keepWork = () => {
     cleanup ??= (async () => {
@@ -190,7 +235,9 @@ export async function runLlmStation(spec: LlmJob, env: RunnerEnv, repoDir: strin
         // Stop the agent first: never snapshot work while it still edits or commits.
         killUser(env.agentUid);
         await pi.stop();
-        if (spec.push && spec.repo) pushWip(spec.push.branch, spec.repo.base_sha, opts);
+        clearInterval(diagnosticTicker);
+        await collectDiagnostics();
+        if (!finalized && spec.push && spec.repo) pushWip(spec.push.branch, spec.repo.base_sha, opts);
         await spec.session?.finish();
       } finally {
         if (env.trustedLocal) rmSync(join(piDir, "models.json"), { force: true });
@@ -216,7 +263,7 @@ export async function runLlmStation(spec: LlmJob, env: RunnerEnv, repoDir: strin
     let prompt = spec.resumed
       ? spec.message
       : `${spec.message}\n\n## Output\n\nWhen you are done, call submit_result with one JSON document matching this JSON Schema:\n\n\`\`\`json\n${JSON.stringify(spec.output_schema)}\n\`\`\``;
-    for (let attempt = 0; attempt <= MAX_CORRECTIONS && !aborted; attempt++) {
+    for (let attempt = 0; attempt <= maxCorrections && !aborted; attempt++) {
       const settled = pi.waitSettled();
       await Promise.all([pi.command({ type: "prompt", message: prompt }), settled]);
       if (existsSync(questionFile)) break;
@@ -226,14 +273,24 @@ export async function runLlmStation(spec: LlmJob, env: RunnerEnv, repoDir: strin
       } else {
         let parsed: { success: true; data: unknown } | { success: false; error: Error };
         try {
-          parsed = { success: true, data: parseOutput(parseJson(submitted)) };
+          const value = parseOutput(parseJson(submitted));
+          parsed = { success: true, data: spec.transformOutput ? spec.transformOutput(value) : value };
         } catch (error) {
           parsed = { success: false, error: error instanceof Error ? error : new Error(String(error)) };
         }
         if (parsed.success) {
           output = parsed.data;
-          problem = spec.push && spec.repo ? ((await pushProblem(spec.repo.base_sha, spec.push, opts)) ?? "") : "";
+          if (spec.validateOutput) {
+            supervisor.observe({ type: "validation_started" });
+            try {
+              problem = (await spec.validateOutput(output)) ?? "";
+            } finally {
+              supervisor.observe({ type: "validation_finished" });
+            }
+          } else problem = "";
+          if (!problem) problem = spec.push && spec.repo ? ((await pushProblem(spec.repo.base_sha, spec.push, opts)) ?? "") : "";
           if (!problem && spec.verify) {
+            verifiedHead = exec("git", ["rev-parse", "HEAD"], opts).output.trim();
             // Pushed and submitted, but does it pass the repository's own checks? Still the agent's turn to fix it.
             const verified = await verifyAsAgent(env, verifyFile, opts);
             log?.log(
@@ -241,13 +298,22 @@ export async function runLlmStation(spec: LlmJob, env: RunnerEnv, repoDir: strin
               { "mork.event": "verify" },
               verified.passed ? "INFO" : "WARN",
             );
-            if (!verified.passed && attempt < MAX_CORRECTIONS) {
-              problem = `Your pushed work does not pass verify yet:\n\n${verifyText(verified)}\n\nFix it, commit and push again.`;
-              rmSync(outFile, { force: true });
-              prompt = `${problem} Then call submit_result again.`;
-              problem = "";
-              continue;
+            for (const step of verified.steps) {
+              const artifact = await saveStationDiagnostic(spec, repoDir, step.command, {
+                code: step.exit_code,
+                output: step.output,
+                output_truncated: step.output_truncated,
+              });
+              if (artifact) step.artifact = artifact;
+              step.output = redact(step.output, spec.secrets?.() ?? []);
+              step.command = redact(step.command, spec.secrets?.() ?? []);
             }
+            if (!verified.passed) {
+              problem = `Your pushed work does not pass verify yet:\n\n${verifyText(verified)}\n\nFix it, commit and push again.`;
+            }
+            if (!problem && spec.push && spec.repo) problem = (await pushProblem(spec.repo.base_sha, spec.push, opts)) ?? "";
+            if (!problem && exec("git", ["rev-parse", "HEAD"], opts).output.trim() !== verifiedHead)
+              problem = "HEAD changed during verify; verify the exact committed revision again";
           }
           if (!problem) break;
         } else {
@@ -255,6 +321,7 @@ export async function runLlmStation(spec: LlmJob, env: RunnerEnv, repoDir: strin
         }
       }
       rmSync(outFile, { force: true });
+      supervisor.observe({ type: "semantic_repair" });
       prompt = `${problem} Then call submit_result again.`;
     }
     const stats = await readUsage();
@@ -277,6 +344,16 @@ export async function runLlmStation(spec: LlmJob, env: RunnerEnv, repoDir: strin
       log?.log(`${spec.station} · failed after ${turns} turns: ${error}`, { "mork.event": "station" }, "ERROR");
       return { ok: false, error, output, stats: runStats, supervision };
     }
+    // Freeze the editing process, then recheck the exact local and remote revision.
+    await pi.stop();
+    killUser(env.agentUid);
+    if (spec.push && spec.repo) {
+      const finalProblem = await pushProblem(spec.repo.base_sha, spec.push, opts);
+      if (finalProblem) return { ok: false, error: finalProblem, output, stats: runStats, supervision };
+      if (verifiedHead && exec("git", ["rev-parse", "HEAD"], opts).output.trim() !== verifiedHead)
+        return { ok: false, error: "HEAD changed after verify", output, stats: runStats, supervision };
+    }
+    finalized = true;
     log?.log(`${spec.station} · submitted its result after ${turns} turns`, { "mork.event": "submit_result" });
     const headSha = spec.push ? exec("git", ["rev-parse", "HEAD"], opts).output.trim() : undefined;
     return { ok: true, output, stats: runStats, headSha, supervision };
@@ -287,6 +364,81 @@ export async function runLlmStation(spec: LlmJob, env: RunnerEnv, repoDir: strin
     } finally {
       offShutdown();
     }
+  }
+}
+
+async function saveStationDiagnostic(
+  spec: LlmJob,
+  repoDir: string,
+  command: string,
+  result: { code: number; output: string; output_truncated?: boolean },
+): Promise<string | undefined> {
+  if (!spec.saveDiagnostic) return undefined;
+  const secrets = spec.secrets?.() ?? [];
+  return spec.saveDiagnostic({
+    command_id: randomUUID(),
+    command: redact(command, secrets),
+    cwd: repoDir,
+    head_sha: mustExec("git", [...SAFE_GIT, "rev-parse", "--verify", "HEAD"], { cwd: repoDir }).trim(),
+    exit_code: result.code,
+    output: redact(result.output, secrets),
+    ...(result.output_truncated ? { output_truncated: true } : {}),
+  });
+}
+
+/** Agent logs are diagnostic claims, never gate evidence. Never follow their supplied output_file path. */
+async function publishVerifyDiagnostics(spec: LlmJob, workDir: string, repoDir: string, logDir: string, published: Set<string>): Promise<void> {
+  if (!existsSync(logDir) || !lstatSync(logDir).isDirectory() || lstatSync(logDir).isSymbolicLink()) return;
+  const diagnosticDir = join(workDir, "diagnostics", spec.station === "analyst" ? "oracle" : "public");
+  mkdirSync(diagnosticDir, { recursive: true, mode: 0o755 });
+  const sidecarSchema = z.object({
+    command_id: z.string().min(1),
+    command: z.string(),
+    cwd: z.string().optional(),
+    head_sha: z.string().regex(/^[0-9a-f]{40}$/),
+    exit_code: z.number().int(),
+    output_truncated: z.boolean().optional(),
+  });
+  for (const name of readdirSync(logDir)) {
+    if (!name.endsWith(".json") || name.endsWith(".published.json") || published.has(name)) continue;
+    const raw = readAgentFile(join(logDir, name), 64 * 1024);
+    if (!raw) continue;
+    let sidecar: z.infer<typeof sidecarSchema>;
+    try {
+      sidecar = sidecarSchema.parse(JSON.parse(raw));
+    } catch {
+      continue;
+    }
+    const outputPath = join(logDir, name.replace(/\.json$/, ".log"));
+    const output = readAgentFile(outputPath);
+    if (output === undefined) continue;
+    const secrets = spec.secrets?.() ?? [];
+    const id = randomUUID();
+    const truncated = sidecar.output_truncated === true || lstatSync(outputPath).size > 64 * 1024 * 1024;
+    const safe = `${truncated ? "[Diagnostic incomplete: output limit exceeded]\n" : ""}${redact(output, secrets)}`;
+    const artifact = join(diagnosticDir, `${id}.log`);
+    writeFresh(artifact, safe, 0o644);
+    await spec.saveDiagnostic?.({
+      command_id: id,
+      command: redact(sidecar.command, secrets),
+      cwd: redact(sidecar.cwd ?? repoDir, secrets),
+      head_sha: sidecar.head_sha,
+      exit_code: truncated ? 125 : sidecar.exit_code,
+      output: safe,
+      source: "agent_verify",
+      ...(truncated ? { output_truncated: true } : {}),
+    });
+    writeFresh(
+      join(logDir, name.replace(/\.json$/, ".published.json")),
+      JSON.stringify({
+        artifact,
+        output_tail: `${truncated ? "[Diagnostic incomplete]\n" : ""}${safe.slice(-1500)}`,
+        command: redact(sidecar.command, secrets),
+        output_truncated: truncated,
+      }),
+      0o644,
+    );
+    published.add(name);
   }
 }
 
@@ -360,7 +512,7 @@ async function verifyAsAgent(
 ): Promise<VerifyResult> {
   const cli = join(env.extensionsDir, "..", "src", "verify-cli.ts");
   // Async: a long test suite must not block the heartbeats to Step Functions.
-  const run = await execAsync(process.execPath, [cli, verifyFile], { ...opts, timeoutMs: 60 * 60_000 });
+  const run = await execAsync(process.execPath, [cli, verifyFile], { ...opts, timeoutMs: 60 * 60_000, maxOutputBytes: 256 * 1024 * 1024 });
   try {
     return JSON.parse(run.output) as VerifyResult;
   } catch {

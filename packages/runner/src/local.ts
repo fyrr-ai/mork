@@ -2,7 +2,7 @@
 // store and a task-owned bare Git remote, with no AWS or GitHub API calls.
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   Brief,
@@ -39,6 +39,7 @@ const Manifest = z.object({
   next: z.enum(["plan", "build", "check", "done"]),
   /** Repairs the run made so far. */
   repairs: z.number().int().min(0).default(0),
+  references: z.record(z.string(), z.string()).default({}),
   result: Result.optional(),
 });
 const MANIFEST_KEY = "local-run.json";
@@ -50,6 +51,8 @@ export type LocalOptions = {
   llmBaseUrl: string;
   apiKey: string;
   piBin: string;
+  /** Explicit configured reference name -> local Git repository; never remote credentials. */
+  references?: Record<string, string>;
 } & ({ resume: true; source?: never; issue?: never; base?: never } | { resume?: false; source: string; issue: IssueDoc; base?: string });
 
 export async function runLocalWorkflow(options: LocalOptions): Promise<LocalResult> {
@@ -63,6 +66,12 @@ export async function runLocalWorkflow(options: LocalOptions): Promise<LocalResu
     let manifest: z.infer<typeof Manifest>;
     if (options.resume) {
       manifest = Manifest.parse(await store.json(MANIFEST_KEY));
+      if (
+        options.references &&
+        (Object.keys(options.references).length !== Object.keys(manifest.references).length ||
+          Object.entries(options.references).some(([name, path]) => manifest.references[name] !== path))
+      )
+        throw new Error("Resume must use the saved local reference mappings");
     } else {
       const source = resolve(options.source);
       const base = mustExec("git", [
@@ -81,19 +90,35 @@ export async function runLocalWorkflow(options: LocalOptions): Promise<LocalResu
       const defaultBranch = exec("git", [...SAFE_GIT, "-C", source, "symbolic-ref", "--short", "HEAD"]).output.trim();
       const definition = DevelopmentWorkflow.parse(options.definition ?? DEFAULT_DEVELOPMENT);
       const brief = Brief.parse({
-        last_attempt: definition.steps[1].attempts,
+        last_attempt: Math.min(definition.steps[1].attempts, definition.total_build_attempts ?? 128),
         attempt: 1,
         prefix: "tasks/local",
         repo: { full_name: "local/repository", default_branch: defaultBranch || "main", base_sha: base },
         branch: `mork/local-${randomUUID().slice(0, 8)}`,
       });
-      manifest = { brief, definition, next: "plan", repairs: 0 };
-      await store.putJson(keys.issue(brief.prefix), IssueDoc.parse(options.issue));
-      await store.putJson(MANIFEST_KEY, manifest);
+      manifest = { brief, definition, next: "plan", repairs: 0, references: options.references ?? {} };
     }
     if (manifest.next === "done") {
       if (!manifest.result) throw new Error("Completed local run has no result");
       return manifest.result;
+    }
+    const config = parseRepoConfig(mustExec("git", [...SAFE_GIT, "-C", remote, "show", `${manifest.brief.repo.base_sha}:.mork/config.toml`]));
+    const localReferenceRepositories: Record<string, string> = {};
+    for (const name of Object.keys(manifest.references))
+      if (!config.reference_repositories.some((reference) => reference.name === name)) throw new Error(`Unknown local reference: ${name}`);
+    for (const reference of config.reference_repositories) {
+      const path = manifest.references[reference.name];
+      if (!path) throw new Error(`Missing local reference: ${reference.name}; use --reference ${reference.name}=/absolute/local/repo`);
+      if (!isAbsolute(path)) throw new Error(`Local reference ${reference.name} must use an absolute path`);
+      if (localReferenceRepositories[reference.repo] && localReferenceRepositories[reference.repo] !== path)
+        throw new Error(`Conflicting local paths for reference repository ${reference.repo}`);
+      const sha = mustExec("git", [...SAFE_GIT, "-C", path, "rev-parse", "--verify", `${reference.sha}^{commit}`]).trim();
+      if (sha !== reference.sha) throw new Error(`Local reference revision mismatch: ${reference.name}`);
+      localReferenceRepositories[reference.repo] = path;
+    }
+    if (!options.resume) {
+      await store.putJson(keys.issue(manifest.brief.prefix), IssueDoc.parse(options.issue));
+      await store.putJson(MANIFEST_KEY, manifest);
     }
     const workDir = join(directory, "work");
     const agentHome = join(directory, "agent");
@@ -104,6 +129,7 @@ export async function runLocalWorkflow(options: LocalOptions): Promise<LocalResu
       step: manifest.definition.steps[0],
       store,
       localRepo: remote,
+      localReferenceRepositories,
       githubToken: async () => "",
       model: options.model,
       panel: new DecisionPanel([]),
@@ -126,7 +152,7 @@ export async function runLocalWorkflow(options: LocalOptions): Promise<LocalResu
       sandbox: { env: { HOME: workDir, PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin", CI: "1" } },
     };
     const save = async (next: z.infer<typeof Manifest>["next"], result?: LocalResult) => {
-      manifest = { brief: ctx.brief, definition: manifest.definition, next, repairs: manifest.repairs, ...(result ? { result } : {}) };
+      manifest = { ...manifest, brief: ctx.brief, next, ...(result ? { result } : {}) };
       await store.putJson(MANIFEST_KEY, manifest);
     };
     if (manifest.next === "plan") {
@@ -150,6 +176,16 @@ export async function runLocalWorkflow(options: LocalOptions): Promise<LocalResu
       signal.throwIfAborted();
       const checked = await check(ctx);
       signal.throwIfAborted();
+      if (checked.invalid_verification) {
+        const result: LocalResult = {
+          ok: false,
+          branch: ctx.brief.branch,
+          attempt: ctx.brief.attempt,
+          error: "Invalid verification requires an independently reviewed Plan/runtime repair; no further Build was started",
+        };
+        await save("done", result);
+        return result;
+      }
       // As in Decide: the reviewer's proven defects get the configured repairs before the result counts.
       const review =
         checked.ok && checked.passed && manifest.repairs < manifest.definition.repairs.rounds
@@ -168,11 +204,14 @@ export async function runLocalWorkflow(options: LocalOptions): Promise<LocalResu
       if (chosen.length) {
         await store.put(
           keys.feedback(ctx.brief.prefix, ctx.brief.attempt + 1),
-          repairFeedback(chosen.map((index) => findings[index] as Review["findings"][number])),
+          repairFeedback(
+            chosen.map((index) => findings[index] as Review["findings"][number]),
+            review?.feedback_visibility,
+          ),
         );
         manifest.repairs += 1;
         // A repair brings its own Build attempt.
-        ctx.brief = { ...ctx.brief, last_attempt: lastAttempt(ctx.brief) + 1 };
+        ctx.brief = { ...ctx.brief, last_attempt: Math.min(lastAttempt(ctx.brief) + 1, manifest.definition.total_build_attempts ?? 128) };
       } else if (checked.ok && checked.passed) {
         const head = remoteHead(ctx.brief.repo.full_name, "", ctx.brief.branch, remote);
         const result: LocalResult = { ok: true, branch: ctx.brief.branch, attempt: ctx.brief.attempt, head_sha: head };

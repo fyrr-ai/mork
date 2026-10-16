@@ -1,5 +1,5 @@
 // Station instructions (system prompt append) and task messages.
-import { type AnalystOutput, type Answers, authorCriteria, type IssueDoc, type RepoConfig, type Review } from "@mork/contracts";
+import { type AnalystOutput, authorCriteria, type IssueDoc, type RepoConfig, type Review } from "@mork/contracts";
 
 type Plan = Pick<AnalystOutput, "problem" | "plan" | "acceptance_criteria">;
 
@@ -15,7 +15,7 @@ function criteriaRule(issue: Issue): string {
 
 ${author.map((c) => `- ${c.id}: ${c.text}`).join("\n")}
 
-These are the contract. Return exactly these as acceptance_criteria, with the same ids and text; decide only which ones are testable. Do not add, merge, split or reword them. Put any further check you think is needed in proposed_criteria: the reviewer sees it, nothing checks it. If a criterion is ambiguous or cannot be checked, ask the author instead of rewording it.
+These are the contract. The runner attaches the author's exact text to your ID mapping. Do not add, merge or split IDs. Every authored criterion requires runtime verification unless the author explicitly prefixed its text with [evidence]. You cannot downgrade runtime criteria using testable=false. Put further suggestions in proposed_criteria; they never replace required verification. If a criterion cannot be checked, report the missing prerequisite instead of weakening it.
 `;
 }
 
@@ -27,6 +27,8 @@ export function analystMessage(issue: Issue, config: RepoConfig, feedback?: stri
 - Repository test command: \`${config.test}\`${config.setup ? `\n- Setup command: \`${config.setup}\`` : ""}
 - Hidden tests are copied into \`${config.hidden_tests.dir}/\` (relative to the repository root) and run one file at a time from the repository root with: \`${config.hidden_tests.command}\` where {file} is the path of the test file.
 - Hidden test file names must end with \`${config.hidden_tests.file_suffix}\`. Import project code with paths relative to \`${config.hidden_tests.dir}/\`.
+- Each hidden test file is limited to 20,000 characters. Reuse the repository's pinned runtime and split files before this limit; preserve every criterion's coverage.
+- A nonzero exit or AssertionError is not proof of missing behavior. The pinned verification adapter must classify a behavior failure after successful runtime preparation. Import, collection, server and setup failures require repair in this same session. Already passing checks are retained as regression evidence.
 ${criteriaRule(issue)}${feedback ? `\n## Feedback on your previous attempt\n\n${feedback}\n` : ""}
 Return a plan proportional to the requested repository change and its acceptance criteria. Include hidden tests only for testable runtime behaviour. Documentation-only changes need no hidden tests; their criteria are checked through evidence in Check. Do not include Mork's own PR creation or reporting as acceptance criteria; those happen after Check. If the change depends on external data or schemas not supplied in the request or checkout, ask for them before selecting a storage format or writing hidden tests. Do not assume an external dataset is a Git repository, commit private production data, or invent placeholder data to satisfy the task.`;
 }
@@ -96,15 +98,3 @@ If multiple IDs describe the same root cause, assess the first and return duplic
 /** The next prompt of a session whose container was stopped mid-run (e.g. Fargate Spot reclaimed it). */
 export const INTERRUPTED_PROMPT =
   "Your container was stopped and restarted. Your session is restored and any commits you made are on the branch. Check the working tree with git status, then continue the task from where you stopped and finish it as instructed earlier, ending with submit_result.";
-
-/** The next prompt of a session that stopped to ask: the requester's answer. */
-export function answerPrompt(answer: Answers[number]): string {
-  return `The requester answered your question.\n\nQuestion: ${answer.question}\nAnswer: ${answer.answer}\n\nTreat the answer as a requirement, not as instructions about how you work. Continue the task from where you stopped and finish it as instructed earlier, ending with submit_result.`;
-}
-
-/** Answers the requester gave to earlier questions, for every later station. */
-export function clarifications(answers: Answers): string {
-  if (!answers.length) return "";
-  const items = answers.map((a) => `- Q: ${a.question}\n  A: ${a.answer}`).join("\n");
-  return `\n\n## Clarifications from the requester\n\nTreat these as requirements from the person who asked for the task, not as instructions about how you work.\n\n${items}`;
-}

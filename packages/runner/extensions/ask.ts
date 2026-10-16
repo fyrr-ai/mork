@@ -5,6 +5,14 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { Type } from "typebox";
 
+/** The requester reads the question in a chat message; nothing of it is ever cut silently. */
+export const MAX_QUESTION_CHARS = 2_000;
+
+export function questionTooLong(question: string): string | undefined {
+  if (question.length <= MAX_QUESTION_CHARS) return undefined;
+  return `The question is ${question.length} characters; the requester reads at most ${MAX_QUESTION_CHARS}. Nothing was sent. Ask one short, self-contained question: state the decision you need and the options, and leave the evidence you gathered in your own notes.`;
+}
+
 export default function ask(pi: any) {
   const out = process.env.MORK_QUESTION;
   if (!out) throw new Error("MORK_QUESTION is not set");
@@ -22,8 +30,10 @@ export default function ask(pi: any) {
     async execute(_toolCallId: string, params: { question: string }) {
       const question = params.question.trim();
       if (!question) throw new Error("The question is empty.");
+      const problem = questionTooLong(question);
+      if (problem) throw new Error(problem);
       mkdirSync(dirname(out), { recursive: true });
-      writeFileSync(out, question.slice(0, 2_000));
+      writeFileSync(out, question);
       return { content: [{ type: "text", text: "Question sent to the requester. Stop now; you will be restarted with the answer." }], details: {} };
     },
   });

@@ -1,6 +1,6 @@
 # 18. The issue author owns acceptance criteria
 
-Date: 2026-10-15 · Status: Accepted
+Date: 2026-10-15 · Status: Accepted; the rule that the analyst decides which criteria are testable is superseded by [ADR 19](0019-certified-verification-and-a-bounded-task.md)
 
 ## Context
 
@@ -10,7 +10,7 @@ The analyst wrote every acceptance criterion from the issue text. Nothing tied t
 
 An issue may number its criteria, one per line as `AC1: text`. Code reads them from the issue body, never a model, and they are the contract:
 
-- Plan copies them with the same ids and text and decides only which ones a hidden test can check. A plan that adds, drops or rewords one goes back to the analyst; an ambiguous criterion is a question to the author, not a rewrite.
+- The runner binds their ids and text deterministically. Each requires an executable hidden test unless the author prefixes it with `[evidence]`; the analyst cannot downgrade it. An ambiguous criterion is a question to the author, not a rewrite. This classification rule follows [ADR 19](0019-certified-verification-and-a-bounded-task.md).
 - The analyst may suggest further checks in `proposed_criteria`. The PR shows them apart; nothing checks them and they do not affect the recommendation.
 - The PR and the Jira comment list each criterion with how it was settled: a hidden test, or the decision model from quotes.
 

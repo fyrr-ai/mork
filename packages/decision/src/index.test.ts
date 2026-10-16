@@ -246,8 +246,10 @@ describe("policies", () => {
     const stuck = { worker_stuck: { type: "noul" as const, p: 0.9 } };
     const first = supervise(stuck, {}, 0);
     expect(first.action).toBe("steer");
-    expect(supervise(stuck, { steeredAt: 0 }, STEER_GRACE_MS - 1).action).toBe("continue");
-    expect(supervise(stuck, { steeredAt: 0 }, STEER_GRACE_MS).action).toBe("stop");
+    expect(supervise(stuck, { steeredAt: 0, actedAfterSteer: true }, STEER_GRACE_MS - 1).action).toBe("continue");
+    // The grace alone is not enough: the agent must have completed an action after the steer was delivered.
+    expect(supervise(stuck, { steeredAt: 0, actedAfterSteer: false }, STEER_GRACE_MS * 10).action).toBe("continue");
+    expect(supervise(stuck, { steeredAt: 0, actedAfterSteer: true }, STEER_GRACE_MS).action).toBe("stop");
     expect(supervise({ worker_stuck: { type: "undecided", reason: "x" } }, {}, 0).action).toBe("continue");
   });
 });

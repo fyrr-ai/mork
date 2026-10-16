@@ -14,7 +14,10 @@ export default function dirRules(pi: any) {
     if ((event.toolName !== "edit" && event.toolName !== "write") || typeof path !== "string") return undefined;
     const rules = rulesFor(process.cwd(), baseSha, path, shown);
     if (!rules) return undefined;
-    return { block: true, reason: `${rules.trim()}\n\nApply these rules, then repeat the same ${event.toolName} call.` };
+    return {
+      block: true,
+      reason: `Blocked by Mork (directory rules): read the rules below first.\n${rules.trim()}\n\nApply these rules, then repeat the same ${event.toolName} call.`,
+    };
   });
   pi.on("tool_result", async (event: any) => {
     const path = event.input?.path;

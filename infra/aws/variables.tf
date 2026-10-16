@@ -198,11 +198,12 @@ variable "routing_confidence" {
 variable "workflows" {
   description = "Workflow definitions. development uses plan/build/check and draft_pr delivery; other workflows use agent/command/approval and report delivery. Omitted development uses the shipped JSON definition."
   type = map(object({
-    description  = string
-    runner_image = optional(string)
-    questions    = optional(object({ timeout_seconds = optional(number, 259200), max = optional(number, 3) }), {})
-    fixes        = optional(object({ rounds = optional(number, 2), attempts = optional(number, 2) }), {})
-    repairs      = optional(object({ rounds = optional(number, 3) }), {})
+    description          = string
+    runner_image         = optional(string)
+    questions            = optional(object({ timeout_seconds = optional(number, 259200), max = optional(number, 3) }), {})
+    fixes                = optional(object({ rounds = optional(number, 2), attempts = optional(number, 2) }), {})
+    repairs              = optional(object({ rounds = optional(number, 3) }), {})
+    total_build_attempts = optional(number)
     steps = list(object({
       name            = string
       kind            = string
@@ -243,6 +244,7 @@ variable "workflows" {
       workflow.fixes.rounds >= 0 && workflow.fixes.rounds <= 8 && workflow.fixes.rounds == floor(workflow.fixes.rounds) &&
       workflow.fixes.attempts >= 1 && workflow.fixes.attempts <= 8 && workflow.fixes.attempts == floor(workflow.fixes.attempts) &&
       workflow.repairs.rounds >= 0 && workflow.repairs.rounds <= 8 && workflow.repairs.rounds == floor(workflow.repairs.rounds) &&
+      (workflow.total_build_attempts == null ? true : workflow.total_build_attempts >= 1 && workflow.total_build_attempts <= 128 && workflow.total_build_attempts == floor(workflow.total_build_attempts)) &&
       alltrue([for index, step in workflow.steps :
         (name != "development" || !contains(["start", "route", "decide", "ask", "resume", "handover", "handoverfailed", "done"], step.name)) &&
         can(regex("^[a-z][a-z0-9_-]{0,39}$", step.name)) && contains(name == "development" ? ["plan", "build", "check"] : ["agent", "command", "approval"], step.kind) &&

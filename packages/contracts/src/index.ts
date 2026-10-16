@@ -15,6 +15,21 @@ export const BRANCH_PATTERN = /^mork\/[a-z0-9][a-z0-9._-]{0,80}$/;
 // Repository configuration: `.mork/config.toml`, always read from the
 // default branch, never from the agent's branch.
 
+const RelativePath = z
+  .string()
+  .min(1)
+  .refine(
+    (path) => !path.startsWith("/") && !path.split("/").some((part) => !part || part === "." || part === ".." || part === ".git"),
+    "Expected a repository-relative path",
+  );
+export const ReferenceRepository = z.object({
+  name: z.string().regex(/^[A-Za-z0-9_-]+$/),
+  repo: z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/),
+  sha: z.string().regex(/^[0-9a-f]{40}$/),
+  paths: z.array(RelativePath).optional(),
+});
+export type ReferenceRepository = z.infer<typeof ReferenceRepository>;
+
 export const RepoConfig = z.object({
   setup: z.string().optional(),
   test: z.string().min(1),
@@ -30,7 +45,11 @@ export const RepoConfig = z.object({
     command: z.string().includes("{file}"),
     /** Glob-free file-name hint the analyst must follow, e.g. `*.test.mjs`. */
     file_suffix: z.string().min(1),
+    /** Only a repository-owned, pinned adapter may certify a behavior failure. */
+    protocol: z.literal("mork-v1").optional(),
+    runtime_paths: z.array(RelativePath).optional(),
   }),
+  reference_repositories: z.array(ReferenceRepository).default([]),
   /** Paths whose change sends the task to a human regardless of anything else. */
   protected_paths: z.array(z.string()).default([]),
   /** Files that count as tests for the diff policy (prefix match). */
@@ -159,6 +178,8 @@ export const CriteriaOutput = z.object({
 export type CriteriaOutput = z.infer<typeof CriteriaOutput>;
 
 export const Review = z.object({
+  /** Root Check certifies that model inputs excluded oracle diagnostics. */
+  feedback_visibility: z.literal("public-v1").optional(),
   summary: z.string().min(1),
   files_reviewed: z.array(z.string()),
   criteria: CriteriaOutput.shape.criteria,
@@ -182,18 +203,34 @@ export function repairCandidate(finding: Review["findings"][number]): boolean {
   return finding.located !== null && finding.verification.status === "confirmed" && ["bug", "security", "performance"].includes(finding.category);
 }
 
+export const PUBLIC_FEEDBACK_MARKER = "<!-- mork-public-feedback:v1 -->\n";
+
+/** Only fresh public feedback may be marked; never wrap a persisted legacy value. */
+export function publicFeedback(text: string): string {
+  return PUBLIC_FEEDBACK_MARKER + text;
+}
+
+export function readPublicFeedback(text: string | undefined): string | undefined {
+  if (text === undefined) return undefined;
+  return text.startsWith(PUBLIC_FEEDBACK_MARKER)
+    ? text.slice(PUBLIC_FEEDBACK_MARKER.length)
+    : "Legacy feedback withheld: its oracle visibility is unknown. Request fresh verification or public review/CI feedback.";
+}
+
 /** Feedback that sends the chosen findings back to Build. */
-export function repairFeedback(findings: Review["findings"]): string {
+export function repairFeedback(findings: Review["findings"], visibility?: Review["feedback_visibility"]): string {
+  if (visibility !== "public-v1")
+    return publicFeedback("Legacy reviewer feedback withheld: its oracle visibility is unknown. Run a fresh Check before automatic repair.");
   const items = findings.map(
     (f, i) =>
       `## ${i + 1}. ${f.severity} ${f.category} at \`${f.where}\`\n\n${f.what}\n\n${f.verification.status === "confirmed" ? `Expected: ${f.verification.expected}\nScenario: ${f.verification.scenario}\nEvidence: ${f.verification.reason}` : ""}\n\n\`\`\`\n${f.located?.excerpt ?? f.quote}\n\`\`\``,
   );
-  return `# The reviewer found defects in your change
+  return publicFeedback(`# The reviewer found defects in your change
 
 The gate passed. Fix each defect below and nothing else: stay within the request and keep the rest of the change as it is.
 If a finding is wrong, leave that code alone and explain why in \`deviations\`.
 
-${items.join("\n\n")}`;
+${items.join("\n\n")}`);
 }
 
 export const StationOutput = {
@@ -212,10 +249,38 @@ export const CommandResult = z.object({
   exit_code: z.number().int(),
   /** Tail of combined output, bounded. */
   output: z.string(),
+  artifact: z.string().optional(),
+  command_id: z.string().optional(),
+});
+
+export const VerificationStatus = z.enum(["pass", "behavior_failure", "execution_failure", "inconclusive"]);
+export type VerificationStatus = z.infer<typeof VerificationStatus>;
+export const VerificationResult = z.object({
+  status: VerificationStatus,
+  reason: z.string().min(1),
+  tests: z.record(z.string(), z.unknown()),
+});
+export type VerificationResult = z.infer<typeof VerificationResult>;
+/** Execution evidence emitted by the pinned adapter, not the generated hidden file. */
+export const VerificationEvidence = z.object({
+  readiness: z.object({ ready: z.literal(true) }),
+  cases: z
+    .array(
+      z.object({
+        id: z.string().min(1),
+        criteria: z.array(z.string().regex(/^AC\d+$/)).min(1),
+        status: VerificationStatus,
+      }),
+    )
+    .min(1),
 });
 
 export const GateReport = z.object({
   mode: z.enum(["before", "after"]),
+  oracle_version: z
+    .string()
+    .regex(/^[0-9a-f]{64}$/)
+    .optional(),
   /** After mode: the commit of the pushed branch the gate judged. */
   head_sha: z
     .string()
@@ -225,7 +290,18 @@ export const GateReport = z.object({
   repo_tests: CommandResult.optional(),
   /** After mode: the repository's `checks` (lint, typecheck…), in config order. */
   checks: z.array(CommandResult).optional(),
-  hidden: z.array(z.object({ file: z.string(), criteria: z.array(z.string()), passed: z.boolean(), output: z.string() })),
+  hidden: z.array(
+    z.object({
+      file: z.string(),
+      criteria: z.array(z.string()),
+      passed: z.boolean(),
+      output: z.string(),
+      status: VerificationStatus.optional(),
+      reason: z.string().optional(),
+      artifact: z.string().optional(),
+      command_id: z.string().optional(),
+    }),
+  ),
   diff_policy: z
     .object({
       violations: z.array(z.string()),
@@ -314,6 +390,10 @@ export function lastAttempt(brief: Pick<Brief, "last_attempt">): number {
 
 /** The plan as other stations see it: hidden test content stripped. */
 export const PublicPlan = AnalystOutput.extend({
+  oracle_version: z
+    .string()
+    .regex(/^[0-9a-f]{64}$/)
+    .optional(),
   hidden_tests: z.array(HiddenTest.pick({ file: true, criteria: true })),
 });
 export type PublicPlan = z.infer<typeof PublicPlan>;
@@ -344,6 +424,7 @@ export type BuildResult = z.infer<typeof BuildResult>;
 
 export const RunResult = z.object({
   ok: z.boolean(),
+  invalid_verification: z.boolean().optional(),
   error: z.string().optional(),
   /** Check only: whether the gate passed and the reviewer ran. */
   passed: z.boolean().optional(),

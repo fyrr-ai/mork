@@ -80,9 +80,19 @@ test.each(["completed", "handover", "retry"] as const)("%s is reported directly 
       }
       if (url.pathname.startsWith("/local-bucket/")) {
         const key = decodeURIComponent(url.pathname.slice("/local-bucket/".length));
-        if (req.method === "PUT") return new Response("");
+        const etag = `"${Bun.hash(JSON.stringify(objects.get(key)) ?? "")}"`;
+        if (req.method === "PUT") {
+          if (
+            (req.headers.get("if-none-match") === "*" && objects.has(key)) ||
+            (req.headers.has("if-match") && req.headers.get("if-match") !== etag)
+          ) {
+            return new Response("<Error><Code>PreconditionFailed</Code></Error>", { status: 412 });
+          }
+          objects.set(key, await req.json());
+          return new Response("");
+        }
         if (key === keys.feedback(prefix, 2)) return new Response("Fix the failing check");
-        if (objects.has(key)) return Response.json(objects.get(key));
+        if (objects.has(key)) return Response.json(objects.get(key), { headers: { ETag: etag } });
         return new Response("<Error><Code>NoSuchKey</Code></Error>", { status: 404 });
       }
       unexpected.push(`${req.method} ${url.pathname} ${target ?? ""}`);
@@ -102,7 +112,13 @@ test.each(["completed", "handover", "retry"] as const)("%s is reported directly 
         `const originalFetch = globalThis.fetch;
         globalThis.fetch = (url, init) => originalFetch(String(url).replace("https://api.github.com", ${JSON.stringify(endpoint)}), init);
         const {handler} = await import(${JSON.stringify(new URL("./handler.ts", import.meta.url).pathname)});
-        console.log(JSON.stringify(await handler(${JSON.stringify(event)})));`,
+        const event = ${JSON.stringify(event)};
+        const result = await handler(event);
+        if (event.action === "handover") {
+          const replay = await handler(event);
+          if (!replay.replayed) throw new Error("Completed handover was not idempotent");
+        }
+        console.log(JSON.stringify(result));`,
       ],
       {
         env: {

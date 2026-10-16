@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { authorCriteria, BRANCH_PATTERN, parseRepoConfig, raiseLevel } from "./index.ts";
+import { authorCriteria, BRANCH_PATTERN, parseRepoConfig, publicFeedback, raiseLevel, readPublicFeedback, repairFeedback } from "./index.ts";
 
 describe("contracts", () => {
   test("repo config parses with defaults", () => {
@@ -36,4 +36,12 @@ describe("contracts", () => {
     expect(authorCriteria(null)).toEqual([]);
     expect(authorCriteria("- adds a link\n- keeps the rest")).toEqual([]);
   });
+});
+
+test("public feedback requires a leading marker and never upgrades legacy review findings", () => {
+  expect(readPublicFeedback(publicFeedback("Public CI / review"))).toBe("Public CI / review");
+  expect(readPublicFeedback(`ORACLE\n${publicFeedback("legacy")}`)).toContain("Legacy feedback withheld");
+  expect(readPublicFeedback(`ORACLE\n${publicFeedback("legacy")}`)).not.toContain("ORACLE");
+  expect(readPublicFeedback(repairFeedback([]))).toContain("Legacy reviewer feedback withheld");
+  expect(readPublicFeedback(repairFeedback([], "public-v1"))).toContain("The reviewer found defects");
 });

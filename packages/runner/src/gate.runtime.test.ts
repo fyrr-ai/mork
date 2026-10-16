@@ -27,8 +27,12 @@ function fixture(setup?: string) {
   writeFileSync(join(source, "nested", "tracked"), "tracked\n");
   mkdirSync(join(source, ".mork"));
   writeFileSync(
+    join(source, "adapter.sh"),
+    'bash "$1"\ncode=$?\nif [ "$code" = 0 ]; then status=pass; elif [ "$code" = 1 ]; then status=behavior_failure; else status=execution_failure; code=3; fi\nprintf \'MORK_RESULT {"status":"%s","reason":"value comparison","tests":{"readiness":{"ready":true},"cases":[{"id":"value","criteria":["AC1"],"status":"%s"}]}}\\n\' "$status" "$status"\nexit "$code"\n',
+  );
+  writeFileSync(
     join(source, ".mork", "config.toml"),
-    `setup = ${JSON.stringify(setup ?? "mkdir generated")}\ntest = "test -f value"\nchecks = ["test -d generated"]\n[hidden_tests]\ndir = "hidden"\ncommand = "bash {file}"\nfile_suffix = ".sh"\n`,
+    `setup = ${JSON.stringify(setup ?? "mkdir generated")}\ntest = "test -f value"\nchecks = ["test -d generated"]\n[hidden_tests]\ndir = "hidden"\ncommand = "bash adapter.sh {file}"\nfile_suffix = ".sh"\nprotocol = "mork-v1"\nruntime_paths = ["adapter.sh"]\n`,
   );
   git("add", ".");
   git("commit", "-qm", "base");
@@ -67,6 +71,112 @@ test("the real gate fetches, sets up, runs checks and hidden tests against the b
   expect(result.checks?.[0]?.exit_code).toBe(0);
   expect(result.hidden[0]?.passed).toBe(true);
   expect(gatePassed(result)).toBe(true);
+});
+
+test("an arbitrary nonzero hidden script is an execution failure, not a valid red", async () => {
+  const { job, work } = fixture();
+  job.hidden_tests[0].content = "echo 'AssertionError: missing environment'; exit 1\n";
+  const report = await runGate({ ...job, mode: "before" }, "", work, { env });
+  expect(report.hidden[0]).toMatchObject({ passed: false, status: "execution_failure" });
+});
+
+test("legacy success cannot stand in for certified baseline behavior", async () => {
+  const { job, work } = fixture();
+  job.hidden_tests[0].content = "true\n";
+  const report = await runGate({ ...job, mode: "before" }, "", work, { env });
+  expect(report.hidden[0]).toMatchObject({ passed: false, status: "inconclusive" });
+});
+
+test.each([
+  [1, "behavior_failure", "behavior_failure"],
+  [3, "execution_failure", "execution_failure"],
+  [4, "inconclusive", "inconclusive"],
+  [0, "behavior_failure", "execution_failure"],
+  [1, "pass", "execution_failure"],
+])("the pinned adapter protocol binds exit %i to status %s", async (code, status, expected) => {
+  const { job, work } = fixture();
+  job.config.hidden_tests = { ...job.config.hidden_tests, protocol: "mork-v1", runtime_paths: ["nested/tracked"] };
+  job.hidden_tests[0].content = `echo 'MORK_RESULT ${JSON.stringify({ status, reason: "fixture", tests: { readiness: { ready: true }, cases: [{ id: "one", criteria: ["AC1"], status }] } })}'; exit ${code}\n`;
+  const report = await runGate({ ...job, mode: "before" }, "", work, { env });
+  expect(report.hidden[0]).toMatchObject({ passed: false, status: expected });
+});
+
+test("a malformed protocol result fails closed even with exit zero", async () => {
+  const { job, work } = fixture();
+  job.config.hidden_tests = { ...job.config.hidden_tests, protocol: "mork-v1", runtime_paths: ["nested/tracked"] };
+  job.hidden_tests[0].content = "echo 'MORK_RESULT broken'\n";
+  const report = await runGate(job, "", work, { env });
+  expect(report.hidden[0]).toMatchObject({ passed: false, status: "execution_failure" });
+});
+
+test.each([
+  { readiness: { ready: false }, cases: [{ id: "one", criteria: ["AC1"], status: "behavior_failure" }] },
+  { readiness: { ready: true }, cases: [] },
+  { readiness: { ready: true }, cases: [{ id: "one", criteria: ["AC2"], status: "behavior_failure" }] },
+  {
+    readiness: { ready: true },
+    cases: [
+      { id: "one", criteria: ["AC1"], status: "behavior_failure" },
+      { id: "two", criteria: ["AC2"], status: "inconclusive" },
+    ],
+  },
+])("declared file coverage cannot replace complete adapter case evidence: %j", async (tests) => {
+  const { job, work } = fixture();
+  job.config.hidden_tests = { ...job.config.hidden_tests, protocol: "mork-v1", runtime_paths: ["nested/tracked"] };
+  job.hidden_tests[0].content = `echo 'MORK_RESULT ${JSON.stringify({ status: "behavior_failure", reason: "fixture", tests })}'; exit 1`;
+  const report = await runGate({ ...job, mode: "before" }, "", work, { env });
+  expect(report.hidden[0]?.status).toBe("execution_failure");
+});
+
+test("the adapter result is parsed before diagnostic display truncation", async () => {
+  const { job, work } = fixture();
+  job.config.hidden_tests = { ...job.config.hidden_tests, protocol: "mork-v1", runtime_paths: ["nested/tracked"] };
+  const tests = {
+    readiness: { ready: true },
+    cases: Array.from({ length: 40 }, (_, i) => ({ id: `case-${i}`, criteria: ["AC1"], status: "behavior_failure", reason: "details".repeat(30) })),
+  };
+  job.hidden_tests[0].content = `echo 'MORK_RESULT ${JSON.stringify({ status: "behavior_failure", reason: "fixture", tests })}'; exit 1`;
+  const report = await runGate({ ...job, mode: "before" }, "", work, { env });
+  expect(report.hidden[0]?.status).toBe("behavior_failure");
+});
+
+test("a candidate cannot alter a configured verification runtime", async () => {
+  const { job, work, source } = fixture();
+  job.config.hidden_tests = { ...job.config.hidden_tests, protocol: "mork-v1", runtime_paths: ["nested/tracked"] };
+  writeFileSync(join(source, "nested/tracked"), "weakened\n");
+  mustExec("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-C", source, "commit", "-qam", "change oracle"]);
+  await expect(runGate(job, "", work, { env })).rejects.toThrow("verification runtime");
+});
+
+test("equal runtime blob bytes cannot hide a file-to-symlink change", async () => {
+  const { job, work, source } = fixture();
+  job.config.hidden_tests = { ...job.config.hidden_tests, protocol: "mork-v1", runtime_paths: ["nested/tracked"] };
+  mustExec("rm", [join(source, "nested/tracked")]);
+  symlinkSync("tracked\n", join(source, "nested/tracked"));
+  mustExec("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-C", source, "commit", "-qam", "replace runtime with symlink"]);
+  await expect(runGate(job, "", work, { env })).rejects.toThrow("verification runtime");
+});
+
+test("full redacted diagnostics retain the first cause outside the output tail", async () => {
+  const { job, work } = fixture();
+  job.config.test = "echo 'ROOT_CAUSE secret-fixture'; seq 1 3000; exit 1";
+  const saved: { output: string; command: string; head_sha: string }[] = [];
+  const result = await runGate(
+    {
+      ...job,
+      secrets: ["secret-fixture"],
+      saveDiagnostic: async (record) => {
+        saved.push(record);
+        return "diagnostics/run.json";
+      },
+    },
+    "",
+    work,
+    { env },
+  );
+  expect(saved.some((record) => record.output.includes("ROOT_CAUSE [redacted]"))).toBe(true);
+  expect(saved.every((record) => !record.output.includes("secret-fixture"))).toBe(true);
+  expect(result.repo_tests?.artifact).toBe("diagnostics/run.json");
 });
 test("a documentation gate runs the real repository checks without hidden tests", async () => {
   const { job, work, head } = fixture("mkdir generated");

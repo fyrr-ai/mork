@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Brief, keys } from "@mork/contracts";
+import { Brief, keys, PUBLIC_FEEDBACK_MARKER, readPublicFeedback } from "@mork/contracts";
 import { DEFAULT_DEVELOPMENT } from "@mork/contracts/development";
 import { DecisionPanel } from "@mork/decision";
 import { noLogger, type ReportEvent } from "@mork/sources";
@@ -40,7 +40,7 @@ async function failedBuild() {
     risks: [],
     security_sensitive: false,
   });
-  await store.putJson(keys.buildResult(brief.prefix, brief.attempt), { ok: false, error: "push failed" });
+  await store.putJson(keys.buildResult(brief.prefix, brief.attempt), { ok: false, error: "push failed: legacy-oracle-sentinel" });
   const reported: ReportEvent[] = [];
   const ctx: PhaseContext = {
     brief,
@@ -75,7 +75,10 @@ async function failedBuild() {
 test("Check returns failed feedback after an unpushed Build without reading hidden tests or checking out code", async () => {
   const { ctx, store, reported } = await failedBuild();
   expect(await check(ctx)).toEqual({ ok: true, passed: false });
-  expect(await store.text(keys.feedback(ctx.brief.prefix, 3))).toContain("push failed");
+  const feedback = await store.text(keys.feedback(ctx.brief.prefix, 3));
+  expect(feedback.startsWith(PUBLIC_FEEDBACK_MARKER)).toBe(true);
+  expect(readPublicFeedback(feedback)).toContain("ended without a pushed commit");
+  expect(feedback).not.toContain("legacy-oracle-sentinel");
   expect(store.reads).not.toContain(keys.hidden(ctx.brief.prefix));
   expect(reported).toHaveLength(1);
   expect(reported[0]).toMatchObject({ kind: "check", passed: false });
