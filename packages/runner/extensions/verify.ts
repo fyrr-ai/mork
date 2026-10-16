@@ -11,8 +11,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Type } from "typebox";
-import { z } from "zod";
-import { runVerify, type VerifyResult, type VerifySpec, verifyText } from "../src/verify.ts";
+import { Published, runVerify, type VerifyResult, type VerifySpec, verifyText } from "../src/verify.ts";
 
 /** Where the agent user keeps full verify outputs; the runner reads `MORK_VERIFY_LOG_DIR` or this default under HOME. */
 export function verifyLogDir(env: NodeJS.ProcessEnv = process.env): string {
@@ -23,15 +22,6 @@ export function verifyLogDir(env: NodeJS.ProcessEnv = process.env): string {
 export function publishedSidecar(rawSidecar: string): string {
   return rawSidecar.replace(/\.json$/, ".published.json");
 }
-
-/** Publication shape only; the root collector owns redaction and provenance. Invalid writes keep polling. */
-export const Published = z.object({
-  artifact: z.string().min(1),
-  output_tail: z.string(),
-  command: z.string().optional(),
-  output_truncated: z.boolean().optional(),
-});
-export type Published = z.infer<typeof Published>;
 
 /** Exit code a step reports when the platform could not publish its complete output: never a pass. */
 export const EXIT_TRUNCATED = 125;

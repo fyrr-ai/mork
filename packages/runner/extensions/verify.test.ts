@@ -3,9 +3,10 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Published } from "../src/verify.ts";
 
 mock.module("typebox", () => ({ Type: { Object: (v: unknown) => v, String: (v: unknown) => v } }));
-const { default: verify, keepVerifyArtifacts, Published, publishedSidecar, verifyLogDir } = await import("./verify.ts");
+const { default: verify, keepVerifyArtifacts, publishedSidecar, verifyLogDir } = await import("./verify.ts");
 
 type Tool = {
   name: string;

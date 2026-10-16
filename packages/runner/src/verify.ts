@@ -4,8 +4,18 @@
 // they stay in Check. Runs as the agent user, like any of its bash calls.
 import { existsSync, writeFileSync } from "node:fs";
 import type { RepoConfig, RepoRef } from "@mork/contracts";
+import { z } from "zod";
 import { checkDiff } from "./gate.ts";
 import { execAsync } from "./git.ts";
+
+/** Publication shape only; the root collector owns redaction and provenance. Invalid writes keep polling. */
+export const Published = z.object({
+  artifact: z.string().min(1),
+  output_tail: z.string(),
+  command: z.string().optional(),
+  output_truncated: z.boolean().optional(),
+});
+export type Published = z.infer<typeof Published>;
 
 /** Written by the runner from the base commit's config; the agent's branch cannot change it. */
 export type VerifySpec = {
