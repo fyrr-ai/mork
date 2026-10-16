@@ -98,6 +98,7 @@ await reportTo(token, async () => {
       : { plan: DEFAULT_DEVELOPMENT.steps[0], build: DEFAULT_DEVELOPMENT.steps[1], check: DEFAULT_DEVELOPMENT.steps[2] }[phase],
     store: Store.fromEnv(env),
     githubToken: () => auth.token(brief.repo.full_name),
+    referenceToken: (repo) => auth.readToken(repo),
     model: requiredEnv(env, "MORK_MODEL"),
     panel: panelFromEnv(env),
     superviseEveryMs: Number(env.MORK_SUPERVISE_SECONDS ?? 300) * 1000,

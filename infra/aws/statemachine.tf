@@ -110,7 +110,7 @@ locals {
       { ErrorEquals = ["ECS.AmazonECSException", "AmazonECS.Unknown"], MaxAttempts = step.spot_retries, IntervalSeconds = 30, BackoffRate = 2 },
     ] : []
     Catch = concat(step.capacity == "spot" ? [
-      { ErrorEquals = local.spot_errors, ResultPath = "$.error", Next = "${title(step.name)}OnDemand" }
+      { ErrorEquals = local.spot_errors, ResultPath = "$.error", Next = "${title(step.name)}OnDemand${step.kind == "check" ? "" : "Preflight"}" }
     ] : [], local.catch)
     Next = "${title(step.name)}Asked"
     Parameters = {
@@ -142,10 +142,20 @@ locals {
   asked = { for index, step in local.development.steps : "${title(step.name)}Asked" => {
     Type    = "Choice"
     Choices = [{ Variable = "$.last.question", IsPresent = true, Next = "Ask" }]
-    Default = index + 1 < length(local.development.steps) ? title(local.development.steps[index + 1].name) : "Decide"
+    Default = index + 1 < length(local.development.steps) ? "${title(local.development.steps[index + 1].name)}${local.development.steps[index + 1].kind == "check" ? "" : "Preflight"}" : "Decide"
   } }
 
   lambda_retry = [{ ErrorEquals = ["Lambda.ServiceException", "Lambda.TooManyRequestsException", "Lambda.SdkClientException"], MaxAttempts = 3, IntervalSeconds = 5, BackoffRate = 2 }]
+
+  preflight = { for name, phase in merge(local.phase, local.phase_fallback) : "${name}Preflight" => {
+    Type       = "Task"
+    Resource   = "arn:aws:states:::lambda:invoke"
+    Parameters = { FunctionName = aws_lambda_function.steps.qualified_arn, Payload = { action = "preflight", "state.$" = "$" } }
+    OutputPath = "$.Payload"
+    Retry      = local.lambda_retry
+    Catch      = local.catch
+    Next       = name
+  } if name != local.development_names.check && name != "${local.development_names.check}OnDemand" }
 
   # A step returns the next state or throws Handover with the reason.
   step = { for name, action in { Decide = "decide" } : name => {
@@ -163,7 +173,7 @@ locals {
     # Budget configured work attempts, questions and both Spot retry categories plus on-demand fallback.
     TimeoutSeconds = local.development_seconds
     StartAt        = "Start"
-    States = merge(local.phase, local.phase_fallback, local.asked, local.step, {
+    States = merge(local.phase, local.phase_fallback, local.asked, local.step, local.preflight, {
       Start = {
         Type     = "Task"
         Resource = "arn:aws:states:::lambda:invoke"
@@ -180,8 +190,8 @@ locals {
       Route = {
         Type = "Choice"
         Choices = [
-          { Variable = "$.next", StringEquals = "plan", Next = local.development_names.plan },
-          { Variable = "$.next", StringEquals = "build", Next = local.development_names.build },
+          { Variable = "$.next", StringEquals = "plan", Next = "${local.development_names.plan}Preflight" },
+          { Variable = "$.next", StringEquals = "build", Next = "${local.development_names.build}Preflight" },
           { Variable = "$.next", StringEquals = "ask", Next = "Ask" },
         ]
         Default = "Done"
@@ -210,8 +220,8 @@ locals {
       Resume = {
         Type = "Choice"
         Choices = [
-          { Variable = "$.last.resume", StringEquals = "plan", Next = local.development_names.plan },
-          { Variable = "$.last.resume", StringEquals = "build", Next = local.development_names.build },
+          { Variable = "$.last.resume", StringEquals = "plan", Next = "${local.development_names.plan}Preflight" },
+          { Variable = "$.last.resume", StringEquals = "build", Next = "${local.development_names.build}Preflight" },
           { Variable = "$.last.resume", StringEquals = "check", Next = local.development_names.check },
         ]
         Default = "Handover"

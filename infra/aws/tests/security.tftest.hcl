@@ -47,9 +47,23 @@ variables {
 
 run "webhook_permissions_and_timeout" {
   command = plan
+  assert {
+    condition = try(
+      local.definition.States.Route.Choices[0].Next == "DesignPreflight" &&
+      local.definition.States.Route.Choices[1].Next == "ImplementPreflight" &&
+      local.definition.States.Resume.Choices[0].Next == "DesignPreflight" &&
+      local.definition.States.Resume.Choices[1].Next == "ImplementPreflight" &&
+      local.definition.States.DesignAsked.Default == "ImplementPreflight" &&
+      local.definition.States.DesignPreflight.Parameters.Payload.action == "preflight" &&
+      local.definition.States.DesignPreflight.Next == "Design" &&
+      local.definition.States.ImplementPreflight.Next == "Implement" &&
+    local.definition.States.ImplementPreflight.Catch[0].Next == "Handover", false)
+    error_message = "Plan, Build, fix and Ask/resume must pass fresh dependency preflight and fail closed before launching a worker."
+  }
   variables {
     workflows = { development = {
-      description = "Configured development"
+      description          = "Configured development"
+      total_build_attempts = 7
       steps = [
         { name = "design", kind = "plan", instructions = "Plan", attempts = 2, timeout_seconds = 1000, capacity = "spot", spot_retries = 2, allowed_domains = ["github.com"] },
         { name = "implement", kind = "build", instructions = "Build", attempts = 3, timeout_seconds = 2000, capacity = "spot", spot_retries = 1, allowed_domains = ["github.com", "registry.npmjs.org"] },
@@ -57,6 +71,10 @@ run "webhook_permissions_and_timeout" {
       ]
       delivery = { kind = "draft_pr", step = "verify" }
     } }
+  }
+  assert {
+    condition     = local.definition.States.Start.Parameters.Payload.policy.total_build_attempts == 7
+    error_message = "The configured total Build budget must reach the production Start action."
   }
   assert {
     condition     = aws_lambda_permission.intake_url.action == "lambda:InvokeFunctionUrl" && aws_lambda_permission.intake_url_invoke.action == "lambda:InvokeFunction" && aws_lambda_permission.intake_url_invoke.invoked_via_function_url
@@ -112,7 +130,7 @@ run "webhook_permissions_and_timeout" {
     error_message = "Production image repositories must not be deleted with their contents."
   }
   assert {
-    condition     = local.definition.States.DesignAsked.Default == "Implement" && local.definition.States.ImplementAsked.Default == "Verify" && local.definition.States.VerifyAsked.Default == "Decide" && local.definition.States.Resume.Choices[2].Next == "Verify" && local.definition.States.Route.Choices[0].Next == "Design" && local.definition.States.Design.Parameters.TaskDefinition == aws_ecs_task_definition.phase["plan"].arn
+    condition     = local.definition.States.DesignAsked.Default == "ImplementPreflight" && local.definition.States.ImplementAsked.Default == "Verify" && local.definition.States.VerifyAsked.Default == "Decide" && local.definition.States.Resume.Choices[2].Next == "Verify" && local.definition.States.Route.Choices[0].Next == "DesignPreflight" && local.definition.States.Design.Parameters.TaskDefinition == aws_ecs_task_definition.phase["plan"].arn
     error_message = "Configured operation names must drive ordering, question resumption and pinned task definitions."
   }
 }

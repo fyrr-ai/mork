@@ -54,7 +54,10 @@ try {
     work,
     { env: { PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin", HOME: work, CI: "1" } },
   );
-  const passed = values.mode === "after" ? gatePassed(report) : (report.setup?.exit_code ?? 0) === 0 && report.hidden.every((test) => !test.passed);
+  const passed =
+    values.mode === "after"
+      ? gatePassed(report)
+      : (report.setup?.exit_code ?? 0) === 0 && report.hidden.every((test) => test.status === "behavior_failure" || test.status === "pass");
   console.log(JSON.stringify({ passed, gate: report }, null, 2));
   process.exitCode = passed ? 0 : 1;
 } finally {

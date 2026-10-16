@@ -25,6 +25,23 @@ const spec = (base: string, dir: string, config: Partial<VerifySpec["config"]> =
 });
 
 describe("verify", () => {
+  test("the implementer cannot change a pinned verification adapter", async () => {
+    const { dir } = workingRepo();
+    const git = (...args: string[]) => mustExec("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-C", dir, ...args]).trim();
+    writeFileSync(join(dir, "adapter.mjs"), "export const expected = 5;\n");
+    git("add", ".");
+    git("commit", "-qm", "pin adapter");
+    const base = git("rev-parse", "HEAD");
+    writeFileSync(join(dir, "adapter.mjs"), "export const expected = 0;\n");
+    const result = await runVerify(
+      spec(base, dir, {
+        hidden_tests: { dir: "hidden", command: "node adapter.mjs {file}", file_suffix: ".mjs", protocol: "mork-v1", runtime_paths: ["adapter.mjs"] },
+      }),
+      dir,
+    );
+    expect(result.passed).toBe(false);
+    expect(result.violations).toContain("changes verification runtime path adapter.mjs");
+  });
   test("passes when the tests, checks and policy pass, uncommitted edits included", async () => {
     const { dir, base } = workingRepo();
     writeFileSync(join(dir, "math.mjs"), "export const add = (a, b) => a + b;\n");

@@ -61,6 +61,7 @@ workflows = {
     questions = { max = 3, timeout_seconds = 259200 }
     fixes = { rounds = 2, attempts = 2 }
     repairs = { rounds = 3 }
+    total_build_attempts = 8
     delivery = { kind = "draft_pr", step = "verify" }
   }
 }
@@ -68,7 +69,8 @@ workflows = {
 
 Development requires exactly Plan, Build and Check in that order. These are
 operations with fixed output contracts and credential boundaries. `attempts` in
-Plan bounds analyst corrections; in Build it bounds the Build/Check loop. Check
+Plan bounds total submissions within the same session, including the first;
+in Build it bounds the Build/Check loop. Check
 runs once per Build attempt. `fixes` bounds post-PR fix rounds and their Build
 attempts. `repairs.rounds` bounds how often reviewer findings go back to Build
 before the PR (default 3, 0 turns repairs off); each repair adds a Build attempt
@@ -77,6 +79,42 @@ extensions are configurable. `submit_result`, Build's `verify`, and Slack's
 `ask_human` remain available when the operation requires them. Instructions append
 to Pi's system prompt. Gate policy still comes from the base commit's
 `.mork/config.toml`.
+
+`total_build_attempts` optionally caps Build attempts across the initial run,
+reviewer repairs and later CI fixes. Without it, the pinned limit is the finite
+envelope `build attempts + repair rounds + fix rounds × (fix attempts + repair
+rounds)`. Fix claims reserve their allowance atomically with ownership; unused
+reservations are retained. Explicitly resuming a task does not replenish its
+budget. This counts attempts, not tokens or cost.
+
+Handover closes automation in the task's stored PR record before stopping work
+or publishing the takeover PR. CI and ordinary review events cannot restart a
+handed-over task. A user with write access can explicitly comment `@mork resume`
+to resume within the remaining budget. The takeover label displays this state;
+the conditional storage update decides ownership. A repeated completed Handover
+does not publish another notification.
+
+CI fixes collect all check runs and commit statuses for the current head. Pending
+checks defer the claim without spending a fix round. A later completed suite,
+including a successful one, wakes collection again. The same head cannot claim
+another CI repair, and a stale event cannot repair a newer head.
+
+Automatic wakeups currently come from completed check suites. A legacy commit
+status that finishes after the bounded collection window does not wake Mork by
+itself; an explicit authorized comment can request another check. Unknown queued
+suites remain pending even before they create a check run. Investigate a suite
+that never completes rather than treating it as successful.
+
+For Slack tasks, the trusted Lambda refreshes incoming Jira `Blocks` links before
+Plan and Build, including after a question resumes, and before retry or delivery.
+An unresolved or unknown blocker stops work. A Jira Done status does not prove
+that its implementation is present in the checkout. Merge prerequisite changes
+before starting dependent tasks, and verify the required behavior against that
+base revision. Mork does not schedule or merge dependencies automatically.
+
+A completed Step Functions execution can represent either verified delivery or
+Handover. A takeover draft PR preserves unfinished work; it is not evidence that
+its acceptance checks passed.
 
 Each container step gets its own `allowed_domains`, including the gate's setup,
 tests and checks. The proxy adds the LLM host. It does not add GitHub or package
@@ -270,6 +308,13 @@ and the same model options. The saved definition remains the run's configuration
 `--definition development.json` to use your own steps and retry budget. Resume
 uses the saved definition, even after that JSON file changes. Local runs use the
 host network; `allowed_domains` configures the AWS sidecar, not a local firewall.
+
+For each configured reference repository, pass `--reference NAME=/absolute/local/repo`
+to `workflow:local`, for example `--reference reference-data=/home/me/workspace/reference-data`.
+The local repository must contain the configured commit. Only selected paths from
+that commit are exported; working-tree edits are ignored. No GitHub credentials
+or remote reference fetches are used. Mappings are saved with the run and reused
+on resume; supplying different mappings on resume is rejected.
 
 `mise run check` covers routing against local HTTP adapters and mock AWS plans.
 `mise run images:check` also runs the real compiled entrypoint and Pi against

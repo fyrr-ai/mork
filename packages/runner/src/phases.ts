@@ -5,6 +5,8 @@
 // The gate always works in its own fresh clone as the `sandbox` user, and
 // every process of the previous user is killed before the next step starts,
 // so what ran before cannot reach into what runs next.
+
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import {
   AnalystOutput,
@@ -15,6 +17,7 @@ import {
   BuildResult as BuildResultSchema,
   CriteriaOutput,
   type GateReport,
+  GateReport as GateReportSchema,
   HandoverError,
   HiddenTest,
   ImplementerOutput,
@@ -33,17 +36,18 @@ import {
 } from "@mork/contracts";
 import type { DevelopmentStep } from "@mork/contracts/development";
 import type { DecisionPanel } from "@mork/decision";
-import type { Logger, Reporter } from "@mork/sources";
+import { type Logger, type Reporter, redact } from "@mork/sources";
 import type { Store } from "@mork/store";
 import { z } from "zod";
-import { killUser } from "./agentfs.ts";
-import { runGate, type Sandbox } from "./gate.ts";
+import { killUser, writeFresh } from "./agentfs.ts";
+import { type CommandDiagnostic, runGate, type Sandbox } from "./gate.ts";
 import { fetchRepo, mustExec, remoteHead, repoUrl, SAFE_GIT } from "./git.ts";
+import { hydrateInputs } from "./inputs.ts";
 import { type LlmJob, type LlmOutcome, type RunnerEnv, runLlmStation } from "./llm.ts";
 import { ocrReview, parseOcrResult, runOcr } from "./ocr.ts";
 import * as prompts from "./prompts.ts";
 import { carryFindings, changedFiles, locateFindings, readAt, verifyCriteria, verifyReview } from "./review.ts";
-import { checkPlan, gateFailures, gateFeedback, gatePassed } from "./rules.ts";
+import { bindAuthorCriteria, checkPlan, gateFailures, gateFeedback, gatePassed } from "./rules.ts";
 import { SessionLog } from "./session.ts";
 import { onShutdown } from "./shutdown.ts";
 import type { SupervisionRecord } from "./supervisor.ts";
@@ -56,6 +60,8 @@ export type PhaseContext = {
   env: RunnerEnv;
   sandbox: Sandbox;
   githubToken: () => Promise<string>;
+  referenceToken?: (repo: string) => Promise<string>;
+  localReferenceRepositories?: Record<string, string>;
   /** Trusted local workflows fetch and push only this task-owned bare repository. */
   localRepo?: string;
   model: string;
@@ -87,7 +93,7 @@ function logGate(logger: Logger, report: GateReport): void {
     );
   for (const h of report.hidden) {
     // Before the change hidden tests must fail, after it they must pass.
-    const good = report.mode === "before" ? !h.passed : h.passed;
+    const good = report.mode === "before" ? h.status === "behavior_failure" || h.status === "pass" : h.passed;
     log.log(`gate ${report.mode} · hidden ${h.file} ${h.passed ? "passed" : "failed"} (${h.criteria.join(", ")})`, {}, good ? "INFO" : "ERROR");
   }
   for (const v of report.diff_policy?.violations ?? []) log.log(`gate ${report.mode} · policy: ${v}`, {}, "ERROR");
@@ -104,6 +110,77 @@ async function supervised<T>(ctx: PhaseContext, phase: Phase, run: (records: Sup
 }
 
 type Stats = NonNullable<RunResult["stats"]>;
+
+const diagnosticId = z.string().uuid();
+const diagnosticRecord = z.object({
+  command_id: diagnosticId,
+  command: z.string(),
+  cwd: z.string(),
+  head_sha: z.string().regex(/^[0-9a-f]{40}$/),
+  exit_code: z.number().int(),
+  output: z.string(),
+  output_truncated: z.boolean().optional(),
+  source: z.literal("agent_verify").optional(),
+});
+
+function localDiagnostic(ctx: PhaseContext, record: CommandDiagnostic): string {
+  diagnosticId.parse(record.command_id);
+  const directory = join(ctx.env.workDir, "diagnostics");
+  mkdirSync(directory, { recursive: true, mode: 0o755 });
+  const path = join(directory, `${record.command_id}.json`);
+  writeFresh(path, redact(JSON.stringify(record), ctx.secrets()), 0o444);
+  return path;
+}
+
+function saveDiagnostic(ctx: PhaseContext): (record: CommandDiagnostic) => Promise<string> {
+  return async (record) => {
+    const safe = diagnosticRecord.parse(JSON.parse(redact(JSON.stringify(record), ctx.secrets())));
+    await ctx.store.putJson(`${ctx.brief.prefix}/diagnostics/${safe.command_id}.json`, safe);
+    await ctx.store.updateJson(`${ctx.brief.prefix}/diagnostics/index-${ctx.brief.attempt}.json`, (current) => {
+      const ids = z.array(diagnosticId).parse(current ?? []);
+      return [...new Set([...ids, safe.command_id])].slice(-32);
+    });
+    return localDiagnostic(ctx, safe);
+  };
+}
+
+/** Only runner-stored IDs are accepted. Model-provided paths or URLs never become fetch targets. */
+async function diagnosticInputs(ctx: PhaseContext, station: string): Promise<{ prompt: string; roots: string[] }> {
+  const prefix = ctx.brief.prefix;
+  const ids = new Set<string>();
+  for (const attempt of new Set([ctx.brief.attempt, Math.max(1, ctx.brief.attempt - 1)])) {
+    const index = z.array(diagnosticId).safeParse(await ctx.store.json(`${prefix}/diagnostics/index-${attempt}.json`).catch(() => []));
+    if (index.success) for (const id of index.data) ids.add(id);
+  }
+  for (const key of [keys.gateBefore(prefix), keys.gate(prefix, Math.max(1, ctx.brief.attempt - 1))]) {
+    const gate = GateReportSchema.safeParse(await ctx.store.json(key).catch(() => undefined));
+    if (!gate.success) continue;
+    for (const step of [gate.data.setup, gate.data.repo_tests, ...(gate.data.checks ?? []), ...gate.data.hidden]) {
+      const parsed = diagnosticId.safeParse(step?.command_id);
+      if (parsed.success) ids.add(parsed.data);
+    }
+  }
+  const files: { command_id: string; command: string; exit_code: number; artifact: string }[] = [];
+  for (const id of ids) {
+    const parsed = diagnosticRecord.safeParse(await ctx.store.json(`${prefix}/diagnostics/${id}.json`).catch(() => undefined));
+    if (!parsed.success || parsed.data.command_id !== id) continue;
+    const record = parsed.data;
+    files.push({
+      command_id: id,
+      command: redact(record.command, ctx.secrets()),
+      exit_code: record.exit_code,
+      artifact: localDiagnostic(ctx, record),
+    });
+  }
+  if (!files.length) return { prompt: "", roots: [] };
+  const directory = join(ctx.env.workDir, "diagnostics");
+  const manifest = join(directory, `manifest-${station}-${ctx.brief.attempt}.json`);
+  writeFresh(manifest, JSON.stringify(files), 0o444);
+  return {
+    prompt: `\n\n## Verification diagnostics\nRead ${manifest} for the available redacted command outputs, including earlier causes omitted by inline tails. Use these local files; old container paths in feedback may have expired.\n`,
+    roots: [directory],
+  };
+}
 
 async function checkout(ctx: PhaseContext, name: string, withBranch: boolean): Promise<string> {
   const dir = join(ctx.env.workDir, name);
@@ -135,9 +212,24 @@ async function llm(
   task: Record<string, unknown>,
   push?: LlmJob["push"],
   verify?: LlmJob["verify"],
+  validation?: Pick<LlmJob, "transformOutput" | "validateOutput" | "maxCorrections">,
 ): Promise<LlmOutcome> {
   const { prefix } = ctx.brief;
   const answers = Answers.parse(await ctx.store.json(keys.answers(prefix)).catch(() => []));
+  const config = baseConfig(repoDir, ctx.brief.repo.base_sha);
+  const inputs = await hydrateInputs({
+    directory: join(ctx.env.workDir, "inputs"),
+    answers,
+    references: config.reference_repositories,
+    token:
+      ctx.referenceToken ??
+      (async () => {
+        throw new Error("Reference repository access is not configured");
+      }),
+    secrets: ctx.secrets,
+    localRepositories: ctx.localReferenceRepositories,
+  });
+  const diagnostics = await diagnosticInputs(ctx, station);
   const session = new SessionLog({
     file: join(ctx.env.agentHome, "sessions", `${label}.jsonl`),
     key: keys.session(prefix, label),
@@ -174,13 +266,20 @@ async function llm(
       extensions: ctx.step.extensions,
       environment:
         station === "verifier" || station === "criteria"
-          ? { MORK_READ_ROOTS: JSON.stringify([repoDir, ...(typeof task.baselineDir === "string" ? [task.baselineDir] : [])]) }
+          ? {
+              MORK_READ_ROOTS: JSON.stringify([
+                repoDir,
+                ...inputs.roots,
+                ...diagnostics.roots,
+                ...(typeof task.baselineDir === "string" ? [task.baselineDir] : []),
+              ]),
+            }
           : undefined,
       message: !resumed
-        ? message + prompts.clarifications(answers)
+        ? message + inputs.prompt + diagnostics.prompt
         : pending.interrupted
-          ? prompts.INTERRUPTED_PROMPT
-          : prompts.answerPrompt(answers.at(-1) as Answers[number]),
+          ? prompts.INTERRUPTED_PROMPT + inputs.prompt + diagnostics.prompt
+          : `The requester answered. Continue this session using the latest answer file and the prior inputs listed in the manifest. End with submit_result.${inputs.prompt}${diagnostics.prompt}`,
       resumed,
       session,
       log: ctx.logger.with({ "mork.station": station }),
@@ -190,6 +289,10 @@ async function llm(
       repo: ctx.brief.repo,
       push,
       verify,
+      ...(config.setup ? { readiness: { command: config.setup, ...(verify ? { marker: verify.setupMarker } : {}) } } : {}),
+      ...validation,
+      secrets: ctx.secrets,
+      saveDiagnostic: saveDiagnostic(ctx),
       supervise: { panel: ctx.panel, everyMs: ctx.superviseEveryMs, task },
     },
     ctx.env,
@@ -213,54 +316,82 @@ async function planWith(ctx: PhaseContext, records: SupervisionRecord[]): Promis
   const issue = IssueDoc.parse(await store.json(keys.issue(brief.prefix)));
   const author = authorCriteria(issue.body);
   const stats: Stats = [];
-  let feedback: string | undefined;
-  for (let attempt = 1; attempt <= ctx.step.attempts; attempt++) {
-    const repoDir = await checkout(ctx, `analyst-${attempt}`, false);
-    const config = baseConfig(repoDir, brief.repo.base_sha);
-    const outcome = await llm(ctx, `plan-${attempt}-analyst`, "analyst", repoDir, prompts.analystMessage(issue, config, feedback), stats, records, {
-      title: issue.title,
-      analyst_attempt: attempt,
-    });
-    if (outcome.question) return { ok: true, question: outcome.question, resume: "plan", stats };
-    const parsed = outcome.ok ? AnalystOutput.safeParse(outcome.output) : undefined;
-    if (!parsed?.success) {
-      feedback = `The previous attempt failed: ${outcome.error ?? parsed?.error.message ?? "no output"}`;
-      continue;
-    }
-    const full = parsed.data;
+  const repoDir = await checkout(ctx, "analyst-1", false);
+  const config = baseConfig(repoDir, brief.repo.base_sha);
+  let submission = 0;
+  let accepted: { full: AnalystOutput; publicPlan: PublicPlan } | undefined;
+  const previousPlan = PublicPlan.safeParse(await store.json(keys.plan(brief.prefix)).catch(() => undefined));
+  const inputs = Answers.parse(await store.json(keys.answers(brief.prefix)).catch(() => []));
+  const repairFeedback = previousPlan.success ? await store.text(keys.feedback(brief.prefix, brief.attempt + 1)).catch(() => undefined) : undefined;
+  const validateOutput = async (value: unknown): Promise<string | undefined> => {
+    const full = AnalystOutput.parse(value);
     const publicPlan: PublicPlan = { ...full, hidden_tests: full.hidden_tests.map(({ file, criteria }) => ({ file, criteria })) };
     const problem = checkPlan(publicPlan, config, author);
-    if (problem) {
-      feedback = problem;
-      continue;
-    }
+    if (problem) return problem;
     let report: GateReport = { mode: "before", hidden: [] };
     if (full.hidden_tests.length) {
-      report = await runGate(
-        { mode: "before", repo: brief.repo, config, hidden_tests: full.hidden_tests, allow_test_change: false, localRepo: ctx.localRepo },
-        await ctx.githubToken(),
-        join(ctx.env.workDir, `gate-before-${attempt}`),
-        ctx.sandbox,
-      );
-      killUser(ctx.sandbox.uid);
-      if (ctx.localRepo) mustExec("chmod", ["-R", "u+rwX", join(ctx.env.workDir, `gate-before-${attempt}`)]);
-      mustExec("rm", ["-rf", join(ctx.env.workDir, `gate-before-${attempt}`)]);
+      const gateDir = join(ctx.env.workDir, `gate-before-${++submission}`);
+      try {
+        report = await runGate(
+          {
+            mode: "before",
+            repo: brief.repo,
+            config,
+            hidden_tests: full.hidden_tests,
+            allow_test_change: false,
+            localRepo: ctx.localRepo,
+            secrets: ctx.secrets(),
+            saveDiagnostic: saveDiagnostic(ctx),
+            contract: { criteria: full.acceptance_criteria, inputs },
+          },
+          await ctx.githubToken(),
+          gateDir,
+          ctx.sandbox,
+        );
+      } finally {
+        killUser(ctx.sandbox.uid);
+        if (ctx.localRepo) mustExec("chmod", ["-R", "u+rwX", gateDir]);
+        mustExec("rm", ["-rf", gateDir]);
+      }
     }
     logGate(ctx.logger, report);
     await store.putJson(keys.gateBefore(brief.prefix), report);
     if (report.setup && report.setup.exit_code !== 0)
-      throw new HandoverError(`Repository setup failed:\n\n\`\`\`\n${report.setup.output.slice(-1500)}\n\`\`\``);
-    const passing = report.hidden.filter((h) => h.passed);
-    if (passing.length) {
-      feedback = `These hidden tests already PASS on the current code, so they verify nothing: ${passing.map((h) => h.file).join(", ")}. Rewrite them so they fail until the change is implemented.`;
-      continue;
-    }
-    await store.putJson(keys.hidden(brief.prefix), full.hidden_tests);
-    await store.putJson(keys.plan(brief.prefix), publicPlan);
-    await ctx.reporter.report({ kind: "plan", criteria: publicPlan.acceptance_criteria.length, hidden_tests: full.hidden_tests.length });
-    return { ok: true, stats };
-  }
-  throw new HandoverError(`The analyst did not produce a valid plan. Last problem: ${feedback}`);
+      return `Repository setup failed; repair the verification runtime:\n${report.setup.output}\nDiagnostic: ${report.setup.artifact ?? "unavailable"}`;
+    const invalid = report.hidden.filter((h) => h.status !== "behavior_failure" && h.status !== "pass");
+    if (invalid.length)
+      return `Invalid verification, not a valid red. Repair the test runtime without dropping criteria:\n${gateFeedback(report, full)}`;
+    publicPlan.oracle_version = report.oracle_version;
+    if (previousPlan.success && previousPlan.data.oracle_version !== publicPlan.oracle_version)
+      throw new HandoverError(
+        `Oracle changed after Build. Independent review is required before accepting version ${publicPlan.oracle_version}; previous baseline and candidate evidence are invalid.`,
+      );
+    accepted = { full, publicPlan };
+    return undefined;
+  };
+  const outcome = await llm(
+    ctx,
+    "plan-1-analyst",
+    "analyst",
+    repoDir,
+    prompts.analystMessage(issue, config, repairFeedback),
+    stats,
+    records,
+    { title: issue.title, analyst_attempt: 1 },
+    undefined,
+    undefined,
+    { transformOutput: (value) => bindAuthorCriteria(AnalystOutput.parse(value), author), validateOutput, maxCorrections: ctx.step.attempts - 1 },
+  );
+  if (outcome.question) return { ok: true, question: outcome.question, resume: "plan", stats };
+  if (!outcome.ok || !accepted) throw new HandoverError(`The analyst did not produce valid verification: ${outcome.error ?? "no accepted plan"}`);
+  await store.putJson(keys.hidden(brief.prefix), accepted.full.hidden_tests);
+  await store.putJson(keys.plan(brief.prefix), accepted.publicPlan);
+  await ctx.reporter.report({
+    kind: "plan",
+    criteria: accepted.publicPlan.acceptance_criteria.length,
+    hidden_tests: accepted.full.hidden_tests.length,
+  });
+  return { ok: true, stats };
 }
 
 /** Build: the implementer changes the code and pushes the work branch itself; nothing here sees hidden tests. */
@@ -303,6 +434,7 @@ async function buildWith(ctx: PhaseContext, records: SupervisionRecord[]): Promi
         checks: config.checks,
         test_paths: config.test_paths,
         protected_paths: config.protected_paths,
+        hidden_tests: config.hidden_tests,
       },
       setupMarker,
     },
@@ -347,7 +479,18 @@ async function checkWith(ctx: PhaseContext, records: SupervisionRecord[]): Promi
   const configDir = await checkout(ctx, "config", false);
   const config = baseConfig(configDir, brief.repo.base_sha);
   const report = await runGate(
-    { mode: "after", repo: brief.repo, branch: brief.branch, config, hidden_tests: hidden, allow_test_change: false, localRepo: ctx.localRepo },
+    {
+      mode: "after",
+      repo: brief.repo,
+      branch: brief.branch,
+      config,
+      hidden_tests: hidden,
+      allow_test_change: false,
+      localRepo: ctx.localRepo,
+      secrets: ctx.secrets(),
+      saveDiagnostic: saveDiagnostic(ctx),
+      contract: { criteria: thePlan.acceptance_criteria, inputs: Answers.parse(await store.json(keys.answers(brief.prefix)).catch(() => [])) },
+    },
     await ctx.githubToken(),
     join(ctx.env.workDir, "gate-after"),
     ctx.sandbox,
@@ -361,6 +504,36 @@ async function checkWith(ctx: PhaseContext, records: SupervisionRecord[]): Promi
     throw new HandoverError(
       `Branch \`${brief.branch}\` changed after Build: the implementer pushed \`${built.head_sha}\`, the remote has \`${report.head_sha}\`. Someone else pushed to it, so Mork stops here.`,
     );
+  }
+  let bound = true;
+  if (hidden.length) {
+    const baseline = GateReportSchema.safeParse(await store.json(keys.gateBefore(brief.prefix)).catch(() => undefined));
+    bound = Boolean(
+      baseline.success &&
+        thePlan.oracle_version &&
+        baseline.data.oracle_version === thePlan.oracle_version &&
+        report.oracle_version === thePlan.oracle_version,
+    );
+  }
+  const missing = hidden.filter(
+    (expected) => !report.hidden.some((actual) => actual.file === expected.file && expected.criteria.every((id) => actual.criteria.includes(id))),
+  );
+  const invalid =
+    (report.setup?.exit_code ?? 0) !== 0 ||
+    missing.length > 0 ||
+    report.hidden.some((h) => h.status === "execution_failure" || h.status === "inconclusive");
+  if (!bound || invalid) {
+    const feedback = !bound
+      ? "Verification identity changed or baseline evidence is missing. Repair Plan and rerun baseline and candidate verification; prior evidence is invalid."
+      : `${gateFeedback(report, thePlan)}${missing.length ? `\nDeclared hidden verification did not complete: ${missing.map((test) => test.file).join(", ")}` : ""}`;
+    await store.put(keys.feedback(brief.prefix, brief.attempt + 1), feedback, "text/markdown");
+    await ctx.reporter.report({
+      kind: "check",
+      attempt: brief.attempt,
+      passed: false,
+      failures: ["invalid verification", ...gateFailures(report)],
+    });
+    return { ok: true, passed: false, invalid_verification: true };
   }
   if (!gatePassed(report)) {
     await store.put(keys.feedback(brief.prefix, brief.attempt + 1), gateFeedback(report, thePlan), "text/markdown");

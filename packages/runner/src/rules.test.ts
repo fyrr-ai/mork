@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { AnalystOutput, GateReport } from "@mork/contracts";
-import { checkPlan, gateFailures, gateFeedback, gatePassed } from "./rules.ts";
+import { bindAuthorCriteria, checkPlan, gateFailures, gateFeedback, gatePassed } from "./rules.ts";
 
 const config = {
   test: "npm test",
@@ -28,13 +28,29 @@ const gate: GateReport = {
 };
 
 describe("plan checks", () => {
+  test("an authored runtime criterion cannot be downgraded to evidence", () => {
+    const author = [{ id: "AC1", text: "Replay preserves all rows" }];
+    const downgraded = { ...plan, acceptance_criteria: [{ ...author[0], testable: false }], hidden_tests: [] };
+    expect(checkPlan(downgraded, config, author)).toContain("runtime");
+  });
+  test("the runner binds author text while preserving missing mappings for validation", () => {
+    const author = [{ id: "AC1", text: "Replay preserves all rows" }];
+    expect(
+      bindAuthorCriteria({ ...plan, acceptance_criteria: [{ id: "AC1", text: "reworded", testable: true }] }, author).acceptance_criteria,
+    ).toEqual([{ ...author[0], testable: true }]);
+    expect(checkPlan(bindAuthorCriteria({ ...plan, acceptance_criteria: [], hidden_tests: [] }, author), config, author)).toContain("exactly");
+  });
   test("accepts a covered plan", () => expect(checkPlan(plan, config)).toBeUndefined());
-  test("keeps the author's criteria: only testability is the analyst's call", () => {
+  test("keeps the author's criteria and honors explicit evidence-only author intent", () => {
+    const documented = {
+      ...plan,
+      acceptance_criteria: [plan.acceptance_criteria[0], { id: "AC2", text: "[evidence] documented", testable: false }],
+    } as AnalystOutput;
     const author = [
-      { id: "AC2", text: "documented" },
+      { id: "AC2", text: "[evidence] documented" },
       { id: "AC1", text: "adds" },
     ];
-    expect(checkPlan(plan, config, author)).toBeUndefined();
+    expect(checkPlan(documented, config, author)).toBeUndefined();
     const reworded = { ...plan, acceptance_criteria: [{ id: "AC1", text: "adds two numbers", testable: true }, plan.acceptance_criteria[1]] };
     expect(checkPlan(reworded as AnalystOutput, config, author)).toContain("- AC1: adds");
     const extra = { ...plan, acceptance_criteria: [...plan.acceptance_criteria, { id: "AC3", text: "fast", testable: false }] };
@@ -68,6 +84,25 @@ describe("gate verdict", () => {
 });
 
 describe("gate feedback", () => {
+  test("invalid execution never claims an acceptance criterion was disproven", () => {
+    const invalid = {
+      ...gate,
+      hidden: [
+        {
+          file: "add.test.mjs",
+          criteria: ["AC1"],
+          passed: false,
+          status: "execution_failure" as const,
+          reason: "missing interpreter",
+          output: "ImportError",
+          artifact: "diagnostics/one.json",
+        },
+      ],
+    };
+    expect(gateFailures(invalid)).toEqual(["verification execution_failure (add.test.mjs): missing interpreter"]);
+    expect(gateFeedback(invalid, plan)).not.toContain("Acceptance criterion not met");
+    expect(gateFeedback(invalid, plan)).toContain("diagnostics/one.json");
+  });
   test("names the failed criterion, never the hidden test source", () => {
     const red = { ...gate, hidden: [{ file: "add.test.mjs", criteria: ["AC1"], passed: false, output: "expected 5" }] };
     const feedback = gateFeedback(red, plan);

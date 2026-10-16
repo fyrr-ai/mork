@@ -284,6 +284,7 @@ describe("slack source", () => {
     ) as unknown as typeof fetch;
     const work = await source().resolve({ ...input, ask: "implement PROJ-123" });
     expect(work).toEqual({
+      blocked_by: [],
       key: "PROJ-123",
       title: "Add truncate",
       body: "Exactly max chars.",

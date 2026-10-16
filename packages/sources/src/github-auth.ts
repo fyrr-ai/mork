@@ -46,23 +46,29 @@ export class GitHubAuth {
 
   secrets = (): string[] => [...this.#secrets];
 
-  token: GitHubTokenSource = async (repo) => {
+  token: GitHubTokenSource = (repo) => this.#token(repo, false);
+
+  /** App reference tokens are read-only; static credentials retain their configured scope. */
+  readToken: GitHubTokenSource = (repo) => this.#token(repo, true);
+
+  async #token(repo: string, readOnly: boolean): Promise<string> {
     if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) throw new Error("GitHub authentication requires an owner/repo name");
     if (this.#credential.kind === "token") return this.#credential.token;
-    const cached = this.#tokens.get(repo);
+    const cacheKey = `${repo}:${readOnly ? "read" : "task"}`;
+    const cached = this.#tokens.get(cacheKey);
     if (cached && cached.expiresAt - this.#now() > REFRESH_BEFORE_MS) return cached.token;
-    const pending = this.#pending.get(repo);
+    const pending = this.#pending.get(cacheKey);
     if (pending) return pending;
-    const mint = this.#mint(repo);
-    this.#pending.set(repo, mint);
+    const mint = this.#mint(repo, readOnly, cacheKey);
+    this.#pending.set(cacheKey, mint);
     try {
       return await mint;
     } finally {
-      this.#pending.delete(repo);
+      this.#pending.delete(cacheKey);
     }
-  };
+  }
 
-  async #mint(repo: string): Promise<string> {
+  async #mint(repo: string, readOnly: boolean, cacheKey: string): Promise<string> {
     const credential = this.#credential;
     if (credential.kind !== "app") throw new Error("GitHub App configuration is required");
     const now = Math.floor(this.#now() / 1000);
@@ -82,7 +88,7 @@ export class GitHubAuth {
             "x-github-api-version": "2022-11-28",
             "user-agent": "mork",
           },
-          body: JSON.stringify({ repositories: [repo.split("/")[1]] }),
+          body: JSON.stringify({ repositories: [repo.split("/")[1]], ...(readOnly ? { permissions: { contents: "read" } } : {}) }),
           signal: AbortSignal.timeout(15_000),
         });
         if (response.status < 500 || attempt === 2) break;
@@ -102,7 +108,7 @@ export class GitHubAuth {
     const expiresAt = Date.parse(issued.expires_at);
     if (expiresAt - this.#now() <= REFRESH_BEFORE_MS) throw new Error("GitHub App returned an installation token too close to expiry");
     this.#secrets.add(issued.token);
-    this.#tokens.set(repo, { token: issued.token, expiresAt });
+    this.#tokens.set(cacheKey, { token: issued.token, expiresAt });
     return issued.token;
   }
 }

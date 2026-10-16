@@ -16,7 +16,7 @@ import {
 } from "@mork/sources";
 import { Store } from "@mork/store";
 import { DynamoStore } from "@mork/timeline/dynamo";
-import { ask, type Deps, decide, type FlowState, handover, start } from "./flow.ts";
+import { ask, type Deps, decide, type FlowState, handover, preflight, start } from "./flow.ts";
 import { GitHub } from "./github.ts";
 import { llmFromEnv } from "./llm.ts";
 import { attachRun } from "./observability.ts";
@@ -36,7 +36,7 @@ export type StepEvent =
       started_at?: string;
       policy?: unknown;
     }
-  | { action: "decide" | "handover"; state: FlowState }
+  | { action: "decide" | "handover" | "preflight"; state: FlowState }
   | { action: "ask"; state: FlowState; task_token: string; entered_at?: string };
 
 let deps: Deps | undefined;
@@ -65,6 +65,11 @@ async function getDeps(): Promise<Deps> {
       return (await slack()).reporter(task.origin.start, work ? { ...work, body: "" } : undefined);
     },
     resolveSlack: async (input) => (await slack()).resolve(input),
+    trackerIssue: async (key) => {
+      const source = await slack();
+      if (!source.issue) throw new Error("Jira issue lookup is unavailable");
+      return source.issue(key);
+    },
     tellSlack: async (input, event) => (await slack()).reporter(input).report(event),
     askRequester: async (task, q) => {
       if (task.origin.kind !== "slack") throw new Error("only Slack tasks can ask");
@@ -100,6 +105,8 @@ async function handle(event: StepEvent | WorkflowEvent): Promise<unknown> {
     log: (task: string, kind: string, detail?: Record<string, unknown>) => runEvents.log(kind, { task, ...(detail ? { detail } : {}) }),
   };
   switch (event.action) {
+    case "preflight":
+      return preflight(d, event.state);
     case "start": {
       const input = {
         ...event.input,
@@ -128,7 +135,7 @@ async function handle(event: StepEvent | WorkflowEvent): Promise<unknown> {
     }
     case "handover": {
       const result = await handover(d, event.state);
-      if (event.state.brief?.run)
+      if (event.state.brief?.run && result.outcome.level !== "superseded" && !result.replayed)
         emitRun(events.records, event.state.brief.run, "handover", Date.now(), {
           review: result.outcome.level,
           pr_url: result.outcome.url ?? event.state.brief.run.pr_url,

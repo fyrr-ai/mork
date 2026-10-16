@@ -40,7 +40,7 @@ import { executionUrl, findIssueKey, REVIEW_LEVEL_TEXT, type ReportEvent, type R
 import type { Store } from "@mork/store";
 import { linkPr, recordDecision, recordTakeover, type TimelineStore } from "@mork/timeline";
 import { z } from "zod";
-import { type FixState, MARKER, releasePr, savePr, startFix } from "./fix.ts";
+import { beginHandover, buildLimit, type FixState, finishHandover, MARKER, savePr, startFix } from "./fix.ts";
 import { type GitHub, GitHubError } from "./github.ts";
 import { CLARIFY_SYSTEM } from "./llm.ts";
 import { LABELS, naming, type Origin, prLink, type StartInput } from "./origin.ts";
@@ -58,6 +58,7 @@ export type Task = { id: string; repo: string; started_by: string; origin: Origi
 export type FlowState = {
   task: Task;
   policy?: DevelopmentPolicy;
+  build_limit?: number;
   /** Brief for the next container; Step Functions hands it over as an override. */
   brief: Brief;
   /** Triage classified the issue as a security change; raises the recommendation. */
@@ -92,6 +93,8 @@ export type Deps = {
   reporter: (task: Task) => Promise<Reporter>;
   /** Slack tasks: the Jira issue the request names, or a new one. */
   resolveSlack: (start: SlackStart) => Promise<TrackerIssue>;
+  /** Fresh Jira dependency state, using the existing source credentials. */
+  trackerIssue?: (key: string) => Promise<TrackerIssue>;
   /** Posts into a Slack request's thread before there is a task (e.g. "not a request"). */
   tellSlack: (start: SlackStart, event: ReportEvent) => Promise<void>;
   /** Posts the question to the requester and parks the task token until they answer. */
@@ -101,6 +104,8 @@ export type Deps = {
   stopStations: (startedBy: string) => Promise<number>;
   /** Whether a Step Functions execution is still running (a fix run's claim on its PR). */
   executionRunning: (executionArn: string) => Promise<boolean>;
+  /** Clock edge for bounded collection of concurrently finishing CI checks. */
+  wait?: (milliseconds: number) => Promise<void>;
 };
 
 /** ECS task group that ties the containers to one Mork task. */
@@ -113,10 +118,27 @@ function lastResult(state: FlowState): RunResult {
   return parsed.success ? parsed.data : { ok: false, error: `unreadable container result: ${JSON.stringify(state.last)?.slice(0, 500)}` };
 }
 
+function requireDependencies(work: TrackerIssue): void {
+  const blocked = (work.blocked_by ?? []).filter((issue) => !issue.done);
+  if (blocked.length)
+    throw new HandoverError(
+      `Unresolved Jira Blocks: ${blocked.map((issue) => `${issue.key} (${issue.status})`).join(", ")}. Complete the prerequisites before running this task.`,
+    );
+}
+
+/** Runs in the trusted steps Lambda, including after Ask/resume, never in the agent sandbox. */
+export async function preflight(deps: Deps, state: FlowState): Promise<FlowState> {
+  if (state.task.origin.kind === "slack" && state.task.origin.work) {
+    if (!deps.trackerIssue) throw new HandoverError("Fresh Jira dependency lookup is unavailable; cannot establish task readiness.");
+    requireDependencies(await deps.trackerIssue(state.task.origin.work.key));
+  }
+  return state;
+}
+
 /** Sends the work back to Build with `feedback`, or to a person when the attempts are used up. */
 async function retryBuild(deps: Deps, state: FlowState, feedback: string): Promise<FlowState> {
   const { brief } = state;
-  if (brief.attempt >= lastAttempt(brief)) {
+  if (brief.attempt >= Math.min(lastAttempt(brief), state.build_limit ?? buildLimit(state.policy))) {
     throw new HandoverError(
       `The implementation did not pass the gate by attempt ${lastAttempt(brief)}. Branch: \`${brief.branch}\`.\n\nLast feedback:\n\n${feedback}`,
     );
@@ -178,6 +200,7 @@ ${slack.ask}`,
     origin = { kind: "github", issue: input.issue };
   }
   const names = naming(repo, origin, short);
+  requireDependencies(work);
   const task: Task = {
     id: names.id,
     repo,
@@ -208,7 +231,7 @@ ${slack.ask}`,
   deps.log(task.id, "triage", triaged.triage);
   const brief: Brief = {
     attempt: 1,
-    last_attempt: (deps.development ?? DEFAULT_DEVELOPMENT_POLICY).build_attempts,
+    last_attempt: Math.min((deps.development ?? DEFAULT_DEVELOPMENT_POLICY).build_attempts, buildLimit(deps.development)),
     prefix: names.prefix,
     repo: { full_name: repo, default_branch: info.default_branch, base_sha: baseSha },
     branch: names.branch,
@@ -298,10 +321,17 @@ async function recordSupervision(deps: Deps, state: FlowState): Promise<void> {
 
 /** After Check: back to Build when the gate failed, otherwise recommend and open the draft PR. */
 export async function decide(deps: Deps, state: FlowState): Promise<FlowState> {
+  await preflight(deps, state);
   const { store, github } = deps;
   const { brief, task } = state;
   const result = lastResult(state);
   await recordSupervision(deps, state);
+  if (result.invalid_verification) {
+    const feedback = await store.text(keys.feedback(brief.prefix, brief.attempt + 1));
+    throw new HandoverError(
+      `Verification could not establish acceptance. Plan-owned test/runtime repair requires independent review before changing the oracle; no further Build attempt was allocated.\n\n${feedback}`,
+    );
+  }
   // Plan, Build and Check report their own progress; Decide reports a repair and the PR.
   if (!result.passed) {
     deps.log(task.id, "check.end", { attempt: brief.attempt, passed: false, stats: result.stats });
@@ -358,12 +388,15 @@ export async function decide(deps: Deps, state: FlowState): Promise<FlowState> {
     });
   }
   if (defects.length) {
+    if (brief.attempt >= (state.build_limit ?? buildLimit(state.policy))) {
+      throw new HandoverError(`Total Build budget used up at attempt ${brief.attempt}. Outstanding reviewer findings:\n${repairFeedback(defects)}`);
+    }
     await store.put(keys.feedback(brief.prefix, brief.attempt + 1), repairFeedback(defects), "text/markdown");
     await reporter.report({ kind: "repair", attempt: brief.attempt, findings: defects.map((f) => `\`${f.where}\`: ${f.what.slice(0, 200)}`) });
     deps.log(task.id, "review.repair", { attempt: brief.attempt, round: repairs.rounds + 1, findings });
     return {
       ...state,
-      brief: { ...brief, attempt: brief.attempt + 1, last_attempt: lastAttempt(brief) + 1 },
+      brief: { ...brief, attempt: brief.attempt + 1, last_attempt: Math.min(lastAttempt(brief) + 1, state.build_limit ?? buildLimit(state.policy)) },
       next: "build",
       last: undefined,
       repair: { rounds: repairs.rounds + 1, findings: repairs.findings + defects.length },
@@ -479,8 +512,19 @@ export function handoverReason(state: FlowState): string {
 }
 
 /** Comments, labels and stops whatever container of the task still runs. */
-export async function handover(deps: Deps, state: FlowState): Promise<{ next: "done"; outcome: { level: "takeover"; url?: string } }> {
+export async function handover(
+  deps: Deps,
+  state: FlowState,
+): Promise<{ next: "done"; replayed?: boolean; outcome: { level: "takeover" | "superseded"; url?: string } }> {
   const task: Task = state.task ?? taskFromStartInput(state as unknown as StartInput);
+  if (state.task && state.brief) {
+    const claim = await beginHandover(deps, state);
+    if (claim.status === "completed") return { next: "done", replayed: true, outcome: { level: "takeover", url: claim.url } };
+    if (claim.status === "superseded") {
+      deps.log(task.id, "handover.superseded", {});
+      return { next: "done", outcome: { level: "superseded" } };
+    }
+  }
   const reason = handoverReason(state);
   const stopped = task.started_by ? await deps.stopStations(task.started_by) : 0;
   // The person who takes over starts from a PR, not from a bare branch. A failed PR must not stop the handover.
@@ -498,12 +542,12 @@ export async function handover(deps: Deps, state: FlowState): Promise<{ next: "d
       state.fix.pr,
       `${MARKER}**Mork could not finish the fix (${state.fix.trigger}).** It is over to you.\n\n${reason}`,
     );
-    await releasePr(deps, state);
   }
   if (state.task) {
     await recordSupervision(deps, state);
     await recordTakeover(deps.timeline, task.id);
   }
+  if (state.task && state.brief) await finishHandover(deps, state);
   deps.log(task.id, "task.handover", { reason: reason.slice(0, 500), stopped });
   return { next: "done", outcome: { level: "takeover", ...(pr ? { url: pr.html_url } : {}) } };
 }
@@ -530,7 +574,7 @@ Mork hands this change to a person:
 
 ${reason}
 
-The branch holds Mork's last attempt (\`${head.slice(0, 7)}\`); it may not pass its checks. Take it over, or comment \`@mork\` with what to change to let Mork continue.
+The branch holds Mork's last attempt (\`${head.slice(0, 7)}\`); it may not pass its checks. Take it over, or comment \`@mork resume\` with what to change to let Mork continue within its remaining task budget.
 
 Agent transcripts (AWS console, secrets redacted): ${transcripts}
 
@@ -577,11 +621,15 @@ export function checksTable(c: ChecksEvidence): string {
     `${ok(r.exit_code === 0)} \`${r.command}\`${r.exit_code === 0 ? "" : ` (exit ${r.exit_code})`}`;
   const rows: [string, string, string][] = [];
   if (c.gateBefore) {
-    const failed = c.gateBefore.hidden.filter((h) => !h.passed).length;
+    const changed = c.gateBefore.hidden.filter((h) => h.status === "behavior_failure").length;
+    const retained = c.gateBefore.hidden.filter((h) => h.status === "pass" && h.passed).length;
+    const unverified = c.gateBefore.hidden.length - changed - retained;
     rows.push([
-      "Hidden tests fail on the base commit",
+      "Baseline acceptance verification",
       "gate",
-      `${ok(failed === c.gateBefore.hidden.length)} ${failed}/${c.gateBefore.hidden.length} failed before the change`,
+      c.gateBefore.hidden.length
+        ? `${ok(unverified === 0)} ${changed} behavior differences, ${retained} passing regression checks, ${unverified} unverified`
+        : "No executable baseline checks",
     ]);
   }
   if (c.gate.setup) rows.push(["Setup", "gate", cmd(c.gate.setup)]);

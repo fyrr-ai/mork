@@ -66,6 +66,8 @@ Create the App under the organization that should own it. Set Contents, Issues a
 
 Lambdas and trusted runners sign an App JWT and request an installation token scoped to the task repository. Tokens are cached and refreshed five minutes before expiry. Concurrent requests for the same repository share one mint request; renewal failures propagate rather than silently reusing a stale token. Warm Lambdas fetch a current token for each GitHub API call, and runners do so before each authenticated fetch or remote-head check.
 
+Reference repositories configured on the task repository's default branch use separate installation tokens with only `contents: read`. The installation must already include those repositories. Adding a repository to an App installation does not by itself deliver its files to a worker. The trusted runner fetches the pinned revision and selected text paths, then publishes files and a SHA-256 manifest outside the candidate checkout. Credentials and Git metadata stay outside the worker's inputs. Static-token deployments cannot downscope an existing token; their trusted runner still exposes only the exported files.
+
 In Build, the trusted runner also maintains `/mork-egress/github-token`, a root-owned file with mode `0600`. The proxy reads it with a 30-second cache and injects authentication only for the task repository's Git URLs. The proxy receives no App private key. The runner refreshes the file during long phases and stops the agent on renewal failure. Plan and Check do not grant proxy Git authentication. Every issued token is included in session/log redaction.
 
 Installations are configured per deployment; automatic installation discovery is not implemented. Rotating the App private key requires updating the secret and restarting consumers so cached configuration is replaced. App webhooks may use the existing intake URL and webhook secret, or repository webhooks may remain configured separately.
@@ -87,11 +89,41 @@ test_paths = ["test/", "tests/"]  # existing tests the agent must not change (de
 
 [hidden_tests]
 dir = "test-hidden"               # where the gate writes the hidden tests
-command = "node --test {file}"    # must contain {file}
-file_suffix = ".test.mjs"
+command = "node test-support/mork.mjs {file}" # repository-owned adapter; must contain {file}
+file_suffix = ".json"             # data format supported by that adapter
+protocol = "mork-v1"
+runtime_paths = ["test-support/mork.mjs", "package.json", "package-lock.json"]
 ```
 
 Rules for the agent go in `AGENTS.md`: the root file and files in subdirectories (a subdirectory's rules reach the agent before it first edits a file there).
+
+### Reference inputs
+
+Configure only required text paths at an immutable revision:
+
+```toml
+[[reference_repositories]]
+name = "legacy"
+repo = "your-org/legacy-service"
+sha = "0123456789abcdef0123456789abcdef01234567"
+paths = ["src/loader.py", "schemas"]
+```
+
+The runner fails before the station starts if a selected path or revision is unavailable, or if a selected entry is a symlink, submodule or binary file. Exports are bounded to 10,000 files and 50 MiB; narrow the selection instead of truncating contracts. Every station receives a compact manifest location. Requester answers are separate JSON files with their original question, rather than repeated large blocks in each prompt. Repeated preparation validates the published hashes, and resumed sessions receive the same paths for unchanged inputs.
+
+### Acceptance verification
+
+For executable acceptance checks, configure a repository-owned adapter with `hidden_tests.protocol = "mork-v1"` and list its trusted code, configuration and dependencies in `hidden_tests.runtime_paths`. Changes to these paths are a separately reviewed prerequisite, not part of the candidate implementation. The adapter must prepare the same environment used for its checks and compare public behavior with the supplied expectations. A free-form test script reporting its own success is not a trusted adapter.
+
+The adapter's last line is `MORK_RESULT` followed by JSON containing `status`, `reason` and `tests`. Status and exit code must agree: `pass`/0, `behavior_failure`/1, `execution_failure`/3, `inconclusive`/4. An import, startup or setup failure remains an execution failure even when wrapped in `AssertionError`. Legacy commands without this protocol cannot certify a baseline, whether they exit zero or nonzero. Existing repositories must provide an adapter before starting new tasks. A legacy zero exit in an after-gate remains a pass, but cannot replace the missing baseline evidence.
+
+For a certified pass or behavior failure, `tests.readiness.ready` must be `true` and `tests.cases` must contain completed cases with `id`, `criteria` and `status`. Every criterion declared for the hidden file must appear in a completed case. All cases must pass or report a behavior failure, and the aggregate status must agree with them. Missing or incomplete evidence is an execution failure, even when the process exits zero. This verifies execution and coverage declarations; review still has to establish that the cases actually test the requested behavior.
+
+Numbered author criteria require executable verification by default. An author may explicitly prefix an evidence-only criterion with `[evidence]`, for example `AC4: [evidence] Document the recovery command`. The analyst cannot add that exemption. The runner supplies the author's exact text and validates coverage within the same planning session. Existing passing behavior is retained as regression evidence rather than forced to fail.
+
+A changed oracle, runtime or acceptance contract invalidates the baseline/candidate comparison. After implementation starts, invalid verification is handed over for Plan-owned repair and independent review; the implementer cannot rewrite hidden expectations to make a result pass. Hashes establish identity, not the semantic correctness of an assertion.
+
+Repository setup runs before a new or resumed station starts. Verification diagnostics retain command identity, checkout SHA, working directory and redacted output outside the checkout. Capture is bounded to 64 MiB per command; exceeding it marks the diagnostic incomplete and prevents a successful verification. The prompt shows a short excerpt and the saved artifact location.
 
 ## Environment reference
 

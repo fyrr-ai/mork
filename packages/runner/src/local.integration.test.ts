@@ -5,7 +5,7 @@ import { expect, test } from "bun:test";
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { Brief, keys } from "@mork/contracts";
 import { DEFAULT_DEVELOPMENT } from "@mork/contracts/development";
 import { DecisionPanel } from "@mork/decision";
@@ -40,7 +40,7 @@ function completion(model: string, tool?: { name: string; arguments: unknown }):
 }
 
 /** Runs the real Plan phase with real Pi on a README-only fixture; the model server returns `outputs` in turn. */
-async function documentationPlan(body: string, outputs: Record<string, unknown>[]) {
+async function documentationPlan(body: string, outputs: Record<string, unknown>[], answer?: string) {
   const directory = mkdtempSync(join(tmpdir(), "mork-doc-plan-"));
   const source = join(directory, "source");
   mkdirSync(join(source, ".mork"), { recursive: true });
@@ -50,20 +50,36 @@ async function documentationPlan(body: string, outputs: Record<string, unknown>[
   writeFileSync(join(source, "README.md"), "# Project\n");
   writeFileSync(
     join(source, ".mork", "config.toml"),
-    'setup = "exit 42"\ntest = "true"\n[hidden_tests]\ndir = "hidden"\ncommand = "node {file}"\nfile_suffix = ".mjs"\n',
+    'setup = \'touch "$HOME/readiness-marker"\'\ntest = "true"\n[hidden_tests]\ndir = "hidden"\ncommand = "node {file}"\nfile_suffix = ".mjs"\n',
   );
   git("add", ".");
   git("commit", "-qm", "base");
   const base = git("rev-parse", "HEAD");
   const tasks: string[] = [];
+  const toolInputs: string[] = [];
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
     async fetch(request) {
       const req = (await request.json()) as { model: string; messages: Message[] };
-      if (req.messages.some((m) => m.role === "tool")) return completion(req.model);
+      const lastUser = req.messages.findLastIndex((m) => m.role === "user");
+      const toolMessages = req.messages.slice(lastUser + 1).filter((m) => m.role === "tool");
+      if (toolMessages.length) {
+        const last = String(toolMessages.at(-1)?.content ?? "");
+        if (answer && last.includes("HYDRATED_FILE_CONTENT")) {
+          toolInputs.push(last);
+          return completion(req.model, { name: "submit_result", arguments: { json: JSON.stringify(outputs[0]) } });
+        }
+        return completion(req.model);
+      }
       const user = req.messages.filter((m) => m.role === "user").at(-1)?.content;
       tasks.push(typeof user === "string" ? user : Array.isArray(user) ? user.map((part: { text?: string }) => part.text ?? "").join("") : "");
+      if (answer) {
+        const manifest = tasks.at(-1)?.match(/Read (\S+manifest.json)/)?.[1];
+        if (!manifest) throw new Error("Manifest missing from actual model prompt");
+        const code = `const fs=require('node:fs'),p=require('node:path');const m=JSON.parse(fs.readFileSync(${JSON.stringify(manifest)},'utf8'));const f=m.files.find(f=>f.path==='answers/001.json');const a=JSON.parse(fs.readFileSync(p.join(p.dirname(${JSON.stringify(manifest)}),f.path),'utf8'));console.log('HYDRATED_FILE_CONTENT '+a.answer.slice(-200));`;
+        return completion(req.model, { name: "bash", arguments: { command: `node -e '${code.replaceAll("'", "'\\''")}'` } });
+      }
       const output = outputs[Math.min(tasks.length, outputs.length) - 1];
       return completion(req.model, { name: "submit_result", arguments: { json: JSON.stringify(output) } });
     },
@@ -77,6 +93,7 @@ async function documentationPlan(body: string, outputs: Record<string, unknown>[
       branch: "mork/docs",
     });
     await store.putJson(keys.issue(brief.prefix), { ref: "DOC-1", title: "Document the channel", body });
+    if (answer) await store.putJson(keys.answers(brief.prefix), [{ question: "Schema?", answer }]);
     const ctx: PhaseContext = {
       brief,
       step: DEFAULT_DEVELOPMENT.steps[0],
@@ -86,7 +103,7 @@ async function documentationPlan(body: string, outputs: Record<string, unknown>[
         llmBaseUrl: `http://127.0.0.1:${server.port}/v1`,
         trustedLocal: { apiKey: "local-fixture-key" },
         piBin: pi as string,
-        extensionsDir: "/opt/mork/packages/runner/extensions",
+        extensionsDir: resolve(import.meta.dir, "../extensions"),
         workDir: join(directory, "work"),
         agentHome: join(directory, "home"),
       },
@@ -106,6 +123,8 @@ async function documentationPlan(body: string, outputs: Record<string, unknown>[
       plan: await store.json(keys.plan(brief.prefix)),
       hidden: await store.json(keys.hidden(brief.prefix)),
       gateBefore: await store.json(keys.gateBefore(brief.prefix)),
+      ready: existsSync(join(directory, "home/readiness-marker")),
+      toolInputs,
     };
   } finally {
     server.stop(true);
@@ -123,12 +142,13 @@ const documentationOutput = {
 };
 
 integration(
-  "real Pi produces a documentation plan on its first attempt without installing repository tools",
+  "real Pi produces a documentation plan after repository readiness",
   async () => {
     const run = await documentationPlan("Add the Slack channel to README.md", [documentationOutput]);
     expect(run.result).toMatchObject({ ok: true });
     expect(run.tasks).toHaveLength(1);
     expect(run.hidden).toEqual([]);
+    expect(run.ready).toBe(true);
     expect(run.plan).toMatchObject(documentationOutput);
     expect(run.gateBefore).toEqual({ mode: "before", hidden: [] });
   },
@@ -138,13 +158,17 @@ integration(
 integration(
   "real Pi Plan keeps the author's criteria: a reworded plan goes back, proposals stay apart",
   async () => {
-    const author = "README names #mork-example-app as the Mork channel";
+    const author = "[evidence] README names #mork-example-app as the Mork channel";
     const exact = {
       ...documentationOutput,
       acceptance_criteria: [{ id: "AC1", text: author, testable: false }],
       proposed_criteria: ["README links the channel"],
     };
-    const run = await documentationPlan(`Add the Slack channel to README.md\n\nAcceptance criteria\n- AC1: ${author}`, [documentationOutput, exact]);
+    const invalid = {
+      ...documentationOutput,
+      acceptance_criteria: [...documentationOutput.acceptance_criteria, { id: "AC2", text: "unrequested", testable: false }],
+    };
+    const run = await documentationPlan(`Add the Slack channel to README.md\n\nAcceptance criteria\n- AC1: ${author}`, [invalid, exact]);
     expect(run.result).toMatchObject({ ok: true });
     expect(run.tasks).toHaveLength(2);
     expect(run.tasks[0]).toContain(`## Acceptance criteria from the issue author\n\n- AC1: ${author}`);
@@ -152,6 +176,19 @@ integration(
     expect(run.plan).toMatchObject({ acceptance_criteria: exact.acceptance_criteria, proposed_criteria: ["README links the channel"] });
   },
   60000,
+);
+
+integration(
+  "real Pi reads the full hydrated answer file and sends its contents to the model",
+  async () => {
+    const answer = `${"synthetic schema\n".repeat(10000)}END_OF_PINNED_SCHEMA_93f4`;
+    const run = await documentationPlan("Document the channel", [documentationOutput], answer);
+    expect(run.result).toMatchObject({ ok: true });
+    expect(run.tasks[0]).toContain("manifest.json");
+    expect(run.tasks[0]).not.toContain(answer);
+    expect(run.toolInputs.join("\n")).toContain("END_OF_PINNED_SCHEMA_93f4");
+  },
+  30000,
 );
 
 integration(
@@ -196,7 +233,24 @@ integration(
     );
     writeFileSync(
       join(source, ".mork", "config.toml"),
-      `setup = "touch .fixture-ready"\ntest = "test -f .fixture-ready && node --test test/smoke.test.mjs"\nchecks = ["node --check math.mjs"]\n[hidden_tests]\ndir = "hidden"\ncommand = "node --test {file}"\nfile_suffix = ".test.mjs"\n`,
+      `setup = "touch .fixture-ready"\ntest = "test -f .fixture-ready && node --test test/smoke.test.mjs"\nchecks = ["node --check math.mjs"]\n[hidden_tests]\ndir = "hidden"\ncommand = "node verification.mjs {file}"\nfile_suffix = ".test.mjs"\nprotocol = "mork-v1"\nruntime_paths = ["verification.mjs"]\n`,
+    );
+    // This fixture's pinned adapter owns the concrete public comparison; arbitrary script exits cannot certify it.
+    writeFileSync(
+      join(source, "verification.mjs"),
+      `
+try {
+ const {add}=await import('./math.mjs');
+ const actual=add(2,3);
+ const status=actual===5?'pass':'behavior_failure';
+ console.log('MORK_RESULT '+JSON.stringify({status,reason:'add(2,3): expected 5, received '+actual,tests:{readiness:{ready:true},cases:[{id:'sum',criteria:['AC1'],status}]}}));
+ process.exitCode=status==='pass'?0:1;
+} catch(error) {
+ console.error(String(error));
+ console.log('MORK_RESULT '+JSON.stringify({status:'execution_failure',reason:'application invocation failed',tests:{collected:0}}));
+ process.exitCode=3;
+}
+`,
     );
     git("add", ".");
     git("commit", "-qm", "base");
@@ -451,7 +505,8 @@ integration(
           log += chunk;
         });
         const stopped = new Promise<number | null>((resolve) => interrupted.once("close", resolve));
-        const deadline = setTimeout(() => interrupted.kill("SIGKILL"), 15000);
+        // Reaching the verifier crosses Plan, two real Builds, gates and OCR in the image.
+        const deadline = setTimeout(() => interrupted.kill("SIGKILL"), 60_000);
         try {
           await Promise.race([
             pending,
@@ -520,7 +575,18 @@ integration(
       }
       expect(((await store.json("local-run.json")) as { brief: { last_attempt: number } }).brief.last_attempt).toBe(3);
       expect(seen.some((request) => request.station === "ocr")).toBe(true);
-      expect(JSON.stringify(seen.filter((request) => request.station === "verifier"))).toContain("Read only the supplied repository checkouts");
+      expect(
+        seen
+          .filter((request) => request.station === "verifier")
+          .some((request) =>
+            request.messages.some(
+              (message) =>
+                message.role === "tool" &&
+                typeof message.content === "string" &&
+                message.content.includes("Blocked by Mork: read only the supplied repository checkouts"),
+            ),
+          ),
+      ).toBe(true);
       expect(seen.some((request) => request.station === "reviewer")).toBe(false);
       expect(JSON.stringify(seen.filter((request) => request.station === "implementer"))).not.toContain("HIDDEN_FIXTURE_ASSERTION");
       expect(JSON.stringify(seen.filter((request) => request.station === "implementer"))).toContain("verify: PASSED");

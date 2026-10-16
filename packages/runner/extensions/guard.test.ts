@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { pushDenied, readDenied } from "./guard.ts";
+import { BLOCKED_PREFIX, pushDenied, readDenied } from "./guard.ts";
 
 const branch = "mork/issue-7-abc12345";
 
@@ -29,8 +29,18 @@ describe("guard: push", () => {
       expect(pushDenied(cmd, branch)).toBeDefined();
     }
   });
+  test("a commit chain ending in the plain push is allowed; only what follows the branch is rejected, and the reason says so", () => {
+    expect(pushDenied(`git add -A && git commit -m "x" && git push origin ${branch}`, branch)).toBeUndefined();
+    const reason = pushDenied(`git add -A && git commit -q -m x; git push origin ${branch} 2>&1 | tail -3`, branch);
+    expect(reason).toBeDefined();
+    expect(reason?.startsWith(BLOCKED_PREFIX)).toBe(true);
+    expect(reason).toContain(`Rejected: \`git push origin ${branch} 2>`);
+    expect(reason).toContain("after the branch name");
+    expect(reason).toContain(`Run exactly: \`git push origin ${branch}\``);
+    expect(pushDenied("git push --force origin main", branch)).toContain("Rejected: `git push --force origin main`");
+  });
   test("stations without a work branch never push", () => {
-    expect(pushDenied(`git push origin ${branch}`, undefined)).toBe("This station never pushes.");
+    expect(pushDenied(`git push origin ${branch}`, undefined)).toBe(`${BLOCKED_PREFIX}: this station never pushes.`);
     expect(pushDenied("git status", undefined)).toBeUndefined();
   });
 });

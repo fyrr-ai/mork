@@ -10,12 +10,12 @@ import { execAsync } from "./git.ts";
 /** Written by the runner from the base commit's config; the agent's branch cannot change it. */
 export type VerifySpec = {
   repo: RepoRef;
-  config: Pick<RepoConfig, "setup" | "test" | "checks" | "test_paths" | "protected_paths">;
+  config: Pick<RepoConfig, "setup" | "test" | "checks" | "test_paths" | "protected_paths"> & Partial<Pick<RepoConfig, "hidden_tests">>;
   /** Marker file: setup ran once in this container. */
   setupMarker: string;
 };
 
-export type VerifyStep = { name: string; command: string; exit_code: number; output: string };
+export type VerifyStep = { name: string; command: string; exit_code: number; output: string; artifact?: string; output_truncated?: boolean };
 export type VerifyResult = { passed: boolean; steps: VerifyStep[]; violations: string[] };
 
 const TAIL = 1_500;
@@ -24,8 +24,14 @@ const COMMAND_TIMEOUT_MS = 15 * 60_000;
 export async function runVerify(spec: VerifySpec, repoDir: string, env: NodeJS.ProcessEnv = process.env): Promise<VerifyResult> {
   const steps: VerifyStep[] = [];
   const run = async (name: string, command: string) => {
-    const result = await execAsync("bash", ["-c", command], { cwd: repoDir, env, timeoutMs: COMMAND_TIMEOUT_MS });
-    const step = { name, command, exit_code: result.code, output: result.output.slice(-TAIL) };
+    const result = await execAsync("bash", ["-c", command], { cwd: repoDir, env, timeoutMs: COMMAND_TIMEOUT_MS, maxOutputBytes: 64 * 1024 * 1024 });
+    const step = {
+      name,
+      command,
+      exit_code: result.output_truncated ? 125 : result.code,
+      output: `${result.output_truncated ? "[Diagnostic incomplete: output limit exceeded]\n" : ""}${result.output}`,
+      ...(result.output_truncated ? { output_truncated: true } : {}),
+    };
     steps.push(step);
     return step.exit_code === 0;
   };
@@ -44,7 +50,8 @@ export function verifyText(result: VerifyResult): string {
   const lines = [`verify: ${result.passed ? "PASSED" : "FAILED"}`];
   for (const step of result.steps) {
     lines.push(`- ${step.name} \`${step.command}\`: ${step.exit_code === 0 ? "ok" : `FAILED (exit ${step.exit_code})`}`);
-    if (step.exit_code !== 0) lines.push("```", step.output, "```");
+    if (step.exit_code !== 0) lines.push("```", step.output.slice(-TAIL), "```");
+    if (step.artifact) lines.push(`  Full diagnostic: ${step.artifact}`);
   }
   for (const violation of result.violations) lines.push(`- policy: ${violation}. The platform rejects this; revert that part.`);
   lines.push("Hidden acceptance tests are not run here; they run after you push.");

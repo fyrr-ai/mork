@@ -16,6 +16,7 @@ export const DevelopmentStep = z.discriminatedUnion("kind", [
 ]);
 export type DevelopmentStep = z.infer<typeof DevelopmentStep>;
 export const DevelopmentLimits = z.object({
+  total_build_attempts: z.number().int().positive().max(128).optional(),
   questions: z.object({ timeout_seconds: z.number().int().min(1).max(31536000), max: z.number().int().min(0).max(8) }),
   fixes: z.object({ rounds: z.number().int().min(0).max(8), attempts: z.number().int().min(1).max(8) }),
   /** Times per run that proven reviewer findings go back to Build before the PR, each with a Build attempt of its own; 0 turns repairs off. */

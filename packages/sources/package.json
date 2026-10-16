@@ -4,6 +4,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./redact": "./src/redact.ts",
     "./intake": "./src/intake.ts",
     "./threads": "./src/threads.ts"
   },

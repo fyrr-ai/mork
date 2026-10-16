@@ -13,6 +13,7 @@ const { values } = parseArgs({
     output: { type: "string" },
     resume: { type: "string" },
     base: { type: "string" },
+    reference: { type: "string", multiple: true },
     model: { type: "string" },
     "llm-url": { type: "string" },
     pi: { type: "string", default: process.env.PI_BIN ?? "pi" },
@@ -27,13 +28,25 @@ if (values.help) {
     "Resume: mise run workflow:local -- --trusted --resume TASK_DIR --model MODEL --llm-url URL [--pi BIN] [--definition development.json]",
   );
   console.log("issue.json is {ref,title,body}. Set MORK_LOCAL_API_KEY for authenticated model endpoints.");
+  console.log(
+    "References: repeat --reference NAME=/absolute/local/repo for each configured reference. Uses its pinned SHA; mappings persist on resume.",
+  );
   console.log("Runs real Plan/Build/Check and pushes to a task-owned bare Git remote. No AWS, GitHub PR or merge.");
   console.log("Trusted Linux mode: tools run as your user and can read the model key in private Pi config. Use only trusted repositories.");
   process.exit(0);
 }
 if (!values.trusted) throw new Error("--trusted is required because local tools run with your identity and access to the model key");
 if (!values.model || !values["llm-url"]) throw new Error("--model and --llm-url are required");
+const references: Record<string, string> = Object.create(null);
+for (const mapping of values.reference ?? []) {
+  const equals = mapping.indexOf("=");
+  const name = mapping.slice(0, equals);
+  if (equals < 1 || !/^[A-Za-z0-9_-]+$/.test(name) || !mapping.slice(equals + 1)) throw new Error("--reference requires NAME=/absolute/local/repo");
+  if (Object.hasOwn(references, name)) throw new Error(`Duplicate local reference: ${name}`);
+  references[name] = mapping.slice(equals + 1);
+}
 const connection = {
+  references: values.reference ? references : undefined,
   model: values.model,
   llmBaseUrl: values["llm-url"],
   apiKey: process.env.MORK_LOCAL_API_KEY ?? "local-no-auth",

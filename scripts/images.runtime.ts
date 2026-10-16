@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { createHmac, generateKeyPairSync, verify } from "node:crypto";
-import { chownSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chownSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -288,7 +288,20 @@ if (process.argv[2] === "lambda") {
   const { PiRpc } = await import(pathToFileURL(`${root}/src/rpc.ts`).href);
   const dir = mkdtempSync(join(tmpdir(), "mork-pi-image-"));
   chownSync(dir, 10001, 10001);
-  writeFileSync(join(dir, "verify.json"), JSON.stringify({ commands: [], rules: {}, baseSha: "a".repeat(40) }));
+  writeFileSync(
+    join(dir, "verify.json"),
+    JSON.stringify({
+      repo: { full_name: "fixture/repo", default_branch: "main", base_sha: "a".repeat(40) },
+      config: { test: "true", checks: [], test_paths: [], protected_paths: [] },
+      setupMarker: join(dir, "setup.done"),
+    }),
+  );
+  const toolRegistry = join(dir, "registered-tools.json");
+  const toolProbe = join(dir, "tool-probe.ts");
+  writeFileSync(
+    toolProbe,
+    `import {writeFileSync} from 'node:fs'; export default function(pi) { pi.on('session_start', () => { writeFileSync(${JSON.stringify(toolRegistry)}, JSON.stringify(pi.getAllTools().map(tool => tool.name))); }); }`,
+  );
   const session = join(dir, "session.jsonl");
   writeFileSync(session, `${JSON.stringify({ type: "session", version: 3, id: "image-test", timestamp: new Date().toISOString(), cwd: dir })}\n`);
   chownSync(session, 10001, 10001);
@@ -300,6 +313,8 @@ if (process.argv[2] === "lambda") {
       "--no-extensions",
       "--no-skills",
       ...["guard", "submit", "dir-rules", "ask", "verify"].flatMap((name) => ["-e", `${root}/extensions/${name}.ts`]),
+      "-e",
+      toolProbe,
     ],
     cwd: dir,
     env: {
@@ -321,6 +336,8 @@ if (process.argv[2] === "lambda") {
     assert.equal(state.success, true);
     assert.equal((await pi.command({ type: "get_commands" })).success, true);
     assert.equal(pi.stderrTail.includes("Failed to load extension"), false, pi.stderrTail);
+    const registered = JSON.parse(readFileSync(toolRegistry, "utf8"));
+    for (const tool of ["verify", "submit_result", "ask_human"]) assert(registered.includes(tool), `Pi did not register ${tool}`);
     const html = join(dir, "session.html");
     assert.equal((await pi.command({ type: "export_html", outputPath: html })).success, true);
     assert.equal(existsSync(html), true);
