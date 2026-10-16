@@ -471,3 +471,48 @@ run "reject_otlp_logs_without_endpoint" {
   }
   expect_failures = [var.log_destination]
 }
+
+run "diagnostics_preserve_oracle_boundary" {
+  command = plan
+  assert {
+    condition = alltrue([for phase in ["plan", "build", "check"] :
+      length([for statement in data.aws_iam_policy_document.phase[phase].statement : statement if
+        statement.sid == "PublicDiagnostics" &&
+        toset(statement.actions) == toset(["s3:GetObject", "s3:PutObject"]) &&
+        toset(statement.resources) == toset(["${local.tasks_arn}/*/diagnostics/public/*"])
+      ]) == 1
+    ])
+    error_message = "Every root station needs Get/Put only within the redacted public diagnostic partition, including its CAS indexes."
+  }
+  assert {
+    condition = alltrue([for phase in ["plan", "build", "check"] :
+      length([for statement in data.aws_iam_policy_document.phase[phase].statement : statement if
+        statement.sid == "OracleDiagnostics" &&
+        toset(statement.actions) == toset(["s3:GetObject", "s3:PutObject"]) &&
+        toset(statement.resources) == toset(["${local.tasks_arn}/*/diagnostics/oracle/*"])
+      ]) == (phase == "build" ? 0 : 1)
+    ])
+    error_message = "Full hidden-run diagnostics belong only to Plan and Check. Build must not receive oracle Get or Put."
+  }
+  assert {
+    condition = length([for statement in data.aws_iam_policy_document.phase["build"].statement : statement if
+      statement.sid == "HiddenTestsStayHidden" && statement.effect == "Deny" &&
+      toset(statement.actions) == toset(["s3:GetObject", "s3:GetObjectVersion"]) &&
+      toset(statement.resources) == toset([
+        "${local.tasks_arn}/*/hidden/*",
+        "${local.tasks_arn}/*/sessions/plan-*",
+        "${local.tasks_arn}/*/diagnostics/oracle/*"
+      ])
+    ]) == 1
+    error_message = "Build's explicit hidden/session deny must also protect oracle diagnostics, including versioned reads."
+  }
+  assert {
+    condition = alltrue(flatten([for phase in ["plan", "build", "check"] : [
+      for statement in data.aws_iam_policy_document.phase[phase].statement : alltrue([
+        for resource in statement.resources : !strcontains(resource, "/diagnostics/") ||
+        endswith(resource, "/diagnostics/public/*") || endswith(resource, "/diagnostics/oracle/*")
+      ])
+    ]]))
+    error_message = "No station may receive a shared or legacy diagnostics wildcard grant."
+  }
+}
