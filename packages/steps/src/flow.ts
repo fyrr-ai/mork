@@ -20,6 +20,7 @@ import {
   PublicPlan,
   Review,
   RunResult,
+  readPublicFeedback,
   repairCandidate,
   repairFeedback,
 } from "@mork/contracts";
@@ -327,7 +328,7 @@ export async function decide(deps: Deps, state: FlowState): Promise<FlowState> {
   const result = lastResult(state);
   await recordSupervision(deps, state);
   if (result.invalid_verification) {
-    const feedback = await store.text(keys.feedback(brief.prefix, brief.attempt + 1));
+    const feedback = readPublicFeedback(await store.text(keys.feedback(brief.prefix, brief.attempt + 1)));
     throw new HandoverError(
       `Verification could not establish acceptance. Plan-owned test/runtime repair requires independent review before changing the oracle; no further Build attempt was allocated.\n\n${feedback}`,
     );
@@ -335,7 +336,7 @@ export async function decide(deps: Deps, state: FlowState): Promise<FlowState> {
   // Plan, Build and Check report their own progress; Decide reports a repair and the PR.
   if (!result.passed) {
     deps.log(task.id, "check.end", { attempt: brief.attempt, passed: false, stats: result.stats });
-    return retryBuild(deps, state, await store.text(keys.feedback(brief.prefix, brief.attempt + 1)));
+    return retryBuild(deps, state, readPublicFeedback(await store.text(keys.feedback(brief.prefix, brief.attempt + 1))) ?? "");
   }
   const reporter = await deps.reporter(task);
   const plan = PublicPlan.parse(await store.json(keys.plan(brief.prefix)));
@@ -388,10 +389,14 @@ export async function decide(deps: Deps, state: FlowState): Promise<FlowState> {
     });
   }
   if (defects.length) {
+    if (review.feedback_visibility !== "public-v1")
+      throw new HandoverError("Legacy reviewer feedback withheld: oracle visibility unknown. Run a fresh Check before automatic repair.");
     if (brief.attempt >= (state.build_limit ?? buildLimit(state.policy))) {
-      throw new HandoverError(`Total Build budget used up at attempt ${brief.attempt}. Outstanding reviewer findings:\n${repairFeedback(defects)}`);
+      throw new HandoverError(
+        `Total Build budget used up at attempt ${brief.attempt}. Outstanding reviewer findings:\n${repairFeedback(defects, review.feedback_visibility)}`,
+      );
     }
-    await store.put(keys.feedback(brief.prefix, brief.attempt + 1), repairFeedback(defects), "text/markdown");
+    await store.put(keys.feedback(brief.prefix, brief.attempt + 1), repairFeedback(defects, review.feedback_visibility), "text/markdown");
     await reporter.report({ kind: "repair", attempt: brief.attempt, findings: defects.map((f) => `\`${f.where}\`: ${f.what.slice(0, 200)}`) });
     deps.log(task.id, "review.repair", { attempt: brief.attempt, round: repairs.rounds + 1, findings });
     return {

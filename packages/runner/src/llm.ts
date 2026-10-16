@@ -389,7 +389,7 @@ async function saveStationDiagnostic(
 /** Agent logs are diagnostic claims, never gate evidence. Never follow their supplied output_file path. */
 async function publishVerifyDiagnostics(spec: LlmJob, workDir: string, repoDir: string, logDir: string, published: Set<string>): Promise<void> {
   if (!existsSync(logDir) || !lstatSync(logDir).isDirectory() || lstatSync(logDir).isSymbolicLink()) return;
-  const diagnosticDir = join(workDir, "diagnostics");
+  const diagnosticDir = join(workDir, "diagnostics", spec.station === "analyst" ? "oracle" : "public");
   mkdirSync(diagnosticDir, { recursive: true, mode: 0o755 });
   const sidecarSchema = z.object({
     command_id: z.string().min(1),

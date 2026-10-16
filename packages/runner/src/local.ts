@@ -204,7 +204,10 @@ export async function runLocalWorkflow(options: LocalOptions): Promise<LocalResu
       if (chosen.length) {
         await store.put(
           keys.feedback(ctx.brief.prefix, ctx.brief.attempt + 1),
-          repairFeedback(chosen.map((index) => findings[index] as Review["findings"][number])),
+          repairFeedback(
+            chosen.map((index) => findings[index] as Review["findings"][number]),
+            review?.feedback_visibility,
+          ),
         );
         manifest.repairs += 1;
         // A repair brings its own Build attempt.

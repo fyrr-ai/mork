@@ -6,7 +6,7 @@
 // every process of the previous user is killed before the next step starts,
 // so what ran before cannot reach into what runs next.
 
-import { mkdirSync } from "node:fs";
+import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import {
   AnalystOutput,
@@ -28,9 +28,11 @@ import {
   type Phase,
   PublicPlan,
   parseRepoConfig,
+  publicFeedback,
   type RepoConfig,
   Review,
   type RunResult,
+  readPublicFeedback,
   StationOutput,
   VerificationOutput,
 } from "@mork/contracts";
@@ -123,62 +125,64 @@ const diagnosticRecord = z.object({
   source: z.literal("agent_verify").optional(),
 });
 
-function localDiagnostic(ctx: PhaseContext, record: CommandDiagnostic): string {
+type DiagnosticAudience = "public" | "oracle";
+const storedDiagnostic = diagnosticRecord.extend({ audience: z.enum(["public", "oracle"]) });
+
+function localDiagnostic(ctx: PhaseContext, record: CommandDiagnostic, audience: DiagnosticAudience): string {
   diagnosticId.parse(record.command_id);
-  const directory = join(ctx.env.workDir, "diagnostics");
+  const directory = join(ctx.env.workDir, "diagnostics", audience);
   mkdirSync(directory, { recursive: true, mode: 0o755 });
   const path = join(directory, `${record.command_id}.json`);
   writeFresh(path, redact(JSON.stringify(record), ctx.secrets()), 0o444);
   return path;
 }
 
-function saveDiagnostic(ctx: PhaseContext): (record: CommandDiagnostic) => Promise<string> {
-  return async (record) => {
-    const safe = diagnosticRecord.parse(JSON.parse(redact(JSON.stringify(record), ctx.secrets())));
-    await ctx.store.putJson(`${ctx.brief.prefix}/diagnostics/${safe.command_id}.json`, safe);
-    await ctx.store.updateJson(`${ctx.brief.prefix}/diagnostics/index-${ctx.brief.attempt}.json`, (current) => {
+function saveDiagnostic(ctx: PhaseContext) {
+  return async (record: CommandDiagnostic, audience: DiagnosticAudience = "public"): Promise<string> => {
+    // Audience comes from the trusted gate invocation, never a record/model label.
+    const safe = { ...diagnosticRecord.parse(JSON.parse(redact(JSON.stringify(record), ctx.secrets()))), audience };
+    const directory = `${ctx.brief.prefix}/diagnostics/${audience}`;
+    await ctx.store.putJson(`${directory}/${safe.command_id}.json`, safe);
+    await ctx.store.updateJson(`${directory}/index-${ctx.brief.attempt}.json`, (current) => {
       const ids = z.array(diagnosticId).parse(current ?? []);
       return [...new Set([...ids, safe.command_id])].slice(-32);
     });
-    return localDiagnostic(ctx, safe);
+    return localDiagnostic(ctx, safe, audience);
   };
 }
 
-/** Only runner-stored IDs are accepted. Model-provided paths or URLs never become fetch targets. */
+/** Legacy indexes and gate artifacts are deliberately not hydration inputs. */
 async function diagnosticInputs(ctx: PhaseContext, station: string): Promise<{ prompt: string; roots: string[] }> {
-  const prefix = ctx.brief.prefix;
-  const ids = new Set<string>();
-  for (const attempt of new Set([ctx.brief.attempt, Math.max(1, ctx.brief.attempt - 1)])) {
-    const index = z.array(diagnosticId).safeParse(await ctx.store.json(`${prefix}/diagnostics/index-${attempt}.json`).catch(() => []));
-    if (index.success) for (const id of index.data) ids.add(id);
-  }
-  for (const key of [keys.gateBefore(prefix), keys.gate(prefix, Math.max(1, ctx.brief.attempt - 1))]) {
-    const gate = GateReportSchema.safeParse(await ctx.store.json(key).catch(() => undefined));
-    if (!gate.success) continue;
-    for (const step of [gate.data.setup, gate.data.repo_tests, ...(gate.data.checks ?? []), ...gate.data.hidden]) {
-      const parsed = diagnosticId.safeParse(step?.command_id);
-      if (parsed.success) ids.add(parsed.data);
+  const directory = join(ctx.env.workDir, "diagnostics");
+  // Local phases share a work directory: remove prior oracle material before Build.
+  if (station === "implementer") rmSync(directory, { recursive: true, force: true });
+  const audiences: DiagnosticAudience[] = station === "analyst" ? ["public", "oracle"] : ["public"];
+  const files: { command_id: string; command: string; exit_code: number; artifact: string }[] = [];
+  for (const audience of audiences) {
+    const remote = `${ctx.brief.prefix}/diagnostics/${audience}`;
+    const ids = new Set<string>();
+    for (const attempt of new Set([ctx.brief.attempt, Math.max(1, ctx.brief.attempt - 1)])) {
+      const index = z.array(diagnosticId).safeParse(await ctx.store.json(`${remote}/index-${attempt}.json`).catch(() => []));
+      if (index.success) for (const id of index.data) ids.add(id);
+    }
+    for (const id of ids) {
+      const parsed = storedDiagnostic.safeParse(await ctx.store.json(`${remote}/${id}.json`).catch(() => undefined));
+      if (!parsed.success || parsed.data.command_id !== id || parsed.data.audience !== audience) continue;
+      const record = parsed.data;
+      files.push({
+        command_id: id,
+        command: redact(record.command, ctx.secrets()),
+        exit_code: record.exit_code,
+        artifact: localDiagnostic(ctx, record, audience),
+      });
     }
   }
-  const files: { command_id: string; command: string; exit_code: number; artifact: string }[] = [];
-  for (const id of ids) {
-    const parsed = diagnosticRecord.safeParse(await ctx.store.json(`${prefix}/diagnostics/${id}.json`).catch(() => undefined));
-    if (!parsed.success || parsed.data.command_id !== id) continue;
-    const record = parsed.data;
-    files.push({
-      command_id: id,
-      command: redact(record.command, ctx.secrets()),
-      exit_code: record.exit_code,
-      artifact: localDiagnostic(ctx, record),
-    });
-  }
   if (!files.length) return { prompt: "", roots: [] };
-  const directory = join(ctx.env.workDir, "diagnostics");
   const manifest = join(directory, `manifest-${station}-${ctx.brief.attempt}.json`);
   writeFresh(manifest, JSON.stringify(files), 0o444);
   return {
     prompt: `\n\n## Verification diagnostics\nRead ${manifest} for the available redacted command outputs, including earlier causes omitted by inline tails. Use these local files; old container paths in feedback may have expired.\n`,
-    roots: [directory],
+    roots: [manifest, ...audiences.map((audience) => join(directory, audience))],
   };
 }
 
@@ -214,6 +218,8 @@ async function llm(
   verify?: LlmJob["verify"],
   validation?: Pick<LlmJob, "transformOutput" | "validateOutput" | "maxCorrections">,
 ): Promise<LlmOutcome> {
+  // Old non-analyst sessions may contain oracle diagnostics; never restore them.
+  if (station !== "analyst") label += "-public-v1";
   const { prefix } = ctx.brief;
   const answers = Answers.parse(await ctx.store.json(keys.answers(prefix)).catch(() => []));
   const config = baseConfig(repoDir, ctx.brief.repo.base_sha);
@@ -292,7 +298,7 @@ async function llm(
       ...(config.setup ? { readiness: { command: config.setup, ...(verify ? { marker: verify.setupMarker } : {}) } } : {}),
       ...validation,
       secrets: ctx.secrets,
-      saveDiagnostic: saveDiagnostic(ctx),
+      saveDiagnostic: (record) => saveDiagnostic(ctx)(record, station === "analyst" ? "oracle" : "public"),
       supervise: { panel: ctx.panel, everyMs: ctx.superviseEveryMs, task },
     },
     ctx.env,
@@ -360,7 +366,7 @@ async function planWith(ctx: PhaseContext, records: SupervisionRecord[]): Promis
       return `Repository setup failed; repair the verification runtime:\n${report.setup.output}\nDiagnostic: ${report.setup.artifact ?? "unavailable"}`;
     const invalid = report.hidden.filter((h) => h.status !== "behavior_failure" && h.status !== "pass");
     if (invalid.length)
-      return `Invalid verification, not a valid red. Repair the test runtime without dropping criteria:\n${gateFeedback(report, full)}`;
+      return `Invalid verification, not a valid red. Repair the test runtime without dropping criteria:\n${gateFeedback(report, full, { oracle: true })}`;
     publicPlan.oracle_version = report.oracle_version;
     if (previousPlan.success && previousPlan.data.oracle_version !== publicPlan.oracle_version)
       throw new HandoverError(
@@ -404,7 +410,9 @@ async function buildWith(ctx: PhaseContext, records: SupervisionRecord[]): Promi
   await ctx.reporter.report({ kind: "build", attempt: brief.attempt, max: lastAttempt(brief) });
   const issue = IssueDoc.parse(await store.json(keys.issue(brief.prefix)));
   const thePlan = PublicPlan.parse(await store.json(keys.plan(brief.prefix)));
-  const feedback = brief.attempt > 1 ? await store.text(keys.feedback(brief.prefix, brief.attempt)).catch(() => undefined) : undefined;
+  const feedback = readPublicFeedback(
+    brief.attempt > 1 ? await store.text(keys.feedback(brief.prefix, brief.attempt)).catch(() => undefined) : undefined,
+  );
   const remote = async () => remoteHead(brief.repo.full_name, await ctx.githubToken(), brief.branch, ctx.localRepo);
   // Later attempts continue on what the previous attempt pushed, if it pushed anything.
   const repoDir = await checkout(ctx, "implementer", (await remote()) !== undefined);
@@ -469,7 +477,7 @@ async function checkWith(ctx: PhaseContext, records: SupervisionRecord[]): Promi
   if (!built.ok) {
     await store.put(
       keys.feedback(brief.prefix, brief.attempt + 1),
-      `The previous attempt ended without a pushed commit: ${built.error}`,
+      publicFeedback("The previous attempt ended without a pushed commit. Inspect the public Build diagnostics before retrying."),
       "text/markdown",
     );
     await ctx.reporter.report({ kind: "check", attempt: brief.attempt, passed: false, failures: [`no pushed commit: ${built.error.slice(0, 200)}`] });
@@ -526,7 +534,7 @@ async function checkWith(ctx: PhaseContext, records: SupervisionRecord[]): Promi
     const feedback = !bound
       ? "Verification identity changed or baseline evidence is missing. Repair Plan and rerun baseline and candidate verification; prior evidence is invalid."
       : `${gateFeedback(report, thePlan)}${missing.length ? `\nDeclared hidden verification did not complete: ${missing.map((test) => test.file).join(", ")}` : ""}`;
-    await store.put(keys.feedback(brief.prefix, brief.attempt + 1), feedback, "text/markdown");
+    await store.put(keys.feedback(brief.prefix, brief.attempt + 1), publicFeedback(feedback), "text/markdown");
     await ctx.reporter.report({
       kind: "check",
       attempt: brief.attempt,
@@ -536,7 +544,7 @@ async function checkWith(ctx: PhaseContext, records: SupervisionRecord[]): Promi
     return { ok: true, passed: false, invalid_verification: true };
   }
   if (!gatePassed(report)) {
-    await store.put(keys.feedback(brief.prefix, brief.attempt + 1), gateFeedback(report, thePlan), "text/markdown");
+    await store.put(keys.feedback(brief.prefix, brief.attempt + 1), publicFeedback(gateFeedback(report, thePlan)), "text/markdown");
     await ctx.reporter.report({ kind: "check", attempt: brief.attempt, passed: false, failures: gateFailures(report) });
     return { ok: true, passed: false };
   }
@@ -576,7 +584,9 @@ async function checkWith(ctx: PhaseContext, records: SupervisionRecord[]): Promi
       if ((error as Error).name !== "NoSuchKey") throw error;
     }
     if (previous !== undefined) {
-      review = carryFindings(review, Review.parse(previous));
+      const prior = Review.parse(previous);
+      if (prior.feedback_visibility === "public-v1") review = carryFindings(review, prior);
+      else review.incomplete.push("Legacy reviewer findings withheld: oracle visibility unknown; fresh review required.");
       break;
     }
   }
@@ -626,6 +636,6 @@ async function checkWith(ctx: PhaseContext, records: SupervisionRecord[]): Promi
       );
     } else review.incomplete.push(`Acceptance criteria checker failed: ${outcome.error ?? "no result"}`);
   }
-  await store.putJson(keys.review(brief.prefix, brief.attempt), review);
+  await store.putJson(keys.review(brief.prefix, brief.attempt), { ...review, feedback_visibility: "public-v1" });
   return { ok: true, passed: true, stats };
 }

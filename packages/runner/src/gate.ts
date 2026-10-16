@@ -45,7 +45,7 @@ export type GateJob = {
   /** Local gate CLI only. Fetch from this repository instead of GitHub. */
   localRepo?: string;
   secrets?: string[];
-  saveDiagnostic?: (record: CommandDiagnostic) => Promise<string>;
+  saveDiagnostic?: (record: CommandDiagnostic, audience: "public" | "oracle") => Promise<string>;
   contract?: { criteria: { id: string; text: string; testable: boolean }[]; inputs: unknown };
 };
 
@@ -120,7 +120,7 @@ export async function runGate(spec: GateJob, githubToken: string, workDir: strin
       output: redact(result.output, spec.secrets ?? []),
       ...(result.output_truncated ? { output_truncated: true } : {}),
     };
-    const artifact = await spec.saveDiagnostic?.(record);
+    const artifact = await spec.saveDiagnostic?.(record, hidden ? "oracle" : "public");
     return {
       command: record.command,
       command_id: record.command_id,

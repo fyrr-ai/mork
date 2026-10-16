@@ -55,8 +55,8 @@ export function gateFailures(gate: GateReport): string[] {
   for (const hidden of gate.hidden.filter((h) => !h.passed))
     lines.push(
       hidden.status && hidden.status !== "behavior_failure"
-        ? `verification ${hidden.status} (${hidden.file}): ${hidden.reason ?? "no valid behavior evidence"}`
-        : `${hidden.criteria.join(", ")} not met (${hidden.file})`,
+        ? `verification ${hidden.status}: ${hidden.criteria.join(", ")} remain unverified`
+        : `${hidden.criteria.join(", ")} not met`,
     );
   for (const violation of gate.diff_policy?.violations ?? []) lines.push(`policy: ${violation}`);
   return lines;
@@ -73,7 +73,7 @@ export function gatePassed(gate: GateReport): boolean {
 }
 
 /** Feedback for a failed gate. Shows what failed, never the hidden test source. */
-export function gateFeedback(gate: GateReport, plan: Pick<AnalystOutput, "acceptance_criteria">): string {
+export function gateFeedback(gate: GateReport, plan: Pick<AnalystOutput, "acceptance_criteria">, options: { oracle?: boolean } = {}): string {
   const lines: string[] = [];
   if (gate.setup && gate.setup.exit_code !== 0)
     lines.push(`- Setup failed (\`${gate.setup.command}\`):\n\n\`\`\`\n${gate.setup.output.slice(-1500)}\n\`\`\``);
@@ -87,8 +87,12 @@ export function gateFeedback(gate: GateReport, plan: Pick<AnalystOutput, "accept
     const text = hidden.criteria.map((id) => `${id}: ${plan.acceptance_criteria.find((c) => c.id === id)?.text ?? ""}`).join("; ");
     const verdict =
       hidden.status && hidden.status !== "behavior_failure"
-        ? `Verification runtime ${hidden.status}: ${hidden.reason ?? "no valid behavior evidence"}. Criteria remain unverified: ${text}`
+        ? `Verification runtime ${hidden.status}: ${options.oracle ? (hidden.reason ?? "no valid behavior evidence") : "Plan-owned verification repair required"}. Criteria remain unverified: ${text}`
         : `Acceptance criterion not met: ${text}`;
+    if (!options.oracle) {
+      lines.push(`- ${verdict}`);
+      continue;
+    }
     lines.push(`- ${verdict}. Test output tail:\n\n\`\`\`\n${hidden.output.slice(-1200)}\n\`\`\``);
     if (hidden.artifact) lines.push(`Full diagnostic: ${hidden.artifact}`);
   }

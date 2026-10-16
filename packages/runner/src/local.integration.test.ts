@@ -593,7 +593,7 @@ try {
       expect(JSON.stringify(seen.filter((request) => request.station === "implementer"))).not.toContain("verify: FAILED");
       expect(git("rev-parse", "HEAD")).toBe(original);
       expect(git("status", "--porcelain")).toBe("");
-      const session = await store.text(`${keys.session("tasks/local", "build-3-implementer")}.jsonl`);
+      const session = await store.text(`${keys.session("tasks/local", "build-3-implementer-public-v1")}.jsonl`);
       expect(session).toContain("submit_result");
       expect(session).not.toContain("local-fixture-key");
       expect(existsSync(join(task, "agent", ".pi-mork", "models.json"))).toBe(false);

@@ -178,6 +178,8 @@ export const CriteriaOutput = z.object({
 export type CriteriaOutput = z.infer<typeof CriteriaOutput>;
 
 export const Review = z.object({
+  /** Root Check certifies that model inputs excluded oracle diagnostics. */
+  feedback_visibility: z.literal("public-v1").optional(),
   summary: z.string().min(1),
   files_reviewed: z.array(z.string()),
   criteria: CriteriaOutput.shape.criteria,
@@ -201,18 +203,34 @@ export function repairCandidate(finding: Review["findings"][number]): boolean {
   return finding.located !== null && finding.verification.status === "confirmed" && ["bug", "security", "performance"].includes(finding.category);
 }
 
+export const PUBLIC_FEEDBACK_MARKER = "<!-- mork-public-feedback:v1 -->\n";
+
+/** Only fresh public feedback may be marked; never wrap a persisted legacy value. */
+export function publicFeedback(text: string): string {
+  return PUBLIC_FEEDBACK_MARKER + text;
+}
+
+export function readPublicFeedback(text: string | undefined): string | undefined {
+  if (text === undefined) return undefined;
+  return text.startsWith(PUBLIC_FEEDBACK_MARKER)
+    ? text.slice(PUBLIC_FEEDBACK_MARKER.length)
+    : "Legacy feedback withheld: its oracle visibility is unknown. Request fresh verification or public review/CI feedback.";
+}
+
 /** Feedback that sends the chosen findings back to Build. */
-export function repairFeedback(findings: Review["findings"]): string {
+export function repairFeedback(findings: Review["findings"], visibility?: Review["feedback_visibility"]): string {
+  if (visibility !== "public-v1")
+    return publicFeedback("Legacy reviewer feedback withheld: its oracle visibility is unknown. Run a fresh Check before automatic repair.");
   const items = findings.map(
     (f, i) =>
       `## ${i + 1}. ${f.severity} ${f.category} at \`${f.where}\`\n\n${f.what}\n\n${f.verification.status === "confirmed" ? `Expected: ${f.verification.expected}\nScenario: ${f.verification.scenario}\nEvidence: ${f.verification.reason}` : ""}\n\n\`\`\`\n${f.located?.excerpt ?? f.quote}\n\`\`\``,
   );
-  return `# The reviewer found defects in your change
+  return publicFeedback(`# The reviewer found defects in your change
 
 The gate passed. Fix each defect below and nothing else: stay within the request and keep the rest of the change as it is.
 If a finding is wrong, leave that code alone and explain why in \`deviations\`.
 
-${items.join("\n\n")}`;
+${items.join("\n\n")}`);
 }
 
 export const StationOutput = {

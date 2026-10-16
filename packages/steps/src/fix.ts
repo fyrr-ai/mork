@@ -2,7 +2,7 @@
 // that mentions @mork starts a fix run. It continues the task on the same
 // branch and prefix (same plan and hidden tests), runs Build → Check →
 // Decide, and Decide comments on the PR instead of opening a new one.
-import { BRANCH_PREFIX, Brief, HandoverError, keys, lastAttempt } from "@mork/contracts";
+import { BRANCH_PREFIX, Brief, HandoverError, keys, lastAttempt, publicFeedback } from "@mork/contracts";
 import { DEFAULT_DEVELOPMENT_POLICY, DevelopmentPolicy } from "@mork/contracts/development";
 import { prTask } from "@mork/timeline";
 import { z } from "zod";
@@ -320,7 +320,7 @@ export async function startFix(deps: Deps, input: { fix: FixRequest; execution: 
   if (!reserved) return dismiss("PR automation state changed before reservation; no Build was reserved");
   const round = reserved.fix_rounds;
   const attempt = reserved.state.brief.attempt;
-  await deps.store.put(keys.feedback(prev.brief.prefix, attempt), feedback, "text/markdown");
+  await deps.store.put(keys.feedback(prev.brief.prefix, attempt), publicFeedback(feedback), "text/markdown");
   const brief = { ...reserved.state.brief, execution: input.execution };
   const task = { ...prev.task, ...(input.execution_arn ? { execution_arn: input.execution_arn } : {}) };
   const fix: FixState = { pr, url: pull.html_url, round, trigger: triggerText(trigger) };

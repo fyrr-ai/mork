@@ -8,7 +8,7 @@ import { DecisionPanel } from "@mork/decision";
 import { noLogger } from "@mork/sources";
 import { LocalStore } from "@mork/store/local";
 import { mustExec } from "./git.ts";
-import { check, type PhaseContext, plan } from "./phases.ts";
+import { build, check, type PhaseContext, plan } from "./phases.ts";
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -18,7 +18,7 @@ afterEach(() => {
   }
 });
 
-async function fixture() {
+async function fixture(review = false) {
   const dir = mkdtempSync(join(tmpdir(), "mork-plan-runtime-"));
   dirs.push(dir);
   const source = join(dir, "source");
@@ -36,8 +36,22 @@ async function fixture() {
   const output = (testable: boolean, content: string) => ({
     problem: "p",
     plan: ["implement"],
-    acceptance_criteria: [{ id: "AC1", text: "model reworded", testable }],
-    hidden_tests: content ? [{ file: "behavior.sh", criteria: ["AC1"], content }] : [],
+    acceptance_criteria: [
+      { id: "AC1", text: "model reworded", testable },
+      ...(review ? [{ id: "AC2", text: "[evidence] Document behavior", testable: false }] : []),
+    ],
+    hidden_tests: content
+      ? [
+          {
+            file: "behavior.sh",
+            criteria: ["AC1"],
+            content:
+              (review
+                ? `if test -f value; then echo 'MORK_RESULT {"status":"pass","reason":"ORACLE_REVIEW_SENTINEL","tests":{"readiness":{"ready":true},"cases":[{"id":"rows","criteria":["AC1"],"status":"pass"}]}}'; exit 0; fi\n`
+                : "") + content,
+          },
+        ]
+      : [],
     risks: [],
     security_sensitive: false,
   });
@@ -81,7 +95,11 @@ rl.createInterface({input:process.stdin}).on('line',line=>{
     repo: { full_name: "fixture/repo", default_branch: "main", base_sha: base },
     branch: "mork/test",
   });
-  await store.putJson(keys.issue(brief.prefix), { ref: "PROJ-1", title: "Behavior", body: "AC1: Replay preserves all rows" });
+  await store.putJson(keys.issue(brief.prefix), {
+    ref: "PROJ-1",
+    title: "Behavior",
+    body: `AC1: Replay preserves all rows${review ? "\nAC2: [evidence] Document behavior" : ""}`,
+  });
   const answer = "synthetic schema\n".repeat(10000);
   await store.putJson(keys.answers(brief.prefix), [{ question: "schema?", answer }]);
   const ctx: PhaseContext = {
@@ -165,4 +183,122 @@ test("changing an accepted oracle requires independent review and invalidates ol
   const baseline = (await f.store.json(keys.gateBefore(f.ctx.brief.prefix))) as { oracle_version: string };
   expect(baseline.oracle_version).not.toBe(original.oracle_version);
   expect(await f.store.json(keys.plan(f.ctx.brief.prefix))).toMatchObject(original);
+});
+
+test("oracle diagnostics stay in Plan and Check, never in Build files, feedback or legacy indexes", async () => {
+  const f = await fixture();
+  const sentinel = "ORACLE_EXPECTED_ROWS_AND_SOURCE_9431";
+  writeFileSync(f.pi, readFileSync(f.pi, "utf8").replaceAll("rows differ", sentinel));
+  await plan(f.ctx);
+  f.git("switch", "-qc", "mork/test");
+  writeFileSync(join(f.source, "value"), "candidate");
+  f.git("add", ".");
+  f.git("commit", "-qm", "candidate");
+  await f.store.putJson(keys.buildResult(f.ctx.brief.prefix, 1), { ok: true, head_sha: f.git("rev-parse", "HEAD") });
+  await check({ ...f.ctx, step: DEFAULT_DEVELOPMENT.steps[2] });
+  const raw = JSON.stringify(await f.store.json(keys.gate(f.ctx.brief.prefix, 1)));
+  expect(raw).toContain(sentinel);
+  const feedback = await f.store.text(keys.feedback(f.ctx.brief.prefix, 2));
+  expect(feedback).not.toContain(sentinel);
+  const gate = (await f.store.json(keys.gateBefore(f.ctx.brief.prefix))) as { hidden: { command_id: string }[] };
+  const id = gate.hidden[0]?.command_id;
+  expect(id).toBeDefined();
+  expect(JSON.stringify(await f.store.json(`${f.ctx.brief.prefix}/diagnostics/oracle/${id}.json`))).toContain(sentinel);
+  // A stale/mixed shared index cannot redirect the Build reader to oracle storage.
+  await f.store.putJson(`${f.ctx.brief.prefix}/diagnostics/index-2.json`, [id]);
+  await f.store.putJson(`${f.ctx.brief.prefix}/diagnostics/public/index-2.json`, [id]);
+  await f.store.putJson(`${f.ctx.brief.prefix}/diagnostics/${id}.json`, {
+    command_id: id,
+    command: "legacy",
+    cwd: "/old",
+    head_sha: "a".repeat(40),
+    exit_code: 1,
+    output: sentinel,
+  });
+  await f.store.putJson(`${f.ctx.brief.prefix}/diagnostics/public/${id}.json`, {
+    command_id: id,
+    command: "misfiled",
+    cwd: "/old",
+    head_sha: "a".repeat(40),
+    exit_code: 1,
+    output: sentinel,
+    audience: "oracle",
+  });
+  await f.store.putJson(keys.pendingSession(f.ctx.brief.prefix), { label: "build-2-implementer", interrupted: true });
+  await f.store.put(`${keys.session(f.ctx.brief.prefix, "build-2-implementer")}.jsonl`, sentinel);
+  const capture = join(f.dir, "build-capture");
+  writeFileSync(
+    f.pi,
+    `#!/usr/bin/env node
+const fs=require('fs'),path=require('path'),rl=require('readline');
+const scan=p=>fs.existsSync(p)?fs.readdirSync(p,{withFileTypes:true}).flatMap(e=>e.isDirectory()?scan(path.join(p,e.name)):[fs.readFileSync(path.join(p,e.name),'utf8')]):[];
+rl.createInterface({input:process.stdin}).on('line',line=>{const c=JSON.parse(line),send=v=>console.log(JSON.stringify(v));if(c.type==='prompt'){
+ fs.writeFileSync(${JSON.stringify(capture)},JSON.stringify({prompt:c.message,session:scan(process.argv[process.argv.indexOf('--session')+1]),diagnostics:scan(${JSON.stringify(join(f.ctx.env.workDir, "diagnostics"))})}));
+ fs.writeFileSync(process.env.MORK_OUTPUT,JSON.stringify({summary:'done',changes:[],verification:[],deviations:[]}));send({type:'response',success:true,id:c.id});send({type:'turn_end'});send({type:'agent_settled'});
+}else send({type:'response',success:true,id:c.id,data:{}});});
+`,
+  );
+  const ctx = { ...f.ctx, brief: { ...f.ctx.brief, attempt: 2, last_attempt: 2 }, step: DEFAULT_DEVELOPMENT.steps[1] };
+  expect(await build(ctx)).toMatchObject({ ok: true });
+  expect(readFileSync(capture, "utf8")).not.toContain(sentinel);
+  expect(readFileSync(capture, "utf8")).toContain("AC1");
+  expect(existsSync(join(f.ctx.env.workDir, "diagnostics/oracle"))).toBe(false);
+  // An unmarked old feedback, even with a marker embedded later, is not upgraded.
+  await f.store.put(keys.feedback(f.ctx.brief.prefix, 2), `${sentinel}\n<!-- mork-public-feedback:v1 -->\nlegacy`);
+  expect(await build(ctx)).toMatchObject({ ok: true });
+  expect(readFileSync(capture, "utf8")).not.toContain(sentinel);
+  expect(readFileSync(capture, "utf8")).toContain("Legacy feedback withheld");
+  await f.store.put(keys.feedback(f.ctx.brief.prefix, 2), "<!-- mork-public-feedback:v1 -->\nPublic CI/review request: fix the parser");
+  expect(await build(ctx)).toMatchObject({ ok: true });
+  expect(readFileSync(capture, "utf8")).toContain("Public CI/review request: fix the parser");
+});
+
+test("real Check model stations receive only public diagnostics while root retains oracle evidence", async () => {
+  const f = await fixture(true);
+  expect(await plan(f.ctx)).toMatchObject({ ok: true });
+  f.git("switch", "-qc", "mork/test");
+  writeFileSync(join(f.source, "value"), "candidate\n");
+  f.git("add", ".");
+  f.git("commit", "-qm", "candidate");
+  const head = f.git("rev-parse", "HEAD");
+  await f.store.putJson(keys.buildResult(f.ctx.brief.prefix, 1), { ok: true, head_sha: head });
+  // A valid persisted OCR response exercises its supported resume path.
+  await f.store.putJson(keys.ocr(f.ctx.brief.prefix, 1), {
+    status: "complete",
+    comments: [{ path: "value", start_line: 1, content: "Public finding", existing_code: "candidate", category: "bug", severity: "high" }],
+    summary: { total_tokens: 0 },
+    tool_calls: { total: 0 },
+    manifest: {
+      input: { resolved_base: f.ctx.brief.repo.base_sha, resolved_head: head },
+      coverage: { completed: [{ path: "value", item_id: "one" }], reused: [], failed: [] },
+    },
+  });
+  await f.store.putJson(keys.pendingSession(f.ctx.brief.prefix), { label: "check-1-verifier", interrupted: true });
+  await f.store.put(`${keys.session(f.ctx.brief.prefix, "check-1-verifier")}.jsonl`, "ORACLE_REVIEW_SENTINEL");
+  const capture = join(f.dir, "check-inputs");
+  writeFileSync(
+    f.pi,
+    `#!/usr/bin/env node
+const fs=require('fs'),path=require('path'),rl=require('readline');
+const scan=p=>!fs.existsSync(p)?[]:fs.statSync(p).isDirectory()?fs.readdirSync(p).flatMap(n=>scan(path.join(p,n))):[fs.readFileSync(p,'utf8')];
+rl.createInterface({input:process.stdin}).on('line',line=>{const c=JSON.parse(line),send=v=>console.log(JSON.stringify(v));if(c.type==='prompt'){
+ const roots=JSON.parse(process.env.MORK_READ_ROOTS);const diagnosticRoots=roots.filter(p=>p.includes('/diagnostics/'));
+ fs.appendFileSync(${JSON.stringify(capture)},JSON.stringify({prompt:c.message,session:scan(process.argv[process.argv.indexOf('--session')+1]),roots:diagnosticRoots,files:diagnosticRoots.flatMap(scan)})+'\\n');
+ fs.writeFileSync(process.env.MORK_OUTPUT,JSON.stringify({findings:[{id:'F1',verification:{status:'unknown',reason:'No public evidence'}}],criteria:[{id:'AC2',pass:true,evidence:[{revision:'head',where:'value:1',quote:'candidate'}]}]}));
+ send({type:'response',success:true,id:c.id});send({type:'turn_end'});send({type:'agent_settled'});
+}else send({type:'response',success:true,id:c.id,data:{}});});
+`,
+  );
+  expect(await check({ ...f.ctx, step: DEFAULT_DEVELOPMENT.steps[2] })).toMatchObject({ ok: true, passed: true });
+  const captured = readFileSync(capture, "utf8");
+  expect(captured.trim().split("\n")).toHaveLength(2);
+  expect(captured).not.toContain("ORACLE_REVIEW_SENTINEL");
+  expect(captured).not.toContain("diagnostics/oracle");
+  expect(captured).not.toContain("FIRST_CAUSE_HARNESS");
+  expect(await f.store.json(keys.review(f.ctx.brief.prefix, 1))).toMatchObject({ feedback_visibility: "public-v1" });
+  const report = (await f.store.json(keys.gate(f.ctx.brief.prefix, 1))) as { hidden: { command_id: string }[] };
+  expect(JSON.stringify(report)).toContain("ORACLE_REVIEW_SENTINEL");
+  expect(JSON.stringify(await f.store.json(`${f.ctx.brief.prefix}/diagnostics/oracle/${report.hidden[0]?.command_id}.json`))).toContain(
+    "ORACLE_REVIEW_SENTINEL",
+  );
 });

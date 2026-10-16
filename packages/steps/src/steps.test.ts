@@ -2,7 +2,16 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type AnalystOutput, type GateReport, keys, MAX_BUILD_ATTEMPTS, type Review } from "@mork/contracts";
+import {
+  type AnalystOutput,
+  type GateReport,
+  keys,
+  MAX_BUILD_ATTEMPTS,
+  PUBLIC_FEEDBACK_MARKER,
+  publicFeedback,
+  type Review,
+  readPublicFeedback,
+} from "@mork/contracts";
 import { DEFAULT_DEVELOPMENT_POLICY } from "@mork/contracts/development";
 import { type Answer, type Decider, DecisionPanel, findingPriority, type Priority } from "@mork/decision";
 import type { ReportEvent } from "@mork/sources";
@@ -33,6 +42,7 @@ const gate = {
   diff_policy: { violations: [], changed_files: ["math.mjs"], protected_hits: [], flags: [], added_lines: 3, removed_lines: 1 },
 } satisfies GateReport;
 const review: Review = {
+  feedback_visibility: "public-v1",
   summary: "ok",
   files_reviewed: ["math.mjs"],
   unreviewed_files: [],
@@ -606,7 +616,7 @@ describe("flow", () => {
   test("a red check on the last attempt hands over with the feedback", async () => {
     const store = await checkedStore(false);
     await store.putJson(keys.gate(prefix, MAX_BUILD_ATTEMPTS), (await store.json(keys.gate(prefix, 1))) as GateReport);
-    await store.put(keys.feedback(prefix, MAX_BUILD_ATTEMPTS + 1), "- Acceptance criterion not met: AC1");
+    await store.put(keys.feedback(prefix, MAX_BUILD_ATTEMPTS + 1), publicFeedback("- Acceptance criterion not met: AC1"));
     const state = { ...baseState, brief: { ...baseState.brief, attempt: MAX_BUILD_ATTEMPTS }, last: { ok: true, passed: false } };
     await expect(decide(makeDeps(store), state)).rejects.toThrow("AC1");
   });
@@ -650,6 +660,14 @@ describe("repair before the PR", () => {
     await store.putJson(keys.review(prefix, 1), { ...review, findings });
     return store;
   };
+  test("legacy reviewer findings cannot become public repair feedback", async () => {
+    const store = await reviewed([{ ...finding, what: "ORACLE_LEGACY_REVIEW_SENTINEL" }]);
+    const legacy = (await store.json(keys.review(prefix, 1))) as Review;
+    delete legacy.feedback_visibility;
+    await store.putJson(keys.review(prefix, 1), legacy);
+    await expect(decide(makeDeps(store, urgent(0.95)), passed)).rejects.toThrow("Legacy reviewer feedback withheld");
+    await expect(store.text(keys.feedback(prefix, 2))).rejects.toThrow();
+  });
   test("review repairs cannot extend the original task's total Build budget", async () => {
     const store = await reviewed([finding]);
     await expect(
@@ -663,7 +681,8 @@ describe("repair before the PR", () => {
     expect(next).toMatchObject({ next: "build", brief: { attempt: 2, last_attempt: MAX_BUILD_ATTEMPTS + 1 }, repair: { rounds: 1, findings: 1 } });
     expect(calls).not.toContain("pr");
     const feedback = await store.text(keys.feedback(prefix, 2));
-    expect(feedback).toContain("The reviewer found defects in your change");
+    expect(feedback.startsWith(PUBLIC_FEEDBACK_MARKER)).toBe(true);
+    expect(readPublicFeedback(feedback)).toContain("The reviewer found defects in your change");
     expect(feedback).toContain("2:   return a - b;");
     expect(feedback.match(/^## /gm)).toHaveLength(1);
     expect(await timeline.get("task#o/r#1/abc", "decision#findings#check-1-findings-1")).toMatchObject({
@@ -1076,7 +1095,9 @@ describe("fix runs after the PR", () => {
     await store.putJson(keys.pr(prefix), prRecord());
     const next = (await start(makeDeps(store), fixInput({ kind: "ci", sha: "c".repeat(40) }))) as FlowState;
     expect(next).toMatchObject({ next: "build", brief: { attempt: 2, last_attempt: 3, execution: "fix-o-r-7-x" }, fix: { pr: 7, round: 1 } });
-    expect(await store.text(keys.feedback(prefix, 2))).toContain("missing JSDoc");
+    const feedback = await store.text(keys.feedback(prefix, 2));
+    expect(feedback.startsWith(PUBLIC_FEEDBACK_MARKER)).toBe(true);
+    expect(readPublicFeedback(feedback)).toContain("missing JSDoc");
     expect(await store.json(keys.pr(prefix))).toMatchObject({ fix_rounds: 1, running: "arn:fix" });
   });
 

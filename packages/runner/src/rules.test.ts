@@ -99,15 +99,19 @@ describe("gate feedback", () => {
         },
       ],
     };
-    expect(gateFailures(invalid)).toEqual(["verification execution_failure (add.test.mjs): missing interpreter"]);
+    expect(gateFailures(invalid)).toEqual(["verification execution_failure: AC1 remain unverified"]);
     expect(gateFeedback(invalid, plan)).not.toContain("Acceptance criterion not met");
-    expect(gateFeedback(invalid, plan)).toContain("diagnostics/one.json");
+    expect(gateFeedback(invalid, plan)).not.toContain("diagnostics/one.json");
+    expect(gateFeedback(invalid, plan)).not.toContain("missing interpreter");
+    expect(gateFeedback(invalid, plan, { oracle: true })).toContain("diagnostics/one.json");
+    expect(gateFeedback(invalid, plan, { oracle: true })).toContain("missing interpreter");
   });
   test("names the failed criterion, never the hidden test source", () => {
     const red = { ...gate, hidden: [{ file: "add.test.mjs", criteria: ["AC1"], passed: false, output: "expected 5" }] };
     const feedback = gateFeedback(red, plan);
     expect(feedback).toContain("AC1: adds");
-    expect(feedback).toContain("expected 5");
+    expect(feedback).not.toContain("expected 5");
+    expect(gateFeedback(red, plan, { oracle: true })).toContain("expected 5");
     expect(feedback).not.toContain("HIDDEN_SOURCE");
   });
 });
@@ -129,11 +133,7 @@ describe("gate failures for chat", () => {
         removed_lines: 0,
       },
     };
-    expect(gateFailures(red)).toEqual([
-      "repository tests failed: `npm test`",
-      "AC1, AC2 not met (add.test.mjs)",
-      "policy: modifies existing test test/a.mjs (M)",
-    ]);
+    expect(gateFailures(red)).toEqual(["repository tests failed: `npm test`", "AC1, AC2 not met", "policy: modifies existing test test/a.mjs (M)"]);
   });
 });
 
