@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 mock.module("typebox", () => ({ Type: { Object: (v: unknown) => v, String: (v: unknown) => v } }));
-const { default: verify, keepVerifyArtifacts, publishedSidecar, verifyLogDir } = await import("./verify.ts");
+const { default: verify, keepVerifyArtifacts, Published, publishedSidecar, verifyLogDir } = await import("./verify.ts");
 
 type Tool = {
   name: string;
@@ -182,6 +182,81 @@ describe("verify extension", () => {
       rmSync(logs, { recursive: true, force: true });
       await expect(tool.execute()).rejects.toThrow("not published");
       expect(readdirSync(logs).some((f) => f.endsWith(".log"))).toBe(true);
+    } finally {
+      process.chdir(cwd);
+      delete process.env.MORK_VERIFY_LOG_DIR;
+      delete process.env.MORK_VERIFY_PUBLISH_REQUIRED;
+      delete process.env.MORK_VERIFY_PUBLISH_TIMEOUT_MS;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+  test("a publication is accepted only with its required fields and types; unknown fields are dropped", () => {
+    expect(Published.safeParse({ artifact: "/work/diagnostics/a.log", output_tail: "ok" }).success).toBe(true);
+    expect(Published.safeParse({ artifact: "/work/diagnostics/a.log", output_tail: "ok", command: "redacted", output_truncated: true }).data).toEqual(
+      {
+        artifact: "/work/diagnostics/a.log",
+        output_tail: "ok",
+        command: "redacted",
+        output_truncated: true,
+      },
+    );
+    expect(Published.safeParse({ artifact: "/work/diagnostics/a.log", output_tail: "ok", extra: 1 }).data).toEqual({
+      artifact: "/work/diagnostics/a.log",
+      output_tail: "ok",
+    });
+    for (const broken of [
+      {},
+      { artifact: 123, output_tail: "ok" },
+      { artifact: "", output_tail: "ok" },
+      { artifact: "/work/diagnostics/a.log" },
+      { artifact: "/work/diagnostics/a.log", output_tail: "ok", output_truncated: "yes" },
+      { artifact: "/work/diagnostics/a.log", output_tail: "ok", command: 7 },
+    ]) {
+      expect(Published.safeParse(broken).success).toBe(false);
+    }
+  });
+  test("a half-written or mistyped publication keeps the wait going until a valid one lands", async () => {
+    const { dir, sha } = repo();
+    const cwd = process.cwd();
+    try {
+      const logs = join(dir, "logs");
+      const specFile = join(dir, "verify.json");
+      writeFileSync(
+        specFile,
+        JSON.stringify({
+          repo: { base_sha: sha },
+          config: { test: "exit 1", checks: [], test_paths: [], protected_paths: [] },
+          setupMarker: join(dir, "marker"),
+        }),
+      );
+      process.chdir(dir);
+      process.env.MORK_VERIFY = specFile;
+      process.env.MORK_VERIFY_LOG_DIR = logs;
+      process.env.MORK_VERIFY_PUBLISH_REQUIRED = "1";
+      process.env.MORK_VERIFY_PUBLISH_TIMEOUT_MS = "5000";
+      const tools: Tool[] = [];
+      verify({ registerTool: (t: Tool) => tools.push(t) });
+      const tool = tools[0];
+      if (!tool) throw new Error("verify not registered");
+      const attempts: string[] = [];
+      const root = setInterval(() => {
+        for (const file of readdirSync(logs)) {
+          if (!file.endsWith(".json") || file.endsWith(".published.json")) continue;
+          const published = publishedSidecar(join(logs, file));
+          const stage = attempts.length;
+          attempts.push(file);
+          if (stage === 0) writeFileSync(published, '{"artifact": "/work/diag');
+          else if (stage === 1) writeFileSync(published, JSON.stringify({ artifact: 1, output_tail: "no" }));
+          else writeFileSync(published, JSON.stringify({ artifact: "/work/diagnostics/ok.log", output_tail: "exit 1" }));
+        }
+      }, 20);
+      try {
+        const result = await tool.execute();
+        expect(result.details.artifacts).toEqual(["/work/diagnostics/ok.log"]);
+        expect(attempts.length).toBeGreaterThanOrEqual(3);
+      } finally {
+        clearInterval(root);
+      }
     } finally {
       process.chdir(cwd);
       delete process.env.MORK_VERIFY_LOG_DIR;

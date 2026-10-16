@@ -11,6 +11,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Type } from "typebox";
+import { z } from "zod";
 import { runVerify, type VerifyResult, type VerifySpec, verifyText } from "../src/verify.ts";
 
 /** Where the agent user keeps full verify outputs; the runner reads `MORK_VERIFY_LOG_DIR` or this default under HOME. */
@@ -23,12 +24,14 @@ export function publishedSidecar(rawSidecar: string): string {
   return rawSidecar.replace(/\.json$/, ".published.json");
 }
 
-/**
- * What the root runner publishes for one step: its redacted, root-owned artifact and the
- * redacted tail the model may read; optionally a redacted command line to print instead of
- * the raw one, and whether the published output had to be truncated.
- */
-export type Published = { artifact: string; output_tail: string; command?: string; output_truncated?: boolean };
+/** Publication shape only; the root collector owns redaction and provenance. Invalid writes keep polling. */
+export const Published = z.object({
+  artifact: z.string().min(1),
+  output_tail: z.string(),
+  command: z.string().optional(),
+  output_truncated: z.boolean().optional(),
+});
+export type Published = z.infer<typeof Published>;
 
 /** Exit code a step reports when the platform could not publish its complete output: never a pass. */
 export const EXIT_TRUNCATED = 125;
@@ -56,14 +59,9 @@ export async function awaitPublished(result: VerifyResult, sidecars: string[], e
     while (published === undefined) {
       if (existsSync(file)) {
         try {
-          const parsed = JSON.parse(readFileSync(file, "utf8")) as Partial<Published>;
-          if (typeof parsed.artifact === "string" && typeof parsed.output_tail === "string") {
-            published = {
-              artifact: parsed.artifact,
-              output_tail: parsed.output_tail,
-              ...(typeof parsed.command === "string" ? { command: parsed.command } : {}),
-              ...(parsed.output_truncated === true ? { output_truncated: true } : {}),
-            };
+          const parsed = Published.safeParse(JSON.parse(readFileSync(file, "utf8")));
+          if (parsed.success) {
+            published = parsed.data;
             break;
           }
         } catch {

@@ -29,12 +29,12 @@ Diagrams: [workflow](diagrams/workflow.html), [verification](diagrams/verificati
 ```text
 GitHub webhook → intake Lambda ┐
 Slack @mork    → slack Lambda  ┴→ Step Functions
-  Start → Route → Plan → Build → Check → Decide → Done
-                           ↑                │ gate failed (at most 3 attempts)
-                           └────────────────┘
-  Ask/Resume: a question in the Slack thread, waiting up to 3 days
-  any error or hard rule: Catch → Handover (report, needs-human label, stop containers)
-  after the PR: red CI, "Request changes" or an @mork comment start a fix run
+  Start → Route → Preflight → Plan → Preflight → Build → Check → Decide → Done
+                                        ↑                   │ gate failed (within the build budget)
+                                        └───────────────────┘
+  Ask/Resume: a question in the Slack thread, waiting up to 3 days; Preflight runs again before Plan or Build resumes
+  any error, hard rule or unmet prerequisite: Catch → Handover (report, needs-human label, stop containers, close CI intake)
+  after the PR: CI settling red, "Request changes" or an @mork comment start a fix run; after a handover only @mork resume
 ```
 
 1. **Intake.** The GitHub intake checks the webhook signature, that the repository is on the allowlist, and that whoever added the `mork` label has at least triage access. The Slack intake checks Slack's signature and that the channel is mapped to a repository (and, optionally, a Jira project). A Slack request names an existing issue (`@mork implement PROJ-123`) or Mork creates a Story or Bug for it.
@@ -49,9 +49,9 @@ Progress goes where the request came from: labels and comments on the GitHub iss
 Whether the code works is decided by tests, not by a model.
 
 1. **Analyst** (Pi + LLM) writes the plan and a **hidden test** for every testable acceptance criterion. Hidden tests are stored under `hidden/` in the bucket, which only the Plan and Check roles can access; they never reach the implementer's checkout.
-   Criteria the issue numbers as `AC1: text` belong to its author: the runner rejects a plan that adds, drops or rewords one, and the analyst's extra ideas go to `proposed_criteria`, shown in the PR but never checked ([ADR 18](adr/0018-the-issue-author-owns-acceptance-criteria.md)).
+   Criteria the issue numbers as `AC1: text` belong to its author: the runner binds their exact ids and text deterministically, and the analyst's extra ideas go to `proposed_criteria`, shown in the PR but never checked ([ADR 18](adr/0018-the-issue-author-owns-acceptance-criteria.md)).
    Planning is proportional to the request. Documentation-only criteria use evidence in Check, with no hidden text snapshots or dependency installation by the analyst. Criteria quotes retain their base/head revision; the runner resolves checkout paths to repository paths and checks each quote against the corresponding immutable Git object before Jev receives it. Invalid citations remain explicit uncertainty.
-2. **Gate before** (no LLM) runs the hidden tests on the base commit. They must **fail**, because the feature does not exist yet. Tests that pass prove nothing and go back to the analyst (at most 2 analyst attempts).
+2. **Gate before** (no LLM) runs the hidden tests on the base commit through the repository's **oracle**: the `mork-v1` adapter in its pinned runtime (`hidden_tests.runtime_paths`), which certifies each result as a pass, a behavior failure, an execution failure or inconclusive. A behavior failure on the base commit is a **certified red**; a certified pass preserves existing behavior as regression evidence. An execution failure (import, setup, server start, a wrapped `AssertionError`) or an inconclusive result is not a valid red; the plan goes back to the analyst **in the same session**, with the diagnostics, for `attempts - 1` corrections before a handover. Authored criteria keep their exact ids and text (the runner binds them) and need executable checks unless the author wrote `[evidence]`. The oracle's version is pinned in the plan; a changed oracle invalidates baseline and candidate evidence and is handed over for independent review ([ADR 19](adr/0019-certified-verification-and-a-bounded-task.md)).
 3. **Implementer** (Pi + LLM) writes the code on its branch and pushes it. It can call `verify` to run the repository's setup, tests, repository checks (`checks`) and a preview of the diff policy (not the hidden tests). Directory-scoped `AGENTS.md` rules reach it before it first edits a file under that directory.
 4. **Gate after** (no LLM) clones the pushed branch fresh and runs, as an unprivileged user:
    - the repository's setup, tests and repository checks (`checks`),
@@ -64,14 +64,14 @@ Whether the code works is decided by tests, not by a model.
    - **rejects an attempt** that touches platform paths (`.mork/`, `.github/`, `.pi/`),
    - **raises the recommendation** to careful review when the test script in `package.json` changes, and to takeover when the change touches the repository's `protected_paths`.
 
-   A failed gate sends concrete feedback back to Build, at most 3 attempts in total; then a person takes over. Tasks that are supposed to change existing tests are handed over.
+   A failed gate sends concrete feedback back to Build, within the task's **build budget** (first-run attempts, repairs and fix rounds share one finite envelope); then a person takes over. Tasks that are supposed to change existing tests are handed over. Every command the gate and `verify` run leaves a **diagnostic**: command, checkout SHA, working directory and the complete redacted output, kept outside the checkout. Public diagnostics (repository commands) are readable by every later station. Root Plan and Check retain full oracle diagnostics (hidden test output); only the analyst receives them as model inputs. Build, finding verification and criteria evidence receive public diagnostics only.
 5. **Open Code Review** runs only after the gate passes, on its exact head commit, with medium effort. It is the only defect finder. A fresh **finding verifier** inspects just its claims and the relevant baseline/head code. The runner checks its citations in a separate immutable checkout. Confirmed regressions can be repaired; refuted, unknown and duplicate claims remain labelled in the PR. Unknown findings or incomplete coverage keep review at careful. Jev assigns urgency only from confirmed evidence in bounded batches. At most three must-fix findings go back to Build per repair round, three rounds by default, each bringing its own attempt. A narrow **criteria checker** runs only for acceptance criteria tests cannot decide and supplies checked quotes for Jev. Neither Pi worker performs a second full defect review ([ADR 17](adr/0017-ocr-finds-verification-establishes-defects.md)).
 
    | Level | When | What the person gets |
    | --- | --- | --- |
    | **Quick look** | Gate green, small low-risk diff, clean review, confident model | Draft PR, label `review:quick` |
    | **Careful review** (default) | Moderate risk, larger diff, findings the decision model rates must-fix, or an unsure model | Draft PR, label `review:careful` |
-   | **Take over** | Gate still failing, security change, protected paths | Draft PR of the last attempt labelled `needs-human` with the reason (none when the branch has no work); `@mork` on it starts a fix run |
+   | **Take over** | Gate still failing, security change, protected paths | Draft PR of the last attempt labelled `needs-human` with the reason (none when the branch has no work); only `@mork resume` on it starts a fix run |
 
    The PR starts with the recommendation, the checks table (everything that ran), where to start reading, and links to the agents' transcripts.
 
@@ -87,9 +87,9 @@ Inside a container the runner (root) holds the task token, AWS credentials, the 
 
 ## After the PR
 
-Red CI (a failed check suite) on a Mork PR's head, a review that requests changes, or a PR comment that mentions `@mork` (from someone with write access) starts a **fix run**. It finds the task through the timeline and the PR record in the bucket, collects the feedback (failed CI jobs with the log tail, the review with its inline comments, or the comment) and continues the task in Build on the same branch, with the same plan and hidden tests. Each fix run has 2 build attempts, each PR at most 2 fix rounds. Decide comments on the PR with the checks table instead of opening a new one.
+CI that settles red on a Mork PR's head, a review that requests changes, or a PR comment that mentions `@mork` (from someone with write access) starts a **fix run**. Every completed check suite wakes the intake; Start then collects all check runs and commit statuses of the head and claims it only once nothing is still running and at least one run is a verdict (`failure`, `timed_out`). Cancelled, approval-gated, stale or startup-failed runs are reported as inconclusive and spend nothing; a head is claimed at most once. The run finds the task through the timeline and the PR record in the bucket, collects the feedback (failed CI jobs with the log tail, the review with its inline comments, or the comment) and continues the task in Build on the same branch, with the same plan and hidden tests. Each fix run has 2 build attempts, each PR at most 2 fix rounds, all within the task's build budget. Decide comments on the PR with the checks table instead of opening a new one.
 
-A round is claimed with a conditional write, so concurrent triggers start one run; repeats of the same trigger (same commit, review or comment) start nothing new; Mork's own comments carry a marker and never trigger a fix.
+A round and its share of the budget are claimed with one conditional write on the PR record, so concurrent triggers start one run; repeats of the same trigger (same commit, review or comment) start nothing new; Mork's own comments carry a marker and never trigger a fix. A **handover** closes the same record before it stops containers or publishes the PR: CI and ordinary review events on a handed-over task are dismissed, and only `@mork resume` from someone with write access reopens it, within the remaining budget. Before Plan and Build, including after an answer, a **preflight** step refreshes the task's prerequisites (Jira `Blocks` links for Slack tasks) and hands over when one is unmet, so no container starts on a blocked task.
 
 ## Supervision, timeline, history
 

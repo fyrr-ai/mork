@@ -109,7 +109,7 @@ sha = "0123456789abcdef0123456789abcdef01234567"
 paths = ["src/loader.py", "schemas"]
 ```
 
-The runner fails before the station starts if a selected path or revision is unavailable, or if a selected entry is a symlink, submodule or binary file. Exports are bounded to 10,000 files and 50 MiB; narrow the selection instead of truncating contracts. Every station receives a compact manifest location. Requester answers are separate JSON files with their original question, rather than repeated large blocks in each prompt. Repeated preparation validates the published hashes, and resumed sessions receive the same paths for unchanged inputs.
+The runner fails before the station starts if a selected path or revision is unavailable, or if a selected entry is a symlink, submodule or binary file. Exports are bounded to 10,000 files and 50 MiB; narrow the selection instead of truncating contracts. Every station receives a compact manifest location. Requester answers are separate JSON files with their original question, rather than repeated large blocks in each prompt. Repeated preparation validates the manifest schema, identity, relative paths and published hashes, rejecting symlinked cache entries, and resumed sessions receive the same paths for unchanged inputs.
 
 ### Acceptance verification
 
@@ -160,6 +160,14 @@ The Terraform module sets these; they are listed for running the code elsewhere.
 | `MORK_EGRESS_PROXY`, `MORK_EGRESS_CA` | Sidecar address and CA (defaults `http://127.0.0.1:3128`, `/mork-egress/ca.crt`) |
 | `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_RESOURCE_ATTRIBUTES`, `MORK_ENV` | Live log (optional) |
 | `PI_BIN`, `MORK_EXTENSIONS`, `MORK_WORK`, `MORK_AGENT_*`, `MORK_SANDBOX_*` | Image layout; defaults match the Dockerfile |
+
+The runner sets these for the implementer's `verify` extension; they are internal to one container and need no configuration:
+
+| Variable | Purpose |
+| --- | --- |
+| `MORK_VERIFY_LOG_DIR` | Where the extension keeps each verify invocation's raw step outputs and sidecars for the runner to collect (default `$HOME/out/verify`) |
+| `MORK_VERIFY_PUBLISH_REQUIRED` | `1` makes the extension wait for the runner's redacted publication of every step before answering the model, so no raw path or unredacted tail is shown; unset in standalone runs |
+| `MORK_VERIFY_PUBLISH_TIMEOUT_MS` | Bound on that wait, default 15 minutes; after it the tool fails closed. Tests set it low; deployments leave it unset |
 
 **Egress sidecar (`images/egress`)**
 

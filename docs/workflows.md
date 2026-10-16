@@ -90,14 +90,16 @@ budget. This counts attempts, not tokens or cost.
 Handover closes automation in the task's stored PR record before stopping work
 or publishing the takeover PR. CI and ordinary review events cannot restart a
 handed-over task. A user with write access can explicitly comment `@mork resume`
-to resume within the remaining budget. The takeover label displays this state;
+to resume within the remaining budget. The `needs-human` label displays this state;
 the conditional storage update decides ownership. A repeated completed Handover
 does not publish another notification.
 
 CI fixes collect all check runs and commit statuses for the current head. Pending
 checks defer the claim without spending a fix round. A later completed suite,
 including a successful one, wakes collection again. The same head cannot claim
-another CI repair, and a stale event cannot repair a newer head.
+another CI fix round, and a stale event cannot start a fix run for a newer head.
+Completed runs without a verdict (cancelled, awaiting approval, stale, startup
+failure) are reported as inconclusive and start nothing.
 
 Automatic wakeups currently come from completed check suites. A legacy commit
 status that finishes after the bounded collection window does not wake Mork by
