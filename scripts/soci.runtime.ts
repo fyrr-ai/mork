@@ -42,7 +42,7 @@ try {
     "build",
     ...builder,
     "--platform",
-    "linux/amd64",
+    "linux/arm64",
     "--provenance=false",
     "--output",
     `type=oci,dest=${archive},compression=gzip,force-compression=true`,
@@ -61,6 +61,7 @@ try {
     (entry: { artifactType?: string }) => entry.artifactType !== "application/vnd.amazon.soci.index.v2+json",
   );
   assert(artifact && application, "Published graph must contain both application and SOCI v2 artifact");
+  assert.equal(JSON.parse(run(["crane", "config", `127.0.0.1:${port}/mork-soci@${application.digest}`])).architecture, "arm64");
   const converted = JSON.parse(run(["crane", "manifest", `127.0.0.1:${port}/mork-soci@${application.digest}`]));
   const index = JSON.parse(run(["crane", "manifest", `127.0.0.1:${port}/mork-soci@${artifact.digest}`]));
   assert.deepEqual(converted.layers, original.layers, "SOCI must preserve filesystem layer descriptors");

@@ -34,7 +34,9 @@ jobs:
         run: mise run security:scan
 
   sandbox:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-24.04-arm
+    env:
+      MORK_IMAGE_TARGETS: runner egress
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -49,4 +51,20 @@ jobs:
       - name: Test sandbox boundaries without runtime network
         run: mise run test:sandbox
       - name: Check production image entrypoints and notices
+        run: mise run images:check
+
+  lambda-image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      MORK_IMAGE_TARGETS: lambda
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3
+        with:
+          version: 2026.10.0
+          cache: false
+      - name: Check x86 Lambda image entrypoints and notices
         run: mise run images:check

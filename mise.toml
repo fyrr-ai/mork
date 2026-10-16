@@ -36,7 +36,7 @@ depends = ["test", "typecheck", "lint", "scripts:check", "infra:check", "infra:t
 
 [tasks."images:build"]
 description = "Build the runner, egress and lambda images locally"
-run = "for t in runner egress lambda; do docker build --platform linux/amd64 --target $t -t mork-$t:dev . || exit 1; done"
+run = "for t in ${MORK_IMAGE_TARGETS:-runner egress lambda}; do case $t in runner|egress) platform=linux/arm64 ;; lambda) platform=linux/amd64 ;; *) echo Invalid image target >&2; exit 1 ;; esac; docker build --platform $platform --target $t --load -t mork-$t:dev . || exit 1; done"
 
 [tasks."images:check"]
 description = "Build and smoke-test production entrypoints and image notices without runtime network"

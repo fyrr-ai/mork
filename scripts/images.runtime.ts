@@ -8,6 +8,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
+assert.equal(process.arch, process.argv[2] === "lambda" ? "x64" : "arm64", "Final runtime architecture must match its ECS/Lambda configuration");
+
 if (process.argv[2] === "lambda") {
   for (const path of ["/bin/sh", "/bin/bash", "/usr/bin/apt", "/usr/local/bin/npm", "/var/runtime/node_modules"]) {
     assert.equal(existsSync(path), false, `Unneeded Lambda path: ${path}`);
@@ -353,6 +355,7 @@ if (process.argv[2] === "lambda") {
   };
   for (const [command, args] of [
     ["git", ["--version"]],
+    ["ocr", ["--version"]],
     ["bash", ["-c", "printf runner-tools"]],
     ["npm", ["--version"]],
     ["openssl", ["version"]],

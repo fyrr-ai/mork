@@ -58,14 +58,16 @@ trap 'rm -rf "$work"' EXIT
 aws ecr get-login-password | docker login --username AWS --password-stdin "$registry" >/dev/null
 for target in runner egress lambda; do
   repo="${registry}/${ecr_prefix}-${target}"
+  platform=linux/arm64
+  if [[ "$target" == lambda ]]; then platform=linux/amd64; fi
   if "$soci_enabled" && [[ "$target" != lambda ]]; then
     builder=()
     if [[ -n "${MORK_SOCI_BUILDER:-}" ]]; then builder=(--builder "$MORK_SOCI_BUILDER"); fi
-    docker buildx build "${builder[@]}" --platform linux/amd64 --provenance=false --target "$target" \
+    docker buildx build "${builder[@]}" --platform "$platform" --provenance=false --target "$target" \
       --output "type=oci,dest=${work}/${target}.tar,compression=gzip,force-compression=true" . >/dev/null
     scripts/soci-publish.sh "${work}/${target}.tar" "${repo}:${tag}" current
   else
-    docker build --quiet --platform linux/amd64 --provenance=false --target "$target" -t "${repo}:${tag}" -t "${repo}:current" . >/dev/null
+    docker build --quiet --platform "$platform" --provenance=false --target "$target" --load -t "${repo}:${tag}" -t "${repo}:current" . >/dev/null
     docker push --quiet "${repo}:${tag}" >/dev/null
     docker push --quiet "${repo}:current" >/dev/null
   fi
