@@ -53,6 +53,7 @@ test("CI feedback includes every failed check page and current commit statuses, 
       ]);
     if (url.pathname.endsWith("/check-suites"))
       return Response.json({ total_count: 1, check_suites: [{ id: 8, status: "queued", app: { slug: "github-actions" } }] });
+    if (url.pathname.endsWith("/actions/runs")) return Response.json({ total_count: 0, workflow_runs: [] });
     throw new Error(`Unexpected HTTP request: ${url.pathname}`);
   });
   try {
@@ -94,6 +95,7 @@ test("completed check runs without a verdict are reported as inconclusive with a
         ],
       });
     }
+    if (url.pathname.endsWith("/actions/runs")) return Response.json({ total_count: 0, workflow_runs: [] });
     throw new Error(`Unexpected HTTP request: ${url.pathname}`);
   });
   try {
@@ -122,6 +124,7 @@ test("inconclusive reporting is bounded", async () => {
     }
     if (url.pathname.endsWith("/statuses")) return Response.json([]);
     if (url.pathname.endsWith("/check-suites")) return Response.json({ total_count: 0, check_suites: [] });
+    if (url.pathname.endsWith("/actions/runs")) return Response.json({ total_count: 0, workflow_runs: [] });
     throw new Error(`Unexpected HTTP request: ${url.pathname}`);
   });
   try {
@@ -133,3 +136,125 @@ test("inconclusive reporting is bounded", async () => {
     transport.mockRestore();
   }
 });
+
+for (const scenario of [
+  "green",
+  "pending",
+  "different-workflow",
+  "different-event",
+  "different-branch",
+  "other-app",
+  "unknown-suite",
+  "wrong-sha",
+  "attempt",
+  "api-error",
+  "api-forbidden",
+  "pagination",
+  "same-suite",
+  "ambiguous-number",
+  "missing-suite",
+  "truncated-history",
+  "malformed-history",
+  "latest-cancelled",
+] as const) {
+  test(`Actions supersession uses workflow identity, never global job names: ${scenario}`, async () => {
+    const sha = "a".repeat(40);
+    const workflow = (id: number, suite: number, number: number) => ({
+      id,
+      check_suite_id: suite,
+      workflow_id: 7,
+      run_number: number,
+      run_attempt: 1,
+      event: "pull_request",
+      head_branch: "migration",
+      head_sha: sha,
+      status: "completed",
+      conclusion: "success",
+    });
+    const old = workflow(10, 100, 20);
+    const current = { ...workflow(11, 101, 21), ...(scenario === "pending" ? { status: "in_progress", conclusion: null } : {}) };
+    if (scenario === "different-workflow") current.workflow_id = 8;
+    if (scenario === "different-event") current.event = "push";
+    if (scenario === "different-branch") current.head_branch = "another";
+    if (scenario === "wrong-sha") current.head_sha = "b".repeat(40);
+    if (scenario === "attempt") {
+      current.id = old.id;
+      current.run_number = old.run_number;
+      current.run_attempt = 2;
+    }
+    if (scenario === "same-suite") current.check_suite_id = old.check_suite_id;
+    if (scenario === "ambiguous-number") current.run_number = old.run_number;
+    const check = (id: number, suite: number, conclusion: string) => ({
+      id,
+      name: "same-name",
+      status: "completed",
+      conclusion,
+      output: {},
+      app: { slug: "github-actions" },
+      check_suite: { id: suite },
+    });
+    const cancelled = check(1, 100, "cancelled");
+    const checks = [cancelled, check(2, 100, "failure"), check(3, 101, scenario === "latest-cancelled" ? "cancelled" : "success")];
+    if (scenario === "missing-suite") cancelled.check_suite.id = 999;
+    if (scenario === "other-app") cancelled.app.slug = "external-ci";
+    const requested: string[] = [];
+    const transport = spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = new URL(String(input));
+      requested.push(url.pathname + url.search);
+      if (url.pathname.endsWith("/check-runs")) return Response.json({ total_count: checks.length, check_runs: checks });
+      if (url.pathname.endsWith("/check-suites"))
+        return Response.json({
+          total_count: scenario === "unknown-suite" ? 3 : 2,
+          check_suites: [
+            { id: 100, status: "queued", app: { slug: "github-actions" } },
+            { id: 101, status: "completed", app: { slug: "github-actions" } },
+            ...(scenario === "unknown-suite" ? [{ id: 999, status: "queued", app: { slug: "github-actions" }, latest_check_runs_count: 0 }] : []),
+          ],
+        });
+      if (url.pathname.endsWith("/actions/runs")) {
+        expect(url.searchParams.get("head_sha")).toBe(sha);
+        if (scenario === "api-error" || scenario === "api-forbidden")
+          return Response.json({ message: "unavailable" }, { status: scenario === "api-error" ? 503 : 403 });
+        if (scenario === "malformed-history") return Response.json({ total_count: 1, workflow_runs: [{ ...current, workflow_id: undefined }] });
+        if (scenario === "truncated-history") return Response.json({ total_count: 101, workflow_runs: [current, old] });
+        const workflows =
+          scenario === "pagination"
+            ? [old, ...Array.from({ length: 99 }, (_, i) => ({ ...workflow(30 + i, 300 + i, 1), workflow_id: 30 + i })), current]
+            : [current, old];
+        const page = Number(url.searchParams.get("page"));
+        return Response.json({ total_count: workflows.length, workflow_runs: workflows.slice((page - 1) * 100, page * 100) });
+      }
+      if (url.pathname.endsWith("/statuses")) return Response.json([]);
+      if (url.pathname.endsWith("/logs")) return new Response("job failed");
+      throw new Error(`Unexpected request: ${url.pathname}`);
+    });
+    try {
+      const result = new GitHub(async () => "fixture-token").ciChecks("o/r", sha);
+      if (scenario === "api-error" || scenario === "api-forbidden") {
+        await expect(result).rejects.toThrow(scenario === "api-error" ? "503" : "403");
+        return;
+      }
+      if (scenario === "malformed-history") {
+        await expect(result).rejects.toThrow();
+        return;
+      }
+      if (scenario === "truncated-history") {
+        await expect(result).rejects.toThrow("Incomplete");
+        return;
+      }
+      const actual = await result;
+      const unrelated = ["different-workflow", "different-event", "different-branch", "wrong-sha", "same-suite", "ambiguous-number"].includes(
+        scenario,
+      );
+      expect(actual.failed).toHaveLength(unrelated ? 1 : 0);
+      expect(actual.inconclusive_total).toBe(
+        unrelated || scenario === "other-app" || scenario === "missing-suite" || scenario === "latest-cancelled" ? 1 : 0,
+      );
+      expect(actual.pending.length > 0).toBe(unrelated || scenario === "pending" || scenario === "unknown-suite");
+      if (scenario === "unknown-suite") expect(actual.pending.join(" ")).toContain("suite 999");
+      if (scenario === "pagination") expect(requested.some((path) => path.includes("/actions/runs?") && path.includes("page=2"))).toBe(true);
+    } finally {
+      transport.mockRestore();
+    }
+  });
+}

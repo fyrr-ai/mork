@@ -149,6 +149,60 @@ export class GitHub {
     return this.api<{ number: number; state: string; html_url: string; head: { sha: string; ref: string } }>("GET", `/repos/${full}/pulls/${number}`);
   }
 
+  /** Check API filter=latest can retain suites from earlier workflow invocations. */
+  async #actionSuites(full: string, sha: string): Promise<{ superseded: Set<number>; pending: string[] }> {
+    const workflowRun = z.object({
+      id: z.number().int().positive(),
+      workflow_id: z.number().int().positive(),
+      check_suite_id: z.number().int().positive(),
+      run_number: z.number().int().positive(),
+      run_attempt: z.number().int().positive(),
+      event: z.string().min(1),
+      head_branch: z.string().nullable(),
+      head_sha: z.string(),
+      status: z.string(),
+    });
+    const all: z.infer<typeof workflowRun>[] = [];
+    for (let page = 1; ; page++) {
+      const result = z
+        .object({ total_count: z.number().int().nonnegative(), workflow_runs: z.array(workflowRun) })
+        .parse(await this.api<unknown>("GET", `/repos/${full}/actions/runs?head_sha=${encodeURIComponent(sha)}&per_page=100&page=${page}`));
+      all.push(...result.workflow_runs);
+      if (all.length >= result.total_count) break;
+      // Bound the lookup to 1,000 records and never infer completeness from a truncated response.
+      if (page >= 10 || result.workflow_runs.length < 100) throw new Error("Incomplete GitHub Actions workflow history for CI head");
+    }
+    const groups = new Map<string, z.infer<typeof workflowRun>[]>();
+    for (const run of all) {
+      if (run.head_sha !== sha) continue;
+      const identity = JSON.stringify([run.workflow_id, run.event, run.head_branch]);
+      const group = groups.get(identity) ?? [];
+      group.push(run);
+      groups.set(identity, group);
+    }
+    const superseded = new Set<number>();
+    const retained = new Set<number>();
+    const pending: string[] = [];
+    for (const group of groups.values()) {
+      for (const run of group) {
+        const replaced = group.some(
+          (newer) =>
+            newer.run_number > run.run_number || (newer.id === run.id && newer.run_number === run.run_number && newer.run_attempt > run.run_attempt),
+        );
+        if (replaced) superseded.add(run.check_suite_id);
+        else {
+          retained.add(run.check_suite_id);
+          // The Actions endpoint can observe a new invocation before Checks creates its first run/suite.
+          if (run.status !== "completed")
+            pending.push(`github-actions workflow ${run.workflow_id} run ${run.run_number} attempt ${run.run_attempt} (${run.status})`);
+        }
+      }
+    }
+    // Rerunning jobs may reuse a suite ID: it must remain when any current invocation owns it.
+    for (const suite of retained) superseded.delete(suite);
+    return { superseded, pending };
+  }
+
   /** Failed check runs on `sha`, each with its output and, for GitHub Actions jobs, the tail of the job log. */
   /** All latest results for one immutable head, including legacy status contexts. */
   async ciChecks(full: string, sha: string): Promise<CiChecks> {
@@ -159,6 +213,7 @@ export class GitHub {
       conclusion: string | null;
       output: { title?: string | null; summary?: string | null; text?: string | null };
       app?: { slug?: string };
+      check_suite?: { id: number };
     };
     const runs: Run[] = [];
     for (let page = 1; ; page++) {
@@ -169,24 +224,31 @@ export class GitHub {
       runs.push(...result.check_runs);
       if (runs.length >= result.total_count || result.check_runs.length < 100) break;
     }
-    const pending = runs.filter((r) => r.status !== "completed").map((r) => r.name);
+    type Suite = { id: number; status: string; app?: { slug?: string }; latest_check_runs_count?: number };
+    const suites: Suite[] = [];
     // Queued workflows may not have created their first check run yet.
-    for (let page = 1, seen = 0; ; page++) {
-      const result = await this.api<{
-        total_count: number;
-        check_suites: { id: number; status: string; app?: { slug?: string }; latest_check_runs_count?: number }[];
-      }>("GET", `/repos/${full}/commits/${sha}/check-suites?per_page=100&page=${page}`);
-      for (const suite of result.check_suites) {
-        if (suite.status === "completed") continue;
-        // A suite with no check run yet is either a workflow about to start or an app that never
-        // reports on this repository; the API does not tell them apart, so it stays pending by name.
-        const empty = suite.latest_check_runs_count === 0 ? ` (${suite.status}, no check runs yet; investigate if it never completes)` : "";
-        pending.push(`${suite.app?.slug ?? "check"} suite ${suite.id}${empty}`);
-      }
-      seen += result.check_suites.length;
-      if (seen >= result.total_count || result.check_suites.length < 100) break;
+    for (let page = 1; ; page++) {
+      const result = await this.api<{ total_count: number; check_suites: Suite[] }>(
+        "GET",
+        `/repos/${full}/commits/${sha}/check-suites?per_page=100&page=${page}`,
+      );
+      suites.push(...result.check_suites);
+      if (suites.length >= result.total_count || result.check_suites.length < 100) break;
     }
-    const completed = runs.filter((r) => r.status === "completed");
+    const actions =
+      runs.some((r) => r.app?.slug === "github-actions") || suites.some((s) => s.app?.slug === "github-actions")
+        ? await this.#actionSuites(full, sha)
+        : { superseded: new Set<number>(), pending: [] };
+    const currentRuns = runs.filter((r) => r.app?.slug !== "github-actions" || !actions.superseded.has(r.check_suite?.id ?? -1));
+    const pending = currentRuns.filter((r) => r.status !== "completed").map((r) => r.name);
+    pending.push(...actions.pending);
+    for (const suite of suites) {
+      if (suite.status === "completed" || (suite.app?.slug === "github-actions" && actions.superseded.has(suite.id))) continue;
+      // Unmapped/other-app suites remain pending; a job name is never evidence of supersession.
+      const empty = suite.latest_check_runs_count === 0 ? ` (${suite.status}, no check runs yet; investigate if it never completes)` : "";
+      pending.push(`${suite.app?.slug ?? "check"} suite ${suite.id}${empty}`);
+    }
+    const completed = currentRuns.filter((r) => r.status === "completed");
     // Only a verdict on the code counts as a failure; a run that never judged it is inconclusive and spends no Build.
     const failures = completed.filter((r) => FAILURE_CONCLUSIONS.has(r.conclusion ?? ""));
     const undecided = completed.filter((r) => !FAILURE_CONCLUSIONS.has(r.conclusion ?? "") && !PASS_CONCLUSIONS.has(r.conclusion ?? ""));
