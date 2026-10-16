@@ -192,7 +192,7 @@ resource "aws_ecs_task_definition" "phase" {
     }
   }
   runtime_platform {
-    cpu_architecture        = "X86_64"
+    cpu_architecture        = "ARM64"
     operating_system_family = "LINUX"
   }
 

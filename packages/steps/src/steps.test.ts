@@ -1337,3 +1337,73 @@ test("PR titles include a scope, preserve an existing tracker reference and fit 
   expect(long.endsWith(" (#1)")).toBe(true);
   expect(prLink(origin, "Document the channel").title).toBe("chore(mork): Document the channel (#1)");
 });
+
+const pinnedRuntime = {
+  image: `registry.example/app@sha256:${"1".repeat(64)}`,
+  platform: "linux/arm64" as const,
+  repository_runtime: true,
+  task_definitions: Object.fromEntries(
+    ["plan", "build", "check"].map((phase) => [phase, `arn:aws:ecs:eu-west-1:123456789012:task-definition/mork_${phase}:7`]),
+  ) as Record<"plan" | "build" | "check", string>,
+};
+
+test("Start reads configuration from the exact base SHA before pinning operator runtime", async () => {
+  const store = memory();
+  const files: string[] = [];
+  const deps = { ...makeDeps(store), runtime: pinnedRuntime };
+  deps.github = {
+    ...github,
+    file: async (_repo: string, _path: string, ref: string) => {
+      files.push(ref);
+      return "[commands]";
+    },
+  } as Deps["github"];
+  const state = await start(deps, {
+    repo: "o/r",
+    issue: 1,
+    execution: "pinned",
+    runtime: { ...pinnedRuntime, image: "untrusted:latest" },
+  } as Parameters<typeof start>[1]);
+  expect(files).toEqual(["a".repeat(40)]);
+  expect(state).toMatchObject({ brief: { runtime: pinnedRuntime, repo: { base_sha: "a".repeat(40) } } });
+});
+
+test("fix, retry and explicit resume keep the saved task runtime across a deployment change", async () => {
+  const store = memory();
+  const deps = {
+    ...makeDeps(store),
+    timeline: new TimelineMemory(),
+    runtime: { ...pinnedRuntime, image: `registry.example/app@sha256:${"2".repeat(64)}` },
+  };
+  const original = {
+    ...baseState,
+    task: { ...baseState.task, execution_arn: "arn:original" },
+    brief: { ...baseState.brief, runtime: pinnedRuntime },
+  };
+  await linkPr(deps.timeline, original.task.id, "o/r", 7, prefix);
+  await savePr(deps, original, { number: 7, url: "https://github.com/o/r/pull/7" });
+  await handover(deps, original);
+  const request = {
+    fix: { repo: "o/r", pr: 7, trigger: { kind: "comment" as const, body: "@mork resume fix", by: "alice" } },
+    execution: "resume-pinned",
+    execution_arn: "arn:resume-pinned",
+  };
+  const resumed = await start(deps, request);
+  expect(resumed).toMatchObject({ brief: { runtime: pinnedRuntime, repo: original.brief.repo } });
+  expect(await start(deps, request)).toMatchObject({ brief: { runtime: pinnedRuntime } });
+  expect(await store.json(keys.pr(prefix))).toMatchObject({ state: { brief: { runtime: pinnedRuntime } } });
+});
+
+test("cloud fix refuses a legacy unpinned task instead of selecting the current deployment", async () => {
+  const store = memory();
+  const deps = { ...makeDeps(store), timeline: new TimelineMemory(), runtime: pinnedRuntime };
+  await linkPr(deps.timeline, baseState.task.id, "o/r", 7, prefix);
+  await savePr(deps, baseState, { number: 7, url: "https://github.com/o/r/pull/7" });
+  await expect(
+    start(deps, {
+      fix: { repo: "o/r", pr: 7, trigger: { kind: "comment", body: "@mork resume", by: "alice" } },
+      execution: "legacy",
+      execution_arn: "arn:legacy",
+    }),
+  ).rejects.toThrow(/runtime.*pin|pin.*runtime/i);
+});

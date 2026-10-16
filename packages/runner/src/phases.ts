@@ -50,6 +50,7 @@ import { ocrReview, parseOcrResult, runOcr } from "./ocr.ts";
 import * as prompts from "./prompts.ts";
 import { carryFindings, changedFiles, locateFindings, readAt, verifyCriteria, verifyReview } from "./review.ts";
 import { bindAuthorCriteria, checkPlan, gateFailures, gateFeedback, gatePassed } from "./rules.ts";
+import { preflightRuntime } from "./runtime.ts";
 import { SessionLog } from "./session.ts";
 import { onShutdown } from "./shutdown.ts";
 import type { SupervisionRecord } from "./supervisor.ts";
@@ -197,6 +198,7 @@ async function checkout(ctx: PhaseContext, name: string, withBranch: boolean): P
     branch: withBranch ? ctx.brief.branch : undefined,
     localRepo: ctx.localRepo,
   });
+  preflightRuntime(dir, ctx.brief.repo.base_sha, ctx.brief.runtime);
   return dir;
 }
 
@@ -341,6 +343,7 @@ async function planWith(ctx: PhaseContext, records: SupervisionRecord[]): Promis
         report = await runGate(
           {
             mode: "before",
+            runtime: brief.runtime,
             repo: brief.repo,
             config,
             hidden_tests: full.hidden_tests,
@@ -489,6 +492,7 @@ async function checkWith(ctx: PhaseContext, records: SupervisionRecord[]): Promi
   const report = await runGate(
     {
       mode: "after",
+      runtime: brief.runtime,
       repo: brief.repo,
       branch: brief.branch,
       config,

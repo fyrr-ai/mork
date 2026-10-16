@@ -14,7 +14,7 @@ image_ref="$2"
 alias_tag="${3:-}"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
-soci convert --standalone --format oci-dir --platform linux/amd64 "$source_layout" "$work/indexed" >/dev/null
+soci convert --standalone --format oci-dir --platform linux/arm64 "$source_layout" "$work/indexed" >/dev/null
 # The layout wraps the deployable image index. Fail before publishing if the
 # converter did not create the v2 artifact required by fresh Fargate accounts.
 index_digest="$(jq -er '.manifests[0].digest' "$work/indexed/index.json")"

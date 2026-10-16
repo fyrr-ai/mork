@@ -46,13 +46,21 @@ COPY images/runner/rootfs.py /build-rootfs.py
 RUN python3 /build-rootfs.py \
  && ln -s /opt/pi/dist/bundle/cli.js /rootfs/usr/local/bin/pi
 
-# Release binary pinned to the publisher's SHA-256, with no runtime installer.
+# Release binaries pinned separately by architecture; never execute an amd64 OCR
+# inside an ARM64 runner. Only the selected stage is built.
+FROM runner-rootfs AS ocr-amd64
 ADD --checksum=sha256:879d6eda27d136473f7af680ed5009516baf6236d8a0e5f5f14f3e6dececdd1f https://github.com/alibaba/open-code-review/releases/download/v1.13.0/opencodereview-linux-amd64 /ocr
 RUN chmod 755 /ocr && strip --strip-unneeded /ocr
 
+FROM runner-rootfs AS ocr-arm64
+ADD --checksum=sha256:2d66c71eeea08730e1394cc39884b9644d301288443d644a02c2adebb0425b93 https://github.com/alibaba/open-code-review/releases/download/v1.13.0/opencodereview-linux-arm64 /ocr
+RUN chmod 755 /ocr && strip --strip-unneeded /ocr
+
+FROM ocr-${TARGETARCH} AS ocr-binary
+
 FROM scratch AS runner
 COPY --from=runner-rootfs /rootfs/ /
-COPY --from=runner-rootfs /ocr /usr/local/bin/ocr
+COPY --from=ocr-binary /ocr /usr/local/bin/ocr
 COPY --from=agent-deps /pi /opt/pi
 COPY --from=agent-deps /pi-notices /usr/share/licenses/pi/npm
 COPY --from=agent-deps /agent/bun.lock /usr/share/licenses/pi/bun.lock

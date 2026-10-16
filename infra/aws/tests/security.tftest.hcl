@@ -130,7 +130,7 @@ run "webhook_permissions_and_timeout" {
     error_message = "Production image repositories must not be deleted with their contents."
   }
   assert {
-    condition     = local.definition.States.DesignAsked.Default == "ImplementPreflight" && local.definition.States.ImplementAsked.Default == "Verify" && local.definition.States.VerifyAsked.Default == "Decide" && local.definition.States.Resume.Choices[2].Next == "Verify" && local.definition.States.Route.Choices[0].Next == "DesignPreflight" && local.definition.States.Design.Parameters.TaskDefinition == aws_ecs_task_definition.phase["plan"].arn
+    condition     = local.definition.States.DesignAsked.Default == "ImplementPreflight" && local.definition.States.ImplementAsked.Default == "Verify" && local.definition.States.VerifyAsked.Default == "Decide" && local.definition.States.Resume.Choices[2].Next == "Verify" && local.definition.States.Route.Choices[0].Next == "DesignPreflight" && local.definition.States.Design.Parameters["TaskDefinition.$"] == "$.brief.runtime.task_definitions.plan" && local.definition.States.Start.Parameters.Payload.runtime.task_definitions.plan == aws_ecs_task_definition.phase["plan"].arn
     error_message = "Configured operation names must drive ordering, question resumption and pinned task definitions."
   }
 }
@@ -514,5 +514,29 @@ run "diagnostics_preserve_oracle_boundary" {
       ])
     ]]))
     error_message = "No station may receive a shared or legacy diagnostics wildcard grant."
+  }
+}
+
+run "development_runtime_is_snapshotted_before_station_selection" {
+  command = plan
+  variables {
+    workflows = {
+      development = merge(jsondecode(file("../../packages/contracts/src/development.json")), {
+        runner_image = "registry.example/app@sha256:3333333333333333333333333333333333333333333333333333333333333333"
+      })
+    }
+  }
+  assert {
+    condition = try(
+      local.definition.States.Start.Parameters.Payload.runtime.image == "registry.example/app@sha256:3333333333333333333333333333333333333333333333333333333333333333" &&
+      local.definition.States.Start.Parameters.Payload.runtime.platform == "linux/arm64" &&
+      local.definition.States.Start.Parameters.Payload.runtime.repository_runtime &&
+      alltrue([for phase in ["plan", "build", "check"] :
+        local.definition.States.Start.Parameters.Payload.runtime.task_definitions[phase] == aws_ecs_task_definition.phase[phase].arn &&
+        local.definition.States[title(phase)].Parameters["TaskDefinition.$"] == "$.brief.runtime.task_definitions.${phase}" &&
+        local.definition.States["${title(phase)}OnDemand"].Parameters["TaskDefinition.$"] == "$.brief.runtime.task_definitions.${phase}" &&
+        !contains(keys(local.definition.States[title(phase)].Parameters), "TaskDefinition")
+    ]), false)
+    error_message = "The operator runtime must be snapshotted at Start; normal and fallback launches must select the task's saved revision, never the current deployment."
   }
 }

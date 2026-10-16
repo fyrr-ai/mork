@@ -123,6 +123,11 @@ test("initial image upload normalizes ECR names and never calls Lambda", () => {
   expect(result.calls).toContain("/test-mork-egress:");
   expect(result.calls).toContain("/test-mork-lambda:");
   expect(result.calls).not.toContain("aws lambda");
+  for (const target of ["runner", "egress"]) expect(result.calls).toContain(`--platform linux/arm64 --provenance=false --target ${target}`);
+  expect(result.calls).toContain("--platform linux/amd64 --provenance=false --target lambda");
+  const builds = result.calls.split("\n").filter((line) => line.startsWith("docker build --quiet"));
+  expect(builds).toHaveLength(3);
+  expect(builds.every((line) => line.includes(" --load "))).toBe(true);
 });
 
 test("regular deploy validates all functions before uploading and applies immutable release inputs", () => {
@@ -152,10 +157,10 @@ test("an unavailable function fails before any Docker or ECR side effect", () =>
 test("SOCI opt-in exports gzip OCI phase images while keeping Lambda a plain image", () => {
   const result = deploy(["--images-only", "--soci"]);
   expect(result.status).toBe(0);
-  expect(result.calls).toContain("buildx build --platform linux/amd64 --provenance=false --target runner");
-  expect(result.calls).toContain("buildx build --platform linux/amd64 --provenance=false --target egress");
+  expect(result.calls).toContain("buildx build --platform linux/arm64 --provenance=false --target runner");
+  expect(result.calls).toContain("buildx build --platform linux/arm64 --provenance=false --target egress");
   expect(result.calls).toContain("compression=gzip,force-compression=true");
-  expect(result.calls.match(/soci convert --standalone --format oci-dir/g)).toHaveLength(2);
+  expect(result.calls.match(/soci convert --standalone --format oci-dir --platform linux\/arm64/g)).toHaveLength(2);
   expect(result.calls).toContain("crane tag 123456789012.dkr.ecr.us-east-1.amazonaws.com/test-mork-runner:");
   expect(result.calls).toContain("docker build --quiet --platform linux/amd64 --provenance=false --target lambda");
   expect(result.calls).not.toContain("crane tag 123456789012.dkr.ecr.us-east-1.amazonaws.com/test-mork-lambda:");

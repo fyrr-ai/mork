@@ -2,7 +2,7 @@
 # Exercise the real runner users and filesystem boundaries without AWS or network.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-docker build --platform linux/amd64 --target runner-test -t mork-runner:test .
+docker build --platform linux/arm64 --target runner-test --load -t mork-runner:test .
 docker run --rm --network none -w /tmp --mount "type=bind,source=$(pwd -P),target=/opt/mork,readonly" mork-runner:test
 # The fixture model runs on loopback; execute compiled development operations
 # with production Node/Pi and a trusted local Git remote as the agent user.

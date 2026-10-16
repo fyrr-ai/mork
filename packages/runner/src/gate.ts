@@ -1,3 +1,5 @@
+import type { TaskRuntime } from "@mork/contracts";
+import { preflightRuntime } from "./runtime.ts";
 // LLM-free gate. Runs the repository's own commands and the hidden tests as an
 // unprivileged user, then applies the diff policy. Nothing here can be talked
 // into a different result: it only reports exit codes and diffs.
@@ -35,6 +37,7 @@ export type CommandDiagnostic = {
 
 /** One gate run, assembled by `main` from the brief and the stored outputs. */
 export type GateJob = {
+  runtime?: TaskRuntime;
   mode: "before" | "after";
   repo: RepoRef;
   /** After mode: the pushed branch under test. */
@@ -60,6 +63,7 @@ export async function runGate(spec: GateJob, githubToken: string, workDir: strin
     branch: spec.mode === "after" ? spec.branch : undefined,
     localRepo: spec.localRepo,
   });
+  preflightRuntime(repoDir, spec.repo.base_sha, spec.runtime);
 
   // Capture the pushed commit and policy before running any repository code.
   // The sandbox never gets write access to tracked files or Git metadata.

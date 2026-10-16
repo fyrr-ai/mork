@@ -90,7 +90,7 @@ resource "aws_ecs_task_definition" "workflow_step" {
   execution_role_arn       = aws_iam_role.workflow_exec[each.key].arn
   task_role_arn            = aws_iam_role.workflow_step[each.key].arn
   runtime_platform {
-    cpu_architecture        = "X86_64"
+    cpu_architecture        = "ARM64"
     operating_system_family = "LINUX"
   }
   ephemeral_storage { size_in_gib = var.station_size.storage_gib }

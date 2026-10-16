@@ -302,3 +302,23 @@ rl.createInterface({input:process.stdin}).on('line',line=>{const c=JSON.parse(li
     "ORACLE_REVIEW_SENTINEL",
   );
 });
+
+test.skipIf(process.platform === "linux" && process.arch === "arm64")(
+  "an incompatible native worker fails before repository setup or model execution",
+  async () => {
+    const runtime = {
+      image: `registry.example/app@sha256:${"1".repeat(64)}`,
+      platform: "linux/arm64" as const,
+      repository_runtime: false,
+      task_definitions: {
+        plan: "arn:aws:ecs:eu-west-1:123456789012:task-definition/mork_plan:7",
+        build: "arn:aws:ecs:eu-west-1:123456789012:task-definition/mork_build:7",
+        check: "arn:aws:ecs:eu-west-1:123456789012:task-definition/mork_check:7",
+      },
+    };
+    const f = await fixture();
+    f.ctx.brief.runtime = runtime;
+    await expect(plan(f.ctx)).rejects.toThrow(/Pinned runtime requires linux\/arm64/);
+    expect(existsSync(join(f.dir, "starts"))).toBe(false);
+  },
+);
