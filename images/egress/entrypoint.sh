@@ -45,4 +45,21 @@ if [ -n "${GITHUB_TOKEN:-}${GITHUB_TOKEN_FILE:-}" ]; then
   fi
   sed -e "s|@REPO@|${MORK_REPO}|g" "$template" >> "$config"
 fi
+# Optional operator-owned service credential. The value stays in the sidecar
+# environment; only its variable name is written into the proxy configuration.
+if [ -n "${MORK_SERVICE_HOST:-}${MORK_SERVICE_AUTHORIZATION:-}" ]; then
+  [ -n "${MORK_SERVICE_HOST:-}" ] && [ -n "${MORK_SERVICE_AUTHORIZATION:-}" ] || {
+    echo "Service host and authorization must be configured together" >&2; exit 1;
+  }
+  case "$MORK_SERVICE_HOST" in
+    *[!a-z0-9.-]*) echo "Invalid service host" >&2; exit 1 ;;
+  esac
+  if ! printf '%s\n' "$MORK_SERVICE_HOST" | grep -Eq '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$'; then
+    echo "Invalid service host" >&2; exit 1
+  fi
+  if [ "$MORK_SERVICE_HOST" = "$MORK_LLM_HOST" ] || [ "$MORK_SERVICE_HOST" = github.com ]; then
+    echo "Service host overlaps an existing credential rule" >&2; exit 1
+  fi
+  sed "s|@SERVICE_HOST@|$MORK_SERVICE_HOST|g" /etc/mork-egress/service.yaml >> "$config"
+fi
 exec iron-proxy -config "$config"
