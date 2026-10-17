@@ -198,9 +198,29 @@ The runner sets these for the implementer's `verify` extension; they are interna
 | `MORK_LLM_HOST`, `LLM_API_KEY` | Host the LLM key is injected for |
 | `GITHUB_TOKEN`, `MORK_REPO` | Build only: the shared GitHub token, injected for this repository only |
 | `GITHUB_TOKEN_FILE`, `MORK_REPO` | Build in App mode: root-owned renewable token file; no App private key in the proxy |
-| `MORK_SERVICE_HOST`, `MORK_SERVICE_AUTHORIZATION` | Optional exact service host and complete Authorization header. Configure both only on the permitted phase’s sidecar, never its runner. The host must also be in the egress allowlist. No wildcard, URL or port in the host. |
+| `MORK_SERVICE_BINDINGS` | Deployment-generated lines `host=MORK_SERVICE_AUTH_<index>`. Each exact host is also added to the proxy allowlist. No wildcard, URL, port, duplicate host or overlap with GitHub/LLM. |
+| `MORK_SERVICE_AUTH_<index>` | Complete Authorization header injected separately into the permitted phase’s sidecar. Never supply it to the runner. |
 | `MORK_EGRESS_ALLOW` | This step’s allowed domains, comma separated; the LLM host is added automatically |
 | `MORK_EGRESS_WARN` | `true` logs requests outside the allowlist, `false` blocks them |
+
+Keep the operator-owned service list in the deployment repository, for example
+`services.yaml`:
+
+```yaml
+services:
+  - host: database.example.com
+    authorization_secret: automation/database
+  - host: api.example.com
+    authorization_secret: automation/api
+```
+
+The deployment resolves those names to secret-store references, injects the
+values only into the permitted sidecar, and renders `MORK_SERVICE_BINDINGS`.
+The file and bindings contain no credentials. These are additional services;
+the workflow's `allowed_domains` and LLM host remain in the effective allowlist.
+`MORK_EGRESS_WARN=false` rejects other proxied hosts; `true` only logs them.
+This replaces the single-service environment fields. Update the deployment and
+proxy image together; the new proxy refuses the obsolete fields.
 
 Service authorization replaces the request's Authorization header for that exact
 host. The operator supplies the secret independently of repository/model input.

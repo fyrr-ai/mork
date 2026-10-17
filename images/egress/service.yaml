@@ -1,6 +1,6 @@
         - source:
             type: env
-            var: MORK_SERVICE_AUTHORIZATION
+            var: @AUTH_ENV@
           inject:
             header: Authorization
             formatter: '{{ .Value }}'

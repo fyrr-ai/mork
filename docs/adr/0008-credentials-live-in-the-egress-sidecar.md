@@ -16,15 +16,17 @@ Each phase container runs next to an egress sidecar ([iron-proxy](https://github
 - The agent's processes go through it (`HTTPS_PROXY`, `NODE_USE_ENV_PROXY` for Pi) and trust its CA, which the sidecar creates per task. Pi gets a placeholder key and git no credential helper.
 - Inside the container, Pi runs as the user `agent` with a clean environment; the runner, as root, keeps its own tokens and never follows a symlink the agent owns.
 
-An operator may also provide one service Authorization header and exact host to
-a permitted phase's sidecar. This uses the same iron-proxy secret transform;
-repository configuration cannot supply or redirect it. The service enforces
-permissions, and deployment uses TLS. It is intentionally a single credential,
-not a registry of application-specific integrations.
+An operator may define additional authenticated services in a deployment-owned
+file. The deployment maps each exact hostname to a separate injected environment
+variable; the values remain in the permitted phase's sidecar. This uses the same
+iron-proxy secret transform. Repository configuration cannot supply or redirect
+it. The service enforces permissions, and deployment uses TLS. The proxy rejects
+duplicate hosts and overlaps with its GitHub/LLM rules. The file contains secret
+references, never their values.
 
 ## Considered
 
-- **Enforcing the network allowlist**: not possible on Fargate, which has no iptables. Requests outside the allowlist are logged, not blocked.
+- **Enforcing the network allowlist**: not possible on Fargate, which has no iptables. The proxy can block requests outside its allowlist, but cannot prevent direct connections that bypass it.
 
 ## Consequences
 

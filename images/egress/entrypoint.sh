@@ -23,6 +23,36 @@ for host in ${MORK_EGRESS_ALLOW:-}; do
   [ -n "$host" ] && extra="${extra}        - \"${host}\"\n"
 done
 IFS=$old_ifs
+# Deployment renders these bindings from its services file; secret values are
+# injected separately. Never accept repository/model-provided bindings.
+if [ "${MORK_SERVICE_HOST+x}${MORK_SERVICE_AUTHORIZATION+x}" != "" ]; then
+  echo "Replace single-service fields with MORK_SERVICE_BINDINGS" >&2; exit 1
+fi
+service_rules=/run/mork-egress/services.yaml
+: > "$service_rules"
+seen="|"
+while IFS= read -r binding || [ -n "$binding" ]; do
+  [ -n "$binding" ] || continue
+  host=${binding%%=*}
+  auth_env=${binding#*=}
+  if ! printf '%s\n' "$host" | grep -Eq '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$' ||
+     ! printf '%s\n' "$auth_env" | grep -Eq '^MORK_SERVICE_AUTH_[0-9]+$'; then
+    echo "Invalid service binding" >&2; exit 1
+  fi
+  case "$seen" in *"|$host|"*) echo "Duplicate service host" >&2; exit 1 ;; esac
+  seen="$seen$host|"
+  if [ "$host" = "${MORK_LLM_HOST:?MORK_LLM_HOST is required}" ] || [ "$host" = github.com ]; then
+    echo "Service host overlaps an existing credential rule" >&2; exit 1
+  fi
+  if [ -z "$(printenv "$auth_env" 2>/dev/null)" ]; then
+    echo "Missing service credential" >&2; exit 1
+  fi
+  extra="${extra}        - \"${host}\"\n"
+  sed -e "s|@SERVICE_HOST@|$host|g" -e "s|@AUTH_ENV@|$auth_env|g" \
+    /etc/mork-egress/service.yaml >> "$service_rules"
+done <<BINDINGS
+${MORK_SERVICE_BINDINGS:-}
+BINDINGS
 sed -e "s|@LLM_HOST@|${MORK_LLM_HOST:?MORK_LLM_HOST is required}|g" \
     -e "s|@ALLOW_WARN@|${MORK_EGRESS_WARN:-true}|g" \
     -e "s|        # @EXTRA_DOMAINS@.*|${extra%\\n}|" /etc/mork-egress/base.yaml > "$config"
@@ -45,21 +75,5 @@ if [ -n "${GITHUB_TOKEN:-}${GITHUB_TOKEN_FILE:-}" ]; then
   fi
   sed -e "s|@REPO@|${MORK_REPO}|g" "$template" >> "$config"
 fi
-# Optional operator-owned service credential. The value stays in the sidecar
-# environment; only its variable name is written into the proxy configuration.
-if [ -n "${MORK_SERVICE_HOST:-}${MORK_SERVICE_AUTHORIZATION:-}" ]; then
-  [ -n "${MORK_SERVICE_HOST:-}" ] && [ -n "${MORK_SERVICE_AUTHORIZATION:-}" ] || {
-    echo "Service host and authorization must be configured together" >&2; exit 1;
-  }
-  case "$MORK_SERVICE_HOST" in
-    *[!a-z0-9.-]*) echo "Invalid service host" >&2; exit 1 ;;
-  esac
-  if ! printf '%s\n' "$MORK_SERVICE_HOST" | grep -Eq '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$'; then
-    echo "Invalid service host" >&2; exit 1
-  fi
-  if [ "$MORK_SERVICE_HOST" = "$MORK_LLM_HOST" ] || [ "$MORK_SERVICE_HOST" = github.com ]; then
-    echo "Service host overlaps an existing credential rule" >&2; exit 1
-  fi
-  sed "s|@SERVICE_HOST@|$MORK_SERVICE_HOST|g" /etc/mork-egress/service.yaml >> "$config"
-fi
+cat "$service_rules" >> "$config"
 exec iron-proxy -config "$config"
