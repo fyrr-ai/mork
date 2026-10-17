@@ -64,7 +64,10 @@ test("missing paths and symlink references fail preflight without following exte
   f.git("add", ".");
   f.git("commit", "-qm", "symlink");
   await expect(
-    hydrateInputs({ ...base, references: [{ name: "reference-data", repo: "example-org/reference-data", sha: f.git("rev-parse", "HEAD").trim(), paths: ["escape"] }] }),
+    hydrateInputs({
+      ...base,
+      references: [{ name: "reference-data", repo: "example-org/reference-data", sha: f.git("rev-parse", "HEAD").trim(), paths: ["escape"] }],
+    }),
   ).rejects.toThrow("regular file");
 });
 

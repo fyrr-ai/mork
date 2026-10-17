@@ -99,12 +99,17 @@ test("a channel with only development starts the Jira request without a routing 
     channels: { CDEMO: { repo: "example-org/example-app", jira_project: "PROJ" } },
     workflows: { development: config.workflows.development },
   });
-  await processSlackMention({ ...request, ask: "implement PROJ-1315" }, { ...deps, config: single, panel: new DecisionPanel([]) });
+  await processSlackMention({ ...request, ask: "implement PROJ-123" }, { ...deps, config: single, panel: new DecisionPanel([]) });
   expect(calls.some((call) => call.path === "/v1/systemone")).toBe(false);
   expect(calls.some((call) => call.path === "/chat.postMessage" && call.body.text.includes("Which workflow"))).toBe(false);
   const start = calls.find((call) => call.target.endsWith("StartExecution"));
   assert(start);
-  expect(JSON.parse(start.body.input)).toMatchObject({ source: "slack", repo: "example-org/example-app", ask: "implement PROJ-1315", jira_project: "PROJ" });
+  expect(JSON.parse(start.body.input)).toMatchObject({
+    source: "slack",
+    repo: "example-org/example-app",
+    ask: "implement PROJ-123",
+    jira_project: "PROJ",
+  });
   expect(await store.json(taskKey(request.ref))).toMatchObject({ workflow: "development" });
 });
 

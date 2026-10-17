@@ -54,7 +54,10 @@ function fixture() {
 
 test("a signed App JWT mints one repository-scoped token and deduplicates concurrent requests", async () => {
   const f = fixture();
-  expect(await Promise.all([f.auth.token("example-org/mork"), f.auth.token("example-org/mork")])).toEqual(["ghs_installation_1", "ghs_installation_1"]);
+  expect(await Promise.all([f.auth.token("example-org/mork"), f.auth.token("example-org/mork")])).toEqual([
+    "ghs_installation_1",
+    "ghs_installation_1",
+  ]);
   expect(f.calls()).toBe(1);
   expect(await f.auth.token("example-org/other")).toBe("ghs_installation_2");
   expect(f.repos).toEqual([["mork"], ["other"]]);
