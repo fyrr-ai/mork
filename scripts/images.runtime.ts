@@ -1,8 +1,8 @@
 // Runs inside the final images, with networking disabled except container loopback.
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { createHmac, generateKeyPairSync, verify } from "node:crypto";
-import { chownSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash, createHmac, generateKeyPairSync, verify } from "node:crypto";
+import { chownSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -368,6 +368,7 @@ if (process.argv[2] === "lambda") {
   ])
     assert.equal(exec(command, args, { uid: 10001, gid: 10001 }).code, 0, command);
   // Exercise the bundled gate under the real sandbox uid.
+  assert.equal(exec("bash", ["-c", "command -v mise || command -v uv"]).code, 1, "Generic worker proof requires no repository tool manager");
   const source = "/work/image-source";
   const work = "/work/image-gate";
   mkdirSync(source);
@@ -379,6 +380,9 @@ if (process.argv[2] === "lambda") {
   };
   git("init", "-q");
   writeFileSync(join(source, "value.cjs"), "module.exports = 0;\n");
+  mkdirSync(join(source, ".mork"));
+  const repositoryConfig = 'test = "node --check value.cjs"\n';
+  writeFileSync(join(source, ".mork/config.toml"), repositoryConfig);
   git("add", ".");
   git("commit", "-qm", "base");
   const base = git("rev-parse", "HEAD");
@@ -386,6 +390,41 @@ if (process.argv[2] === "lambda") {
   writeFileSync(join(source, "value.cjs"), "module.exports = 1;\n");
   git("commit", "-qam", "fix");
   const { runGate } = await import(pathToFileURL(`${root}/src/gate.ts`).href);
+  const runtimeDirectory = "/opt/mork-runtime";
+  mkdirSync(runtimeDirectory);
+  const runtimeManifest = {
+    schema: 1,
+    platform: "linux/arm64",
+    base_mork_digest: `sha256:${"1".repeat(64)}`,
+    inputs: { ".mork/config.toml": "0".repeat(64) },
+  };
+  writeFileSync(join(runtimeDirectory, "manifest.json"), JSON.stringify(runtimeManifest));
+  await assert.rejects(
+    runGate(
+      {
+        mode: "after",
+        repo: { full_name: "fixture/repo", default_branch: "main", base_sha: base },
+        branch: "mork/image-test",
+        localRepo: source,
+        config: {
+          setup: "exit 97",
+          test: "true",
+          checks: [],
+          test_paths: [],
+          protected_paths: [],
+          hidden_tests: { dir: "hidden", command: "bash {file}", file_suffix: ".sh" },
+        },
+        hidden_tests: [],
+        allow_test_change: false,
+      },
+      "",
+      work,
+      { uid: 10002, gid: 10002, env: { PATH: process.env.PATH, HOME: "/home/sandbox" } },
+    ),
+    /Prepared runtime input does not match/,
+  );
+  runtimeManifest.inputs[".mork/config.toml"] = createHash("sha256").update(repositoryConfig).digest("hex");
+  writeFileSync(join(runtimeDirectory, "manifest.json"), JSON.stringify(runtimeManifest));
   const result = await runGate(
     {
       mode: "after",
@@ -410,7 +449,8 @@ if (process.argv[2] === "lambda") {
   assert.equal(result.setup.exit_code, 0);
   assert.equal(result.repo_tests.exit_code, 0);
   assert.equal(result.hidden[0].passed, true);
-  console.log("Bundled gate and checkout protection passed as sandbox");
+  rmSync(runtimeDirectory, { recursive: true });
+  console.log("Bundled gate, generic runtime manifest and checkout protection passed without mise or uv as sandbox");
   assert.equal(existsSync("/usr/bin/apt"), false);
   assert.equal(existsSync("/usr/bin/dpkg"), false);
   assert.equal(existsSync("/root/.npm"), false);

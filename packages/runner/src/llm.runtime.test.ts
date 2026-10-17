@@ -39,7 +39,7 @@ const {createInterface}=require('node:readline');
 const {writeFileSync,existsSync}=require('node:fs');
 const {spawnSync}=require('node:child_process');
 const outputs=${JSON.stringify(outputs)};let prompts=0;
-if(process.env.PROBE_READY){const r=spawnSync('mise-probe',[],{encoding:'utf8'});writeFileSync(process.env.PROBE_READY,String(r.status));}
+if(process.env.PROBE_READY){const r=spawnSync('repo-tool-probe',[],{encoding:'utf8'});writeFileSync(process.env.PROBE_READY,String(r.status));}
 createInterface({input:process.stdin}).on('line',async line=>{
  const c=JSON.parse(line); const send=v=>console.log(JSON.stringify(v));
  if(c.type==='prompt'){
@@ -139,7 +139,8 @@ test.each([false, true])("readiness runs before Pi with stable home-local PATH, 
   f.spec.resumed = resumed;
   f.spec.environment = { PROBE_READY: probe };
   f.spec.readiness = {
-    command: 'mkdir -p "$HOME/.local/bin"; printf \'#!/bin/sh\\nexit 0\\n\' > "$HOME/.local/bin/mise-probe"; chmod +x "$HOME/.local/bin/mise-probe"',
+    command:
+      'mkdir -p "$HOME/.local/bin"; printf \'#!/bin/sh\\nexit 0\\n\' > "$HOME/.local/bin/repo-tool-probe"; chmod +x "$HOME/.local/bin/repo-tool-probe"',
   };
   const result = await runLlmStation(f.spec, f.env, f.repo);
   expect(result.ok).toBe(true);

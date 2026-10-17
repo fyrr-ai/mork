@@ -127,6 +127,8 @@ Repository setup runs before a new or resumed station starts. Verification diagn
 
 ### Prepared repository runtime
 
+Repository commands are toolchain-independent. Mork runs the `setup`, `test`, `checks` and hidden-test commands configured by the repository; it does not require mise, uv, a particular language or a particular package manager. The repository supplies any additional tools through its setup or prepared image. Mise manages development of Mork itself and is not installed in the base worker image.
+
 The operator may configure development `runner_image` as a repository-owned image with an immutable `@sha256:` digest. Development workers run on `linux/arm64`. Start snapshots that image identity and the revision-qualified Plan, Build and Check task definitions into the task's Brief. Initial launches, Spot fallback, Ask/resume and later fix runs use those saved revisions; a new deployment cannot replace them. Existing cloud tasks without a runtime pin must be restarted as new tasks rather than silently adopting the current image. Retain the pinned images and task-definition revisions while their tasks can resume.
 
 A prepared image contains `/opt/mork-runtime/manifest.json`:
@@ -138,7 +140,7 @@ A prepared image contains `/opt/mork-runtime/manifest.json`:
   "base_mork_digest": "sha256:<64 lowercase hexadecimal characters>",
   "inputs": {
     ".mork/config.toml": "<64 lowercase hexadecimal characters>",
-    "mise.lock": "<64 lowercase hexadecimal characters>"
+    "package-lock.json": "<64 lowercase hexadecimal characters>"
   }
 }
 ```

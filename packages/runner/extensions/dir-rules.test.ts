@@ -8,7 +8,7 @@ import dirRules from "./dir-rules.ts";
 
 type Handler = (event: Record<string, unknown>) => Promise<unknown>;
 
-/** A checkout whose base commit carries dagster/AGENTS.md, like the stations get. */
+/** A checkout whose base commit carries service/AGENTS.md, like the stations get. */
 function repo(): { dir: string; sha: string } {
   const dir = mkdtempSync(join(tmpdir(), "mork-dir-rules-"));
   const git = (...args: string[]) =>
@@ -17,9 +17,9 @@ function repo(): { dir: string; sha: string } {
       env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@x", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@x" },
     });
   git("init", "-q");
-  mkdirSync(join(dir, "dagster", "tests"), { recursive: true });
-  writeFileSync(join(dir, "dagster", "AGENTS.md"), "# Dagster\nAutomation must ship stopped.\n");
-  writeFileSync(join(dir, "dagster", "tests", "test_policy.py"), 'DEFAULT_STATUS = {"a": "RUNNING"}\n\n\ndef test_x():\n    assert True\n');
+  mkdirSync(join(dir, "service", "tests"), { recursive: true });
+  writeFileSync(join(dir, "service", "AGENTS.md"), "# Service\nAutomation must ship stopped.\n");
+  writeFileSync(join(dir, "service", "tests", "test_policy.py"), 'DEFAULT_STATUS = {"a": "RUNNING"}\n\n\ndef test_x():\n    assert True\n');
   git("add", "-A");
   git("commit", "-q", "-m", "base");
   return { dir, sha: git("rev-parse", "HEAD").trim() };
@@ -38,7 +38,7 @@ describe("dir-rules extension", () => {
           handlers[name] = handler;
         },
       });
-      const path = join(dir, "dagster", "tests", "test_policy.py");
+      const path = join(dir, "service", "tests", "test_policy.py");
       const content = readFileSync(path, "utf8");
       const first = (await handlers.tool_result?.({ toolName: "read", input: { path }, content: [{ type: "text", text: content }] })) as
         | { content: Array<{ type: string; text: string }> }
@@ -47,10 +47,10 @@ describe("dir-rules extension", () => {
       expect(first?.content[0]).toEqual({ type: "text", text: content });
       expect(Buffer.from(first?.content[0]?.text ?? "").equals(Buffer.from(content))).toBe(true);
       expect(first?.content[1]?.text.trim().startsWith(RULES_MARKER)).toBe(true);
-      expect(first?.content[1]?.text).toContain("dagster/tests/test_policy.py");
+      expect(first?.content[1]?.text).toContain("service/tests/test_policy.py");
       expect(first?.content[1]?.text).toContain("Automation must ship stopped.");
       // Provenance of the rules block: which file at which base commit, so it can never be mistaken for the read file.
-      expect(first?.content[1]?.text).toContain(`source: dagster/AGENTS.md at base commit ${sha.slice(0, 12)}`);
+      expect(first?.content[1]?.text).toContain(`source: service/AGENTS.md at base commit ${sha.slice(0, 12)}`);
       // The same file read again in this session: the result is exactly what the tool produced.
       const second = await handlers.tool_result?.({ toolName: "read", input: { path }, content: [{ type: "text", text: content }] });
       expect(second).toBeUndefined();
@@ -71,7 +71,7 @@ describe("dir-rules extension", () => {
           handlers[name] = handler;
         },
       });
-      const path = join(dir, "dagster", "tests", "new_test.py");
+      const path = join(dir, "service", "tests", "new_test.py");
       const blocked = (await handlers.tool_call?.({ toolName: "write", input: { path, content: "x" } })) as
         | { block: boolean; reason: string }
         | undefined;

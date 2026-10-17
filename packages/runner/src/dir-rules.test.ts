@@ -21,15 +21,15 @@ describe("directory rules", () => {
     expect(rulesFor("/repo", "abc", "models/marts/customers.sql", shown, (p) => files[p])).toBe("");
   });
   test("appended rules announce themselves as a platform notice, name the file and never pose as its content", () => {
-    const files: Record<string, string> = { "dagster/AGENTS.md": "Automation must ship stopped." };
-    const first = rulesFor("/repo", "abc", "dagster/tests/test_policy.py", new Set(), (p) => files[p]);
+    const files: Record<string, string> = { "service/AGENTS.md": "Automation must ship stopped." };
+    const first = rulesFor("/repo", "abc", "service/tests/test_policy.py", new Set(), (p) => files[p]);
     expect(first.startsWith("\n\n")).toBe(true);
     const notice = first.trim();
     expect(notice.startsWith(RULES_MARKER)).toBe(true);
-    expect(notice).toContain("dagster/tests/test_policy.py");
+    expect(notice).toContain("service/tests/test_policy.py");
     expect(notice).toContain("not part of");
     expect(notice).toContain("Automation must ship stopped.");
-    expect(notice.indexOf(RULES_MARKER)).toBeLessThan(notice.indexOf("## Rules for dagster/"));
-    expect(notice).toContain("source: dagster/AGENTS.md at base commit abc");
+    expect(notice.indexOf(RULES_MARKER)).toBeLessThan(notice.indexOf("## Rules for service/"));
+    expect(notice).toContain("source: service/AGENTS.md at base commit abc");
   });
 });

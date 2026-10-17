@@ -169,7 +169,7 @@ describe("supervisor", () => {
     ).toBe("no_match");
     expect(
       toolOutcome(
-        { toolName: "bash", args: { command: 'export PATH="$HOME/.local/bin:$PATH" && cd dagster && rg -n "foo" tests' } },
+        { toolName: "bash", args: { command: 'export PATH="$HOME/.local/bin:$PATH" && cd service && rg -n "foo" tests' } },
         { isError: true, result: text("\n\nCommand exited with code 1") },
       ),
     ).toBe("no_match");

@@ -20,8 +20,8 @@ function fixture() {
   git("config", "user.name", "test");
   mkdirSync(join(directory, ".mork"));
   writeFileSync(join(directory, ".mork/config.toml"), "test='true'\n");
-  writeFileSync(join(directory, "mise.lock"), "locked runtime\n");
-  symlinkSync("mise.lock", join(directory, "link"));
+  writeFileSync(join(directory, "runtime.lock"), "locked runtime\n");
+  symlinkSync("runtime.lock", join(directory, "link"));
   git("add", ".");
   git("commit", "-qm", "runtime inputs");
   const baseSha = git("rev-parse", "HEAD");
@@ -29,7 +29,7 @@ function fixture() {
     schema: 1,
     platform: "linux/arm64",
     base_mork_digest: `sha256:${"1".repeat(64)}`,
-    inputs: { ".mork/config.toml": sha256("test='true'\n"), "mise.lock": sha256("locked runtime\n") },
+    inputs: { ".mork/config.toml": sha256("test='true'\n"), "runtime.lock": sha256("locked runtime\n") },
   };
   const manifestPath = join(directory, "manifest.json");
   const publish = (value: unknown) => writeFileSync(manifestPath, JSON.stringify(value));
@@ -39,7 +39,7 @@ function fixture() {
 
 test("prepared runtime matches immutable base blobs despite a changed checkout and default branch", () => {
   const f = fixture();
-  writeFileSync(join(f.directory, "mise.lock"), "candidate changed lock\n");
+  writeFileSync(join(f.directory, "runtime.lock"), "candidate changed lock\n");
   f.git("add", ".");
   f.git("commit", "-qm", "later default branch");
   expect(() => verifyRuntimeManifest(f.directory, f.baseSha, f.manifestPath)).not.toThrow();
@@ -55,7 +55,7 @@ test("runtime manifest fails closed for malformed, unsafe, missing and symlink i
     { ...f.manifest, inputs: {} },
     { ...f.manifest, inputs: { "../outside": "1".repeat(64) } },
     { ...f.manifest, inputs: { "missing.lock": "1".repeat(64) } },
-    { ...f.manifest, inputs: { link: sha256("mise.lock") } },
+    { ...f.manifest, inputs: { link: sha256("runtime.lock") } },
   ]) {
     f.publish(value);
     expect(() => verifyRuntimeManifest(f.directory, f.baseSha, f.manifestPath)).toThrow();
@@ -64,6 +64,6 @@ test("runtime manifest fails closed for malformed, unsafe, missing and symlink i
 
 test("a prepared image must declare the repository config in its runtime input identity", () => {
   const f = fixture();
-  f.publish({ ...f.manifest, inputs: { "mise.lock": f.manifest.inputs["mise.lock"] } });
+  f.publish({ ...f.manifest, inputs: { "runtime.lock": f.manifest.inputs["runtime.lock"] } });
   expect(() => verifyRuntimeManifest(f.directory, f.baseSha, f.manifestPath)).toThrow(/config/i);
 });
