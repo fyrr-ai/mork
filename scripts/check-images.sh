@@ -84,6 +84,7 @@ test "$(fetch repo)" = authenticated
 kill -0 "$pid"
 test "$(stat -c %a /mork-egress/github-token)" = 600'
 echo "running egress proxy accepted rotated credentials and rejected another repository"
+scripts/check-service-auth.sh
 # Reject host configuration that could alter the generated proxy YAML.
 if docker run --rm --network none -e MORK_LLM_HOST=llm.example.test \
   -e MORK_EGRESS_ALLOW=https://invalid.example.test mork-egress:dev >/dev/null 2>&1; then

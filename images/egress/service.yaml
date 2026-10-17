@@ -1,0 +1,9 @@
+        - source:
+            type: env
+            var: MORK_SERVICE_AUTHORIZATION
+          inject:
+            header: Authorization
+            formatter: '{{ .Value }}'
+            require: true
+          rules:
+            - host: '@SERVICE_HOST@'

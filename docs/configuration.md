@@ -198,8 +198,16 @@ The runner sets these for the implementer's `verify` extension; they are interna
 | `MORK_LLM_HOST`, `LLM_API_KEY` | Host the LLM key is injected for |
 | `GITHUB_TOKEN`, `MORK_REPO` | Build only: the shared GitHub token, injected for this repository only |
 | `GITHUB_TOKEN_FILE`, `MORK_REPO` | Build in App mode: root-owned renewable token file; no App private key in the proxy |
+| `MORK_SERVICE_HOST`, `MORK_SERVICE_AUTHORIZATION` | Optional exact service host and complete Authorization header. Configure both only on the permitted phase’s sidecar, never its runner. The host must also be in the egress allowlist. No wildcard, URL or port in the host. |
 | `MORK_EGRESS_ALLOW` | This step’s allowed domains, comma separated; the LLM host is added automatically |
 | `MORK_EGRESS_WARN` | `true` logs requests outside the allowlist, `false` blocks them |
+
+Service authorization replaces the request's Authorization header for that exact
+host. The operator supplies the secret independently of repository/model input.
+Use a TLS service endpoint and enforce data permissions and resource limits at
+the service. Host matching does not constrain SQL, request paths or destination
+ports. Other hosts receive no service credential. This is not network isolation:
+a phase can bypass the proxy, but its processes do not receive the credential.
 
 **Scripts**
 
