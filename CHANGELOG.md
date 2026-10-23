@@ -2,6 +2,8 @@
 
 ## 0.1.0
 
+- Reject certificates chaining to the compromised eMudhra intermediates: the egress proxy uses iron-proxy 0.54.0 (Go 1.27.3, patched Alpine CA bundle), the runner and Lambda use Node 24.22.1 with Debian ca-certificates 20250419+deb13u1, and image builds use Bun 1.4.4.
+
 - Treat acceptance criteria an issue numbers as `AC1: text` as the author's contract: Plan keeps them verbatim and only decides testability, its own ideas appear separately as unchecked proposals, and the PR and Jira comment report each criterion's result.
 
 - Retain criteria citations from either checkout, normalize their repository paths and check the named immutable revision before passing evidence to the decision model.

@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 # Build tools and dependency trees stay in intermediate stages.
-FROM oven/bun:1.4.2@sha256:9114c058aeae42162ee16dd5084b95fe9473970bb6bcb5b232ab1630f0546895 AS deps
+FROM oven/bun:1.4.4@sha256:1d22548f177f4ff38e0c15baa3c2c46c6c2060ba2d1bc573bb4720b407548f1d AS deps
 WORKDIR /opt/mork
 COPY package.json bun.lock ./
 COPY packages/contracts/package.json packages/contracts/
@@ -17,7 +17,7 @@ RUN bun images/bundle.ts /bundles && sh images/retain-notices.sh /bundles/notice
 
 # Pi ships a bundled CLI. Keep its runtime assets and explicit external modules,
 # without the duplicate unbundled SDKs, TypeScript sources or installer cache.
-FROM oven/bun:1.4.2@sha256:9114c058aeae42162ee16dd5084b95fe9473970bb6bcb5b232ab1630f0546895 AS agent-deps
+FROM oven/bun:1.4.4@sha256:1d22548f177f4ff38e0c15baa3c2c46c6c2060ba2d1bc573bb4720b407548f1d AS agent-deps
 WORKDIR /agent
 COPY images/runner/package.json images/runner/bun.lock ./
 RUN bun install --frozen-lockfile --production --ignore-scripts
@@ -35,7 +35,7 @@ RUN mkdir -p /pi/dist/core /pi/dist/modes/interactive /pi/node_modules/@silvia-o
 
 # The runner needs actual repository tools. Copy their files and transitive ELF
 # libraries from a pinned Debian/Node builder, rather than shipping apt and a distro.
-FROM node:24.21.0-trixie-slim@sha256:173f125896c3b47ddf056734c7ea789d04595a6a08769a8f78e0df642781fb66 AS runner-rootfs
+FROM node:24.22.1-trixie-slim@sha256:43b9ba1142b8dcf33fa8f922ca1be85714adc444e0586c7cf7726daaeabc1bea AS runner-rootfs
 RUN apt-get update \
  && apt-get install -y --no-install-recommends git ca-certificates bash python3 ripgrep fd-find binutils openssl gettext-base \
  && rm -rf /var/lib/apt/lists/* \
@@ -74,8 +74,8 @@ CMD ["node", "packages/runner/src/main.ts"]
 
 # Retain AWS's runtime client and native bridge, without the redundant built-in
 # AWS SDK, npm, shell, package manager or local Runtime Interface Emulator.
-FROM public.ecr.aws/lambda/nodejs:24@sha256:3b4abf538463db1bf81d5c16415091a205deac0fbecc5558adc6eb86220c7aaa AS lambda-runtime
-FROM gcr.io/distroless/cc-debian13:latest@sha256:159783207c2cd44c2aa5715961d13c8612368ac9bd450f887e3f08fc8ea461e3 AS lambda
+FROM public.ecr.aws/lambda/nodejs:24@sha256:92b7cccd985332238af80ac8da42d6965d418552e88955e315da4e3c0c76ca79 AS lambda-runtime
+FROM gcr.io/distroless/cc-debian13:latest@sha256:b2e43dc72acf58a146ed6feaf350806ae3bf4243eb5c68062d06bc13228ca2bd AS lambda
 COPY --from=runner-rootfs /usr/local/bin/node /usr/local/bin/node
 COPY --from=runner-rootfs /usr/local/share/doc/node /usr/share/licenses/node
 COPY --from=lambda-runtime /var/runtime/index.mjs /var/runtime/rapid-client.node /var/runtime/THIRD-PARTY-LICENSES.txt /var/runtime/
@@ -91,7 +91,7 @@ CMD ["packages/steps/lambda-steps.handler"]
 
 # The proxy is a static Go binary. BusyBox supplies only the entrypoint's shell
 # and file utilities; no Alpine package manager or dynamic library tree is needed.
-FROM ironsh/iron-proxy:0.53.0@sha256:51f01ab057637c28672f2025216680cdc0b61dbc58a0337f77e0ea95dd6153a6 AS proxy-binary
+FROM ironsh/iron-proxy:0.54.0@sha256:6d074be2de9188f88d08013788d5500fb4de8557f16c2e5b27af4d8d2cb1e3fb AS proxy-binary
 FROM busybox:1.37.0-musl@sha256:5cec3fc171c87218698e85a52af7087de727372aae264a787b8112901a5b0092 AS egress
 COPY --from=proxy-binary /usr/local/bin/iron-proxy /usr/local/bin/iron-proxy
 COPY --from=proxy-binary /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt

@@ -9,7 +9,7 @@ research references. It does not change those terms.
 | Component | Use | License and retained text |
 | --- | --- | --- |
 | [Pi](https://github.com/earendil-works/pi/tree/v1.1.0) | Runner's coding-agent CLI, version 1.1.0 | MIT, copyright 2025 Mario Zechner. [License](licenses/pi.LICENSE) |
-| [iron-proxy](https://github.com/ironsh/iron-proxy/tree/v0.53.0) | Egress sidecar, version 0.53.0 | Apache-2.0. [License](licenses/iron-proxy.LICENSE) |
+| [iron-proxy](https://github.com/ironsh/iron-proxy/tree/v0.54.0) | Egress sidecar, version 0.54.0 | Apache-2.0. [License](licenses/iron-proxy.LICENSE) |
 | [AWS SDK for JavaScript v3](https://github.com/aws/aws-sdk-js-v3/tree/v3.908.0) | AWS clients | Apache-2.0. [License supplement](licenses/aws-sdk-js-v3.LICENSE) |
 | [Open Code Review](https://github.com/alibaba/open-code-review/tree/v1.13.0) | OCR 1.13.0 review engine and its embedded language rules | Apache-2.0, copyright 2026 Alibaba. [License](licenses/open-code-review.LICENSE) |
 | [Zod](https://github.com/colinhacks/zod) | Input schemas | MIT. See the installed package's `LICENSE` |
@@ -59,7 +59,7 @@ Before distributing images, inventory their actual packages and bundled binaries
 retain all required notices and satisfy any source-distribution obligations.
 The iron-proxy upstream image contains a Go binary with transitive dependencies;
 its top-level Apache-2.0 license alone does not inventory those dependencies.
-Its [source at version 0.53.0](https://github.com/ironsh/iron-proxy/tree/v0.53.0)
+Its [source at version 0.54.0](https://github.com/ironsh/iron-proxy/tree/v0.54.0)
 includes the dependency list and build instructions. Node, the Lambda base image,
 Alpine and Debian packages also keep their own terms.
 
